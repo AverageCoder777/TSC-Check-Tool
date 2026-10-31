@@ -1,6 +1,7 @@
 use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
+use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -9,16 +10,18 @@ use crate::AssetInventoryWindow;
 pub struct InventoryController {
     pub window: AssetInventoryWindow,
     pub weak: Weak<AssetInventoryWindow>,
+    pub app: Arc<Mutex<crate::app::CheckerApp>>,
 }
 
 impl InventoryController {
-    pub fn new() -> Self {
+    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
         let window = AssetInventoryWindow::new().unwrap();
         let weak = window.as_weak();
-        Self { window, weak }
+        Self { window, weak, app }
     }
 
     pub fn bind(&self) {
+        let app = self.app.clone();
         let inv_handle2 = self.weak.clone();
         let inv_handle3 = self.weak.clone();
         let inv_handle4 = self.weak.clone();
@@ -28,12 +31,13 @@ impl InventoryController {
         let inv_handle11 = self.weak.clone();
 
         // toggle missing only
+        let app = self.app.clone();
         self.window.on_toggle_missing_only(move || {
             if let Some(inv) = inv_handle2.upgrade() {
                 let cur = inv.get_show_missing_only();
                 inv.set_show_missing_only(!cur);
                 let show_missing = !cur;
-                if let Ok(app) = crate::app_state().lock()
+                if let Ok(app) = app.lock()
                     && let Ok(state) = app.asset_inventory_state.lock()
                 {
                     let (rows, safe) = crate::build_inventory_rows(&state, show_missing);
@@ -44,10 +48,11 @@ impl InventoryController {
         });
 
         // sort ascending
+        let app = self.app.clone();
         self.window.on_sort_ascending(move |column| {
             if let Some(inv) = inv_handle3.upgrade() {
                 let show_missing = inv.get_show_missing_only();
-                if let Ok(app) = crate::app_state().lock() {
+                if let Ok(app) = app.lock() {
                     if let Ok(mut state) = app.asset_inventory_state.lock() {
                         match column {
                             0 => {
@@ -71,10 +76,11 @@ impl InventoryController {
         });
 
         // sort descending
+        let app = self.app.clone();
         self.window.on_sort_descending(move |column| {
             if let Some(inv) = inv_handle4.upgrade() {
                 let show_missing = inv.get_show_missing_only();
-                if let Ok(app) = crate::app_state().lock() {
+                if let Ok(app) = app.lock() {
                     if let Ok(mut state) = app.asset_inventory_state.lock() {
                         match column {
                             0 => {
@@ -98,10 +104,11 @@ impl InventoryController {
         });
 
         // search changed
+        let app = self.app.clone();
         self.window.on_search_changed(move |text| {
             if let Some(inv) = inv_handle5.upgrade() {
                 let show_missing = inv.get_show_missing_only();
-                if let Ok(app) = crate::app_state().lock() {
+                if let Ok(app) = app.lock() {
                     if let Ok(mut state) = app.asset_inventory_state.lock() {
                         state.search = text.to_string();
                     }
@@ -118,6 +125,7 @@ impl InventoryController {
         let mut inv_last_row: i32 = -1;
         let mut inv_last_click = Instant::now();
         const INV_DOUBLE_CLICK_MS: u64 = 400;
+        let app = self.app.clone();
         self.window.on_row_selected(move |row| {
             if let Some(inv) = inv_handle9.upgrade() {
                 inv.set_selected_asset(row);
@@ -141,7 +149,7 @@ impl InventoryController {
                 if path_text.is_empty() {
                     return;
                 }
-                let rw_path = if let Ok(app) = crate::app_state().lock() {
+                let rw_path = if let Ok(app) = app.lock() {
                     app.rw_path.clone()
                 } else {
                     String::new()
@@ -173,6 +181,7 @@ impl InventoryController {
         });
 
         // open in editor
+        let app = self.app.clone();
         self.window.on_open_in_editor(move || {
             if let Some(inv) = inv_handle10.upgrade() {
                 let row = inv.get_current_row();
@@ -188,7 +197,7 @@ impl InventoryController {
                 if path_text.is_empty() {
                     return;
                 }
-                let rw_path = if let Ok(app) = crate::app_state().lock() {
+                let rw_path = if let Ok(app) = app.lock() {
                     app.rw_path.clone()
                 } else {
                     String::new()
@@ -202,7 +211,7 @@ impl InventoryController {
                 if full.is_file() {
                     let serz_path = crate::assets::find_serz_path(&full)
                         .unwrap_or_else(|| PathBuf::from("serz64.exe"));
-                    let app_for_status = crate::app_state().clone();
+                    let app_for_status = app.clone();
                     let _ = crate::external_editor::open_and_sync_with_vscode(
                         &full,
                         &serz_path,
@@ -217,6 +226,7 @@ impl InventoryController {
         });
 
         // replace inventory asset
+        let app = self.app.clone();
         self.window.on_replace_inventory_asset(move |selected| {
             if selected < 0 {
                 return;
@@ -235,7 +245,7 @@ impl InventoryController {
             if asset_path.is_empty() {
                 return;
             }
-            let rw_path = if let Ok(app) = crate::app_state().lock() {
+            let rw_path = if let Ok(app) = app.lock() {
                 app.rw_path.clone()
             } else {
                 return;
@@ -243,7 +253,7 @@ impl InventoryController {
             if rw_path.trim().is_empty() {
                 return;
             }
-            let asset = if let Ok(app) = crate::app_state().lock() {
+            let asset = if let Ok(app) = app.lock() {
                 if let Ok(state) = app.asset_inventory_state.lock() {
                     state.assets.iter().find(|a| a.path == asset_path).cloned()
                 } else {
@@ -256,7 +266,7 @@ impl InventoryController {
                 return;
             };
             if !crate::assets::is_safe_for_global_replacement(&asset.path, &asset.uses) {
-                if let Ok(mut app) = crate::app_state().lock() {
+                if let Ok(mut app) = app.lock() {
                     app.status = "Замена этого ассета запрещена (путевая инфраструктура).".to_owned();
                 }
                 return;
@@ -296,7 +306,7 @@ impl InventoryController {
                 is_corrupted_link: false,
                 asset_type,
             };
-            if let Ok(mut app) = crate::app_state().lock() {
+            if let Ok(mut app) = app.lock() {
                 app.inventory_replacement_pending_check = true;
                 app.asset_replacement_queue
                     .push((missing, picked, replacement_relative));
@@ -305,8 +315,9 @@ impl InventoryController {
         });
 
         // scan umlauts
+        let app = self.app.clone();
         self.window.on_scan_umlauts(move || {
-            if let Ok(app) = crate::app_state().lock() {
+            if let Ok(app) = app.lock() {
                 let _ = app
                     .inventory_action_tx
                     .send(crate::app::InventoryAction::ScanUmlauts);

@@ -324,12 +324,6 @@ fn build_inventory_rows(
     (rows, safe_flags)
 }
 
-static APP_STATE: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
-
-fn app_state() -> Arc<Mutex<app::CheckerApp>> {
-    APP_STATE.get().cloned().expect("app state not initialized")
-}
-
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static MISSING_WEAK: OnceLock<slint::Weak<MissingAssetsWindow>> = OnceLock::new();
 static INV_SLOT: OnceLock<Arc<Mutex<Option<slint::Weak<AssetInventoryWindow>>>>> = OnceLock::new();
@@ -347,6 +341,12 @@ pub(crate) fn schedule_ui_sync() {
             }
         });
     }
+}
+
+static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
+
+fn app_state() -> Arc<Mutex<app::CheckerApp>> {
+    APP.get().cloned().expect("app state not initialized")
 }
 
 fn sync_ui(ui: &MainWindow) {
@@ -629,7 +629,8 @@ fn main() {
     handle_cli_args();
     // Handle file association launch: TS-Checker opened with a .bin/.GeoPcDx file.
     let app = Arc::new(Mutex::new(app::CheckerApp::default()));
-    let _ = APP_STATE.set(app.clone());
+    let _ = APP.set(app.clone());
+    let app_for_controllers = app.clone();
     let ui = MainWindow::new().unwrap();
     let _ = UI_WEAK.set(ui.as_weak());
     crate::settings::apply_saved_language(&crate::settings::load_language());
@@ -689,7 +690,7 @@ fn main() {
         }
     });
     missing_win.on_repair_corrupted({
-        let app = app_state().clone();
+        let app = app.clone();
         move |idx| {
             if let Ok(mut app) = app.lock() {
                 let missing_assets = app
@@ -715,7 +716,7 @@ fn main() {
         }
     });
     missing_win.on_repair_all_corrupted({
-        let app = app_state().clone();
+        let app = app.clone();
         move || {
             if let Ok(mut app) = app.lock() {
                 let missing_assets = app
@@ -756,7 +757,7 @@ fn main() {
     });
 
     missing_win.on_inspect_tiles({
-        let app = app_state().clone();
+        let app = app.clone();
         let handle = missing_handle.clone();
         move |idx| {
             let (asset, tiles) = if let Ok(app) = app.lock() {
@@ -834,7 +835,7 @@ fn main() {
     ap_picker_win.on_confirm_selection({
         let state = ap_picker_state.clone();
         let handle = ap_picker_handle.clone();
-        let app = app_state().clone();
+        let app = app.clone();
         move || {
             let (archive_path, missing, rw_path, _selected_index, entry) = {
                 let guard = match state.lock() {
@@ -926,9 +927,10 @@ fn main() {
         }
     });
 
+    let app = app_for_controllers.clone();
     missing_win.on_replace_missing(move |idx| {
         let (missing, rw_path) = {
-            if let Ok(app) = app_state().lock() {
+            if let Ok(app) = app.lock() {
                 if let Some(result) = app.result.as_ref() {
                     if let Some(missing) = result.missing_assets.get(idx as usize) {
                         (Some(missing.clone()), app.rw_path.clone())
@@ -947,7 +949,7 @@ fn main() {
                 path: missing.path.clone(),
                 uses: missing.uses.clone(),
             }) {
-                if let Ok(mut app) = app_state().lock() {
+                if let Ok(mut app) = app.lock() {
                     app.status = "Замена путевых объектов в Tracks.bin заблокирована для предотвращения повреждения маршрута.".to_owned();
                 }
                 return;
@@ -993,7 +995,7 @@ fn main() {
                         pw.set_selected_index(-1);
                         let _ = pw.show();
                     }
-                } else if let Ok(mut app) = app_state().lock() {
+                } else if let Ok(mut app) = app.lock() {
                         let replacement_relative = replacement
                             .strip_prefix(&assets_path)
                             .map(|p| p.to_string_lossy().to_string())
@@ -1018,11 +1020,12 @@ fn main() {
     let _ = INV_SLOT.set(inv_handle_timer_slot.clone());
 
     let ui_handle2 = ui.as_weak();
+    let app = app_for_controllers.clone();
     ui.on_route_selected(move |idx| {
         if let Some(ui) = ui_handle2.upgrade() {
             ui.set_selected_route(idx);
         }
-        if let Ok(mut app) = app_state().lock() {
+        if let Ok(mut app) = app.lock() {
             let q = app.search_query.to_lowercase();
             let filtered: Vec<&domain::Route> = app
                 .routes
@@ -1068,35 +1071,38 @@ fn main() {
         }
     });
     let ui_handle_start_check = ui_handle.clone();
+    let app = app_for_controllers.clone();
     ui.on_start_check(move || {
         if let Some(ui) = ui_handle_start_check.upgrade() {
             ui.set_show_log(true);
         }
-        if let Ok(mut app) = app_state().lock() {
+        if let Ok(mut app) = app.lock() {
             app.start_check();
         }
     });
     let ui_handle_reset = ui_handle;
+    let app = app_for_controllers.clone();
     ui.on_reset_log(move || {
         if let Some(ui) = ui_handle_reset.upgrade()
-            && let Ok(app) = app_state().lock()
+            && let Ok(app) = app.lock()
         {
             ui.set_check_log(app.check_log.clone().into());
         }
     });
-    let inventory = inventory_controller::InventoryController::new();
+    let inventory = inventory_controller::InventoryController::new(app_for_controllers.clone());
     if let Ok(mut slot) = inv_handle_timer_slot.lock() {
         *slot = Some(inventory.window.as_weak());
     }
     inventory.bind();
-    let settings = settings_controller::SettingsController::new();
+    let settings = settings_controller::SettingsController::new(app_for_controllers.clone());
     settings.bind();
 
-    let scenario = scenario_controller::ScenarioController::new();
+    let scenario = scenario_controller::ScenarioController::new(app_for_controllers.clone());
     scenario.bind(&ui);
 
+    let app = app_for_controllers.clone();
     ui.on_open_route_folder(move || {
-        if let Ok(app) = app_state().lock()
+        if let Ok(app) = app.lock()
             && let Some(idx) = app.selected_route
             && let Some(route) = app.routes.get(idx)
         {
@@ -1104,8 +1110,9 @@ fn main() {
         }
     });
     let inventory_weak_for_show = inventory.weak.clone();
+    let app = app_for_controllers.clone();
     ui.on_show_inventory(move || {
-        if let Ok(mut app) = app_state().lock() {
+        if let Ok(mut app) = app.lock() {
             app.open_asset_inventory();
             if let Some(inv) = inventory_weak_for_show.upgrade() {
                 if let Ok(state) = app.asset_inventory_state.lock() {
@@ -1121,7 +1128,7 @@ fn main() {
             }
         }
     });
-    let auditor = auditor_controller::AuditorController::new();
+    let auditor = auditor_controller::AuditorController::new(app_for_controllers.clone());
     let auditor_weak_for_open_folder = auditor.weak.clone();
     ui.on_open_folder_auditor(move || {
         if let Some(w) = auditor_weak_for_open_folder.upgrade() {

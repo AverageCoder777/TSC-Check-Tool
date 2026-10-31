@@ -1,5 +1,6 @@
 use slint::ComponentHandle;
 use slint::Weak;
+use std::sync::{Arc, Mutex};
 use std::path::{Path, PathBuf};
 
 use crate::ScenarioWindow;
@@ -7,21 +8,24 @@ use crate::ScenarioWindow;
 pub struct ScenarioController {
     pub window: ScenarioWindow,
     pub weak: Weak<ScenarioWindow>,
+    pub app: Arc<Mutex<crate::app::CheckerApp>>,
 }
 
 impl ScenarioController {
-    pub fn new() -> Self {
+    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
         let window = ScenarioWindow::new().unwrap();
         let weak = window.as_weak();
-        Self { window, weak }
+        Self { window, weak, app }
     }
 
     pub fn bind(&self, ui: &crate::MainWindow) {
+        let app = self.app.clone();
         let scenario_handle = self.weak.clone();
         let scenario_handle2 = self.weak.clone();
         let ui_handle3 = ui.as_weak();
+    let app_for_scenario = self.app.clone();
     ui.on_scenario_selected(move |idx| {
-        let app = crate::app_state().clone();
+        let app = app_for_scenario.clone();
         let ui_handle = ui_handle3.clone();
         let scenario_handle = scenario_handle.clone();
         std::thread::spawn(move || {
@@ -255,8 +259,9 @@ impl ScenarioController {
         });
     });
 
-    self.window.on_consist_selected(move |idx| {
-        if let Ok(mut app) = crate::app_state().lock() {
+    let app = self.app.clone();
+        self.window.on_consist_selected(move |idx| {
+        if let Ok(mut app) = app.lock() {
             let scen_idx = match app.selected_scenario {
                 Some(i) => i,
                 None => return,
@@ -300,8 +305,9 @@ impl ScenarioController {
         }
     });
     let ui_handle_close_scenario = ui.as_weak();
-    self.window.on_open_scenario_folder(move || {
-        if let Ok(app) = crate::app_state().lock()
+    let app = self.app.clone();
+        self.window.on_open_scenario_folder(move || {
+        if let Ok(app) = app.lock()
             && let Some(idx) = app.selected_scenario
             && let Some(scenario) = app.scenarios.get(idx)
         {
@@ -309,12 +315,13 @@ impl ScenarioController {
         }
     });
     let scenario_handle_close = self.weak.clone();
-    self.window.on_close_scenario(move || {
+    let app = self.app.clone();
+        self.window.on_close_scenario(move || {
         if let Some(sw) = scenario_handle_close.upgrade() {
             let _ = sw.hide();
         }
         let ui_handle = ui_handle_close_scenario.clone();
-        if let Ok(mut app) = crate::app_state().lock() {
+        if let Ok(mut app) = app.lock() {
             app.scenario_window_open = false;
             let hide = app.hide_quick_drive_free_roam;
             let scen: Vec<crate::ScenarioItem> = app
@@ -341,8 +348,9 @@ impl ScenarioController {
             }
         }
     });
-    self.window.on_open_locoswap(move || {
-        if let Ok(app) = crate::app_state().lock() {
+    let app = self.app.clone();
+        self.window.on_open_locoswap(move || {
+        if let Ok(app) = app.lock() {
             let path = app.locoswap_path.clone();
             if !path.is_empty() && Path::new(&path).is_file() {
                 let mut cmd = std::process::Command::new(&path);
@@ -358,8 +366,9 @@ impl ScenarioController {
             }
         }
     });
-    self.window.on_open_locoswap_consist(move |idx| {
-        if let Ok(app) = crate::app_state().lock() {
+    let app = self.app.clone();
+        self.window.on_open_locoswap_consist(move |idx| {
+        if let Ok(app) = app.lock() {
             let locoswap_path = app.locoswap_path.clone();
             if locoswap_path.is_empty() || !Path::new(&locoswap_path).is_file() {
                 return;
@@ -392,8 +401,9 @@ impl ScenarioController {
         }
     });
     let scenario_handle_preview = self.weak.clone();
-    self.window.on_vehicle_selected(move |idx| {
-        if let Ok(mut app) = crate::app_state().lock() {
+    let app = self.app.clone();
+        self.window.on_vehicle_selected(move |idx| {
+        if let Ok(mut app) = app.lock() {
             app.selected_vehicle = Some(idx as usize);
             let rw_path = PathBuf::from(app.rw_path.trim());
             let route_path = app
@@ -468,8 +478,9 @@ impl ScenarioController {
             }
         }
     });
-    self.window.on_open_selected_vehicle_path(move || {
-        if let Ok(app) = crate::app_state().lock() {
+    let app = self.app.clone();
+        self.window.on_open_selected_vehicle_path(move || {
+        if let Ok(app) = app.lock() {
             let scen_idx = match app.selected_scenario {
                 Some(i) => i,
                 None => return,
@@ -527,8 +538,9 @@ impl ScenarioController {
             }
         }
     });
-    self.window.on_open_vehicle_path(move |idx| {
-        if let Ok(app) = crate::app_state().lock() {
+    let app = self.app.clone();
+        self.window.on_open_vehicle_path(move |idx| {
+        if let Ok(app) = app.lock() {
             let scen_idx = match app.selected_scenario {
                 Some(i) => i,
                 None => return,

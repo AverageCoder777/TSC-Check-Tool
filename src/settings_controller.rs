@@ -1,29 +1,32 @@
 use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
+use std::sync::{Arc, Mutex};
 
 use crate::SettingsWindow;
 
 pub struct SettingsController {
     pub window: SettingsWindow,
     pub weak: Weak<SettingsWindow>,
+    pub app: Arc<Mutex<crate::app::CheckerApp>>,
 }
 
 impl SettingsController {
-    pub fn new() -> Self {
+    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
         let window = SettingsWindow::new().unwrap();
         let weak = window.as_weak();
-        Self { window, weak }
+        Self { window, weak, app }
     }
 
     pub fn bind(&self) {
+        let app = self.app.clone();
         let settings_handle = self.weak.clone();
         let settings_handle2 = self.weak.clone();
         let settings_handle3 = self.weak.clone();
         let settings_handle4 = self.weak.clone();
         let settings_handle5 = self.weak.clone();
 
-        if let Ok(app) = crate::app_state().lock() {
+        if let Ok(app) = app.lock() {
             let available = crate::settings::maximum_serz_processes();
             let all_presets: [usize; 6] = [1, 6, 8, 12, 16, 32];
             let presets: Vec<slint::SharedString> = all_presets
@@ -65,6 +68,7 @@ impl SettingsController {
         }
 
         // pick locoswap
+        let app = self.app.clone();
         self.window.on_pick_locoswap(move || {
             if let Some(sw) = settings_handle.upgrade() {
                 let current = sw.get_locoswap_path().to_string();
@@ -82,6 +86,7 @@ impl SettingsController {
         });
 
         // pick game
+        let app = self.app.clone();
         self.window.on_pick_game(move || {
             if let Some(sw) = settings_handle3.upgrade() {
                 let current = sw.get_game_path().to_string();
@@ -101,9 +106,10 @@ impl SettingsController {
         });
 
         // language selected
+        let app = self.app.clone();
         self.window.on_language_selected(move |lang| {
             let lang = lang.to_string();
-            if let Ok(mut app) = crate::app_state().lock() {
+            if let Ok(mut app) = app.lock() {
                 app.language = lang.clone();
             }
             crate::settings::apply_saved_language(&lang);
@@ -116,6 +122,7 @@ impl SettingsController {
         });
 
         // serz preset selected
+        let app = self.app.clone();
         self.window.on_serz_preset_selected(move |i| {
             if let Some(sw) = settings_handle4.upgrade() {
                 let presets = sw.get_serz_presets();
@@ -123,7 +130,7 @@ impl SettingsController {
                     && let Ok(limit) = item.to_string().parse::<usize>()
                 {
                     sw.set_serz_process_limit(limit as i32);
-                    if let Ok(mut app) = crate::app_state().lock() {
+                    if let Ok(mut app) = app.lock() {
                         app.serz_process_limit = limit;
                     }
                 }
@@ -131,6 +138,7 @@ impl SettingsController {
         });
 
         // save settings
+        let app = self.app.clone();
         self.window.on_save_settings(move || {
             if let Some(sw) = settings_handle2.upgrade() {
                 let limit = sw.get_serz_process_limit() as usize;
@@ -142,7 +150,7 @@ impl SettingsController {
                 let lang_idx = sw.get_language_index() as usize;
                 let langs = ["ru", "en", "de"];
                 let language = langs.get(lang_idx).copied().unwrap_or("ru").to_owned();
-                if let Ok(mut app) = crate::app_state().lock() {
+                if let Ok(mut app) = app.lock() {
                     app.serz_process_limit = limit;
                     app.locoswap_path = path.clone();
                     app.rw_path = game_path.clone();
