@@ -162,7 +162,7 @@ pub fn count_asset_uses(
 /// обычным порядком.
 pub fn may_contain_asset_reference(file_path: &Path) -> bool {
     use std::io::Read;
-    let Ok(file) = fs::File::open(file_path) else {
+    let Ok(mut file) = fs::File::open(file_path) else {
         return true;
     };
     let marker = crate::translit::BLUEPRINT_ID_MARKER.as_bytes();
@@ -170,29 +170,33 @@ pub fn may_contain_asset_reference(file_path: &Path) -> bool {
         return true;
     }
     let overlap = marker.len().saturating_sub(1);
-    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
-    let mut buf = [0u8; 64 * 1024];
-    let mut tail: Vec<u8> = Vec::with_capacity(overlap);
+    const CHUNK_SIZE: usize = 64 * 1024;
+
+    // Буфер вмещает перекрытие с прошлого шага + новую порцию данных
+    let mut buf = vec![0u8; overlap + CHUNK_SIZE];
+    let mut tail_len = 0;
+
     loop {
-        let n = match reader.read(&mut buf) {
+        let n = match file.read(&mut buf[tail_len..tail_len + CHUNK_SIZE]) {
             Ok(0) => break,
             Ok(n) => n,
             Err(_) => return true,
         };
-        let mut combined = Vec::with_capacity(tail.len() + n);
-        combined.extend_from_slice(&tail);
-        combined.extend_from_slice(&buf[..n]);
-        if combined
+
+        let active_len = tail_len + n;
+        if buf[..active_len]
             .windows(marker.len())
             .any(|window| window == marker)
         {
             return true;
         }
-        if combined.len() >= overlap {
-            tail.clear();
-            tail.extend_from_slice(&combined[combined.len() - overlap..]);
+
+        if active_len >= overlap {
+            // Копируем хвост в самое начало буфера без аллокаций
+            buf.copy_within(active_len - overlap..active_len, 0);
+            tail_len = overlap;
         } else {
-            tail = combined;
+            tail_len = active_len;
         }
     }
     false
