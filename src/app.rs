@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 enum CheckMessage {
     Progress(String),
-    Finished(Result<CheckResult, String>),
+    Finished(Result<crate::domain::CheckResult, String>),
 }
 
 pub(crate) enum InventoryAction {
@@ -21,18 +21,18 @@ pub(crate) struct AssetInventoryWindowState {
     show_tiles: bool,
     scanning_umlauts: bool,
     error: Option<String>,
-    pub(crate) assets: Vec<ReferencedAsset>,
-    umlaut_assets: Vec<UmlautAsset>,
-    pub(crate) sort: InventorySort,
+    pub(crate) assets: Vec<crate::domain::ReferencedAsset>,
+    umlaut_assets: Vec<crate::domain::UmlautAsset>,
+    pub(crate) sort: crate::inventory_ui::InventorySort,
 }
 
-type InventoryScanOutcome = (Vec<UmlautAsset>, Vec<String>);
+type InventoryScanOutcome = (Vec<crate::domain::UmlautAsset>, Vec<String>);
 
 pub(crate) struct CheckerApp {
     pub(crate) rw_path: String,
-    pub(crate) routes: Vec<Route>,
+    pub(crate) routes: Vec<crate::domain::Route>,
     pub(crate) selected_route: Option<usize>,
-    pub(crate) scenarios: Vec<RouteScenario>,
+    pub(crate) scenarios: Vec<crate::scenario::RouteScenario>,
     scenarios_route: Option<String>,
     pub(crate) selected_scenario: Option<usize>,
     pub(crate) selected_consist: Option<usize>,
@@ -42,20 +42,20 @@ pub(crate) struct CheckerApp {
     pub(crate) scenario_vehicle_files: Option<Vec<Vec<bool>>>,
     pub(crate) search_query: String,
     ignore_scenarios: bool,
-    pub(crate) result: Option<CheckResult>,
+    pub(crate) result: Option<crate::domain::CheckResult>,
     pub(crate) status: String,
     pub(crate) check_log: String,
     pub(crate) progress_pending: Option<String>,
     pub(crate) last_progress_log: Option<Instant>,
     pub(crate) last_progress_text: Option<String>,
-    pub(crate) incomplete_folders: Vec<IncompleteRouteFolder>,
+    pub(crate) incomplete_folders: Vec<crate::domain::IncompleteRouteFolder>,
     selected_incomplete: Option<usize>,
     pub(crate) ignored_route_ids: HashSet<String>,
-    route_scan: Option<Receiver<Result<RouteScanOutcome, String>>>,
+    route_scan: Option<Receiver<Result<crate::domain::RouteScanOutcome, String>>>,
     check: Option<Receiver<CheckMessage>>,
     pub(crate) asset_replacement:
-        Option<Receiver<(String, Result<AssetReplacementReport, String>)>>,
-    pub(crate) asset_replacement_queue: Vec<(MissingAsset, PathBuf, String)>,
+        Option<Receiver<(String, Result<crate::domain::AssetReplacementReport, String>)>>,
+    pub(crate) asset_replacement_queue: Vec<(crate::domain::MissingAsset, PathBuf, String)>,
     asset_replacement_feedback: Option<Result<String, String>>,
     pub(crate) route_thumbnails_enabled: bool,
     pub(crate) serz_process_limit: usize,
@@ -75,35 +75,35 @@ pub(crate) struct CheckerApp {
 
 impl Default for CheckerApp {
     fn default() -> Self {
-        let rw_path = load_last_game_path();
-        let (ignored_route_ids, mut status) = match load_ignored_route_ids() {
+        let rw_path = crate::settings::load_last_game_path();
+        let (ignored_route_ids, mut status) = match crate::settings::load_ignored_route_ids() {
             Ok(ids) => (
                 ids,
                 "Укажите путь к RailWorks и просканируйте маршруты.".to_owned(),
             ),
             Err(error) => (HashSet::new(), error),
         };
-        let (route_thumbnails_enabled, settings_warning) = match load_route_thumbnail_setting() {
+        let (route_thumbnails_enabled, settings_warning) = match crate::settings::load_route_thumbnail_setting() {
             Ok(enabled) => (enabled, None),
             Err(error) => (false, Some(error)),
         };
-        let (serz_process_limit, serz_settings_warning) = match load_serz_process_limit() {
+        let (serz_process_limit, serz_settings_warning) = match crate::settings::load_serz_process_limit() {
             Ok(limit) => (limit, None),
             Err(error) => (
-                DEFAULT_CONCURRENT_SERZ.min(maximum_serz_processes()),
+                DEFAULT_CONCURRENT_SERZ.min(crate::settings::maximum_serz_processes()),
                 Some(error),
             ),
         };
-        let (route_scan_on_hdd, route_scan_hdd_warning) = match load_route_scan_on_hdd() {
+        let (route_scan_on_hdd, route_scan_hdd_warning) = match crate::settings::load_route_scan_on_hdd() {
             Ok(value) => (value, None),
             Err(error) => (false, Some(error)),
         };
         let (hide_quick_drive_free_roam, hide_scenarios_warning) =
-            match load_hide_quick_drive_free_roam() {
+            match crate::settings::load_hide_quick_drive_free_roam() {
                 Ok(value) => (value, None),
                 Err(error) => (false, Some(error)),
             };
-        let language = load_language();
+        let language = crate::settings::load_language();
         let (inventory_action_tx, inventory_action_rx) = mpsc::channel();
         if let Some(warning) = settings_warning {
             status.push(' ');
@@ -153,7 +153,7 @@ impl Default for CheckerApp {
             serz_process_limit,
             route_scan_on_hdd,
             hide_quick_drive_free_roam,
-            locoswap_path: load_locoswap_path(),
+            locoswap_path: crate::settings::load_locoswap_path(),
             language,
             asset_inventory_state: Arc::new(Mutex::new(AssetInventoryWindowState::default())),
             inventory_action_tx,
@@ -196,25 +196,25 @@ impl CheckerApp {
         }
         let inventory = result.asset_inventory.clone();
         let assets_path = PathBuf::from(self.rw_path.trim()).join("Assets");
-        let serz_path = preferred_serz_path(Path::new(self.rw_path.trim()));
+        let serz_path = crate::assets::preferred_serz_path(Path::new(self.rw_path.trim()));
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
         self.inventory_scan = Some(rx);
         self.status = "Проверка ассетов маршрута на умляуты...".to_owned();
         thread::spawn(move || {
             let result =
-                scan_umlaut_assets(&inventory, &assets_path, &serz_path, max_concurrent_serz);
+                crate::assets::scan_umlaut_assets(&inventory, &assets_path, &serz_path, max_concurrent_serz);
             let _ = tx.send(result);
         });
     }
 
     pub(crate) fn start_asset_replacement(
         &mut self,
-        missing: MissingAsset,
+        missing: crate::domain::MissingAsset,
         replacement: PathBuf,
         transliterate: bool,
         replacement_relative: String,
-        fixes: CharacterFixes,
+        fixes: crate::translit::CharacterFixes,
     ) {
         let Some(route) = self
             .selected_route
@@ -225,7 +225,7 @@ impl CheckerApp {
         };
         let rw_path = PathBuf::from(self.rw_path.trim());
         let assets_path = rw_path.join("Assets");
-        let serz_path = preferred_serz_path(&rw_path);
+        let serz_path = crate::assets::preferred_serz_path(&rw_path);
         let (tx, rx) = mpsc::channel();
         self.asset_replacement = Some(rx);
         self.asset_replacement_feedback = None;
@@ -233,7 +233,7 @@ impl CheckerApp {
         thread::spawn(move || {
             let missing_path = missing.path.clone();
             let replacement = if transliterate {
-                match repair_umlaut_asset_chain(
+                match crate::assets::repair_umlaut_asset_chain(
                     &route.path,
                     &assets_path,
                     &serz_path,
@@ -255,7 +255,7 @@ impl CheckerApp {
             } else {
                 replacement
             };
-            let result = replace_missing_asset(
+            let result = crate::assets::replace_missing_asset(
                 &route.path,
                 &assets_path,
                 &serz_path,
@@ -272,7 +272,7 @@ impl CheckerApp {
                     .into_iter()
                     .collect();
                 original_files.sort();
-                let mut entry = AssetReplacementLogEntry {
+                let mut entry = crate::domain::AssetReplacementLogEntry {
                     timestamp_unix_seconds: 0,
                     operation: "Замена отсутствующего ассета".to_owned(),
                     route_id: Some(route.id.clone()),
@@ -286,18 +286,18 @@ impl CheckerApp {
                     uses: missing
                         .uses
                         .iter()
-                        .map(|usage| AssetReplacementLogUse {
+                        .map(|usage| crate::domain::AssetReplacementLogUse {
                             tile: usage.tile.clone(),
                             source_file: usage.source_file.display(),
                         })
                         .collect(),
                     backups: report.backups.clone(),
                 };
-                match asset_replacement_log_file()
+                match crate::settings::asset_replacement_log_file()
                     .ok_or_else(|| {
                         "Windows APPDATA не определена; журнал замен не сохранён.".to_owned()
                     })
-                    .and_then(|path| append_asset_replacement_log(&path, &mut entry).map(|()| path))
+                    .and_then(|path| crate::settings::append_asset_replacement_log(&path, &mut entry).map(|()| path))
                 {
                     Ok(path) => report.log_file = Some(path),
                     Err(error) => report.log_error = Some(error),
@@ -348,7 +348,7 @@ impl CheckerApp {
         );
         thread::spawn(move || {
             let result =
-                scan_routes_with_cache(&root, &ignored_route_ids, allow_cache, max_threads);
+                crate::routes::scan_routes_with_cache(&root, &ignored_route_ids, allow_cache, max_threads);
             let _ = tx.send(result);
         });
     }
@@ -363,7 +363,7 @@ impl CheckerApp {
         };
         let rw_path = PathBuf::from(self.rw_path.trim());
         let assets_path = rw_path.join("Assets");
-        let serz_path = preferred_serz_path(&rw_path);
+        let serz_path = crate::assets::preferred_serz_path(&rw_path);
         let ignore_scenarios = self.ignore_scenarios;
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
@@ -384,7 +384,7 @@ impl CheckerApp {
         self.status = format!("Проверка маршрута «{}»...", route.name);
         thread::spawn(move || {
             let progress_tx = tx.clone();
-            let result = check_route(
+            let result = crate::assets::check_route(
                 &route.path,
                 &assets_path,
                 &serz_path,
@@ -408,9 +408,9 @@ impl CheckerApp {
         if self.scenarios_route.as_deref() == Some(route.id.as_str()) {
             return;
         }
-        self.scenarios = read_route_scenarios(
+        self.scenarios = crate::scenario::read_route_scenarios(
             &route.path,
-            &preferred_serz_path(Path::new(self.rw_path.trim())),
+            &crate::assets::preferred_serz_path(Path::new(self.rw_path.trim())),
         );
         self.scenarios_route = Some(route.id.clone());
         self.selected_scenario = None;

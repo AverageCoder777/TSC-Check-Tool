@@ -1,4 +1,4 @@
-//! Route discovery, structure reports, names, icons, and route-scan caching.
+//! crate::domain::Route discovery, structure reports, names, icons, and route-scan caching.
 
 use super::*;
 use std::collections::{HashMap, HashSet};
@@ -66,7 +66,7 @@ pub(crate) fn scan_routes_with_cache(
     ignored_route_ids: &HashSet<String>,
     allow_cache: bool,
     max_threads: usize,
-) -> Result<RouteScanOutcome, String> {
+) -> Result<crate::domain::RouteScanOutcome, String> {
     let canonical_game_path = rw_path.canonicalize().map_err(|error| {
         format!(
             "Не удалось проверить папку игры {}: {error}",
@@ -83,14 +83,14 @@ pub(crate) fn scan_routes_with_cache(
     if allow_cache {
         if let Some(cache_path) = &cache_file {
             match fs::read(cache_path) {
-                Ok(contents) => match serde_json::from_slice::<RouteScanCache>(&contents) {
+                Ok(contents) => match serde_json::from_slice::<crate::domain::RouteScanCache>(&contents) {
                     Ok(cache)
                         if cache.game_path == game_path
                             && cache.icon_scan_version == 4
                             && cache.folder_ids == folder_ids
                             && cache.ignored_route_ids == ignored_ids =>
                     {
-                        return Ok(RouteScanOutcome {
+                        return Ok(crate::domain::RouteScanOutcome {
                             result: cache.result,
                             from_cache: true,
                             notice: None,
@@ -118,7 +118,7 @@ pub(crate) fn scan_routes_with_cache(
 
     let result = scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads)?;
     if let Some(cache_path) = cache_file {
-        let cache = RouteScanCache {
+        let cache = crate::domain::RouteScanCache {
             icon_scan_version: 4,
             game_path,
             folder_ids,
@@ -155,7 +155,7 @@ pub(crate) fn scan_routes_with_cache(
         }
     }
 
-    Ok(RouteScanOutcome {
+    Ok(crate::domain::RouteScanOutcome {
         result,
         from_cache: false,
         notice,
@@ -163,7 +163,7 @@ pub(crate) fn scan_routes_with_cache(
 }
 
 #[cfg(test)]
-pub(crate) fn scan_routes(rw_path: &Path) -> Result<RouteScanResult, String> {
+pub(crate) fn scan_routes(rw_path: &Path) -> Result<crate::domain::RouteScanResult, String> {
     scan_routes_with_ignored(rw_path, &HashSet::new(), 4)
 }
 
@@ -171,7 +171,7 @@ pub(crate) fn scan_routes_with_ignored(
     rw_path: &Path,
     ignored_route_ids: &HashSet<String>,
     max_threads: usize,
-) -> Result<RouteScanResult, String> {
+) -> Result<crate::domain::RouteScanResult, String> {
     let routes_path = rw_path.join("Content").join("Routes");
     let entries = fs::read_dir(&routes_path)
         .map_err(|error| format!("Не удалось прочитать {}: {error}", routes_path.display()))?;
@@ -207,8 +207,8 @@ pub(crate) fn scan_routes_with_ignored(
     let mut incomplete_folders = Vec::new();
     for item in scan_items {
         match item {
-            RouteScanItem::Route(route) => routes.push(route),
-            RouteScanItem::Incomplete(report) => incomplete_folders.push(report),
+            crate::domain::RouteScanItem::Route(route) => routes.push(route),
+            crate::domain::RouteScanItem::Incomplete(report) => incomplete_folders.push(report),
         }
     }
 
@@ -223,7 +223,7 @@ pub(crate) fn scan_routes_with_ignored(
             .cmp(&right.file_count)
             .then_with(|| left.id.cmp(&right.id))
     });
-    Ok(RouteScanResult {
+    Ok(crate::domain::RouteScanResult {
         routes,
         incomplete_folders,
     })
@@ -233,10 +233,10 @@ pub(crate) fn scan_route_folder(
     path: &Path,
     id: &str,
     ignored_route_ids: &HashSet<String>,
-) -> Result<RouteScanItem, String> {
+) -> Result<crate::domain::RouteScanItem, String> {
     if ignored_route_ids.contains(id) {
         let name = read_route_name(path, id)?;
-        return Ok(RouteScanItem::Route(Route {
+        return Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
             id: id.to_owned(),
             name,
             path: path.to_path_buf(),
@@ -244,10 +244,10 @@ pub(crate) fn scan_route_folder(
         }));
     }
     if let Some(report) = inspect_route_folder(path, id)? {
-        Ok(RouteScanItem::Incomplete(report))
+        Ok(crate::domain::RouteScanItem::Incomplete(report))
     } else {
         let name = read_route_name(path, id)?;
-        Ok(RouteScanItem::Route(Route {
+        Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
             id: id.to_owned(),
             name,
             path: path.to_path_buf(),
@@ -259,7 +259,7 @@ pub(crate) fn scan_route_folder(
 pub(crate) fn inspect_route_folder(
     path: &Path,
     id: &str,
-) -> Result<Option<IncompleteRouteFolder>, String> {
+) -> Result<Option<crate::domain::IncompleteRouteFolder>, String> {
     const REQUIRED_DIRECTORIES: [&str; 4] = ["Networks", "RouteInformation", "Scenery", "Terrain"];
     let children: Vec<(PathBuf, String, bool)> = fs::read_dir(path)
         .map_err(|error| format!("Не удалось прочитать {}: {error}", path.display()))?
@@ -483,7 +483,7 @@ pub(crate) fn inspect_route_folder(
     };
 
     let icon_path = find_route_icon(path)?;
-    Ok(Some(IncompleteRouteFolder {
+    Ok(Some(crate::domain::IncompleteRouteFolder {
         id: id.to_owned(),
         path: path.to_path_buf(),
         icon_path,
@@ -736,7 +736,7 @@ pub(crate) fn extract_scenario_clues(xml: &str) -> Vec<String> {
             };
             let text = parse_route_name(contents).or_else(|| {
                 let plain_text = strip_tags.replace_all(contents, " ");
-                let decoded = decode_xml_text(&plain_text);
+                let decoded = crate::translit::decode_xml_text(&plain_text);
                 let normalized = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
                 (!normalized.is_empty()).then_some(normalized)
             });
@@ -816,7 +816,7 @@ pub(crate) fn parse_route_name_tag(xml: &str) -> Option<String> {
     route_name
         .captures(xml)
         .and_then(|capture| capture.get(1))
-        .map(|value| decode_xml_text(value.as_str()))
+        .map(|value| crate::translit::decode_xml_text(value.as_str()))
         .filter(|name| !name.is_empty())
 }
 
@@ -944,7 +944,7 @@ pub(crate) fn parse_route_name(xml: &str) -> Option<String> {
         .captures_iter(localized_contents)
         .filter_map(|capture| {
             let language = capture.get(1)?.as_str();
-            let value = decode_xml_text(capture.get(2)?.as_str());
+            let value = crate::translit::decode_xml_text(capture.get(2)?.as_str());
             (!value.is_empty()).then_some((language.eq_ignore_ascii_case("English"), value))
         })
         .collect();

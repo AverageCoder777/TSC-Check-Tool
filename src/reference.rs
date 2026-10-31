@@ -6,15 +6,13 @@
 
 use std::path::Path;
 
-use crate::translit::*;
-use crate::{AssetKind, RouteFile};
 pub(crate) struct AssetReference {
     pub(crate) path: String,
     pub(crate) provider_range: std::ops::Range<usize>,
     pub(crate) product_range: std::ops::Range<usize>,
     pub(crate) blueprint_range: std::ops::Range<usize>,
     /// Что за объект стоит по ссылкой: объект маршрута или файл состава.
-    pub(crate) kind: AssetKind,
+    pub(crate) kind: crate::domain::AssetKind,
 }
 /// Сколько символов отличается в двух именах. ///
 pub(crate) fn capture_value_range(capture: &regex::Match<'_>) -> std::ops::Range<usize> {
@@ -184,11 +182,11 @@ pub(crate) fn build_asset_reference(
     provider_range: std::ops::Range<usize>,
     product_range: std::ops::Range<usize>,
     blueprint_range: std::ops::Range<usize>,
-    kind: AssetKind,
+    kind: crate::domain::AssetKind,
 ) -> Option<AssetReference> {
-    let provider = decode_xml_text(provider.trim());
-    let product = decode_xml_text(product.trim());
-    let blueprint = decode_xml_text(blueprint.trim());
+    let provider = crate::translit::decode_xml_text(provider.trim());
+    let product = crate::translit::decode_xml_text(product.trim());
+    let blueprint = crate::translit::decode_xml_text(blueprint.trim());
     if provider.is_empty() || product.is_empty() || blueprint.is_empty() {
         return None;
     }
@@ -330,7 +328,7 @@ pub(crate) fn extract_asset_references(xml: &str) -> std::collections::HashSet<S
 }
 /// Прежняя реализация разбора на регулярных выражениях.
 /// /// Оставлена для сверки: ручной разбор обязан давать ровно тот же результат.
-pub(crate) fn route_tile_label(route_path: &Path, source_file: &RouteFile) -> String {
+pub(crate) fn route_tile_label(route_path: &Path, source_file: &crate::domain::RouteFile) -> String {
     let relative = source_file
         .route_name(route_path)
         .unwrap_or_else(|| source_file.file_name());
@@ -388,61 +386,20 @@ fn kind_from_context_state(
     vehicle: &Option<usize>,
     scenery: &Option<usize>,
     loft: &Option<usize>,
-) -> AssetKind {
-    let mut candidates: Vec<(usize, AssetKind)> = Vec::new();
+) -> crate::domain::AssetKind {
+    let mut candidates: Vec<(usize, crate::domain::AssetKind)> = Vec::new();
     if let Some(index) = vehicle {
-        candidates.push((*index, AssetKind::Vehicle));
+        candidates.push((*index, crate::domain::AssetKind::Vehicle));
     }
     if let Some(index) = scenery {
-        candidates.push((*index, AssetKind::Scenery));
+        candidates.push((*index, crate::domain::AssetKind::Scenery));
     }
     if let Some(index) = loft {
-        candidates.push((*index, AssetKind::Loft));
+        candidates.push((*index, crate::domain::AssetKind::Loft));
     }
     candidates
         .into_iter()
         .max_by_key(|(index, _)| *index)
         .map(|(_, kind)| kind)
-        .unwrap_or(AssetKind::Other)
-}
-pub(crate) fn asset_kind(path: &str) -> AssetKind {
-    let components: Vec<_> = path.split('/').collect();
-    if components
-        .iter()
-        .any(|component| component.eq_ignore_ascii_case("Networks"))
-    {
-        AssetKind::Loft
-    } else if components
-        .iter()
-        .any(|component| component.eq_ignore_ascii_case("Scenery"))
-    {
-        AssetKind::Scenery
-    } else {
-        AssetKind::Other
-    }
-}
-
-/// Проверяет, что тип нового ассета совпадает с типом отсутствующего.
-/// /// Loft-объект лежит в папке Networks, scenery-объект — в папке Scenery, так
-/// что заменить один другим нельзя: у них разная структура ссылок.
-pub(crate) fn check_asset_kind_compatibility(
-    old_asset: &str,
-    new_asset: &str,
-) -> Result<(), String> {
-    let old_kind = asset_kind(old_asset);
-    let new_kind = asset_kind(new_asset);
-    if (old_kind == AssetKind::Loft) != (new_kind == AssetKind::Loft)
-        || (old_kind == AssetKind::Scenery) != (new_kind == AssetKind::Scenery)
-    {
-        return Err(match old_kind {
-            AssetKind::Loft => "Для loft-объекта выберите замену из папки Networks.".to_owned(),
-            AssetKind::Scenery => {
-                "Для scenery-объекта выберите замену из папки Scenery.".to_owned()
-            }
-            AssetKind::Vehicle | AssetKind::Other => {
-                "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned()
-            }
-        });
-    }
-    Ok(())
+        .unwrap_or(crate::domain::AssetKind::Other)
 }

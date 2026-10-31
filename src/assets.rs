@@ -4,7 +4,7 @@ use super::*;
 use std::collections::{HashMap, HashSet};
 use walkdir::WalkDir;
 
-pub fn is_safe_for_global_replacement(relative_path: &str, uses: &[AssetUse]) -> bool {
+pub fn is_safe_for_global_replacement(relative_path: &str, uses: &[crate::domain::AssetUse]) -> bool {
     let item = RouteAssetItem {
         path: relative_path.to_owned(),
         uses: uses.to_vec(),
@@ -15,7 +15,7 @@ pub fn is_safe_for_global_replacement(relative_path: &str, uses: &[AssetUse]) ->
 #[derive(Clone)]
 pub struct RouteAssetItem {
     pub path: String,
-    pub uses: Vec<AssetUse>,
+    pub uses: Vec<crate::domain::AssetUse>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,7 +45,7 @@ impl RouteAssetType {
     }
 }
 
-pub fn classify_route_asset_type(asset: &str, uses: &[AssetUse]) -> RouteAssetType {
+pub fn classify_route_asset_type(asset: &str, uses: &[crate::domain::AssetUse]) -> RouteAssetType {
     let mut track = false;
     let mut trackrules = false;
     let mut road = false;
@@ -249,7 +249,7 @@ pub(crate) fn collect_route_files(
 ///
 /// Записи возвращаются как виртуальные файлы: архив не распаковывается целиком,
 /// игра читает его так, будто его нет.
-pub(crate) fn collect_archive_members(route_path: &Path) -> Result<Vec<RouteFile>, String> {
+pub(crate) fn collect_archive_members(route_path: &Path) -> Result<Vec<crate::domain::RouteFile>, String> {
     let mut members = Vec::new();
     let entries = fs::read_dir(route_path)
         .map_err(|error| format!("Не удалось прочитать папку маршрута: {error}"))?;
@@ -292,7 +292,7 @@ pub(crate) fn collect_archive_members(route_path: &Path) -> Result<Vec<RouteFile
             }) {
                 continue;
             }
-            members.push(RouteFile::Archive {
+            members.push(crate::domain::RouteFile::Archive {
                 archive: path.clone(),
                 name: name.to_owned(),
                 stamp: archive_stamp,
@@ -408,9 +408,9 @@ pub(crate) fn find_serz_path(target: &Path) -> Option<PathBuf> {
 struct FileAnalysis {
     /// Разбор взят из кэша: файл не менялся с прошлой проверки.
     from_cache: bool,
-    file: RouteFile,
+    file: crate::domain::RouteFile,
     /// Сколько раз каждый ассет встречается в файле.
-    uses: Vec<(String, u32, AssetKind)>,
+    uses: Vec<(String, u32, crate::domain::AssetKind)>,
     error: Option<String>,
 }
 
@@ -485,15 +485,15 @@ fn names_match(expected: &str, candidate: &str) -> bool {
         && expected.iter().zip(candidate.iter()).all(|(left, right)| {
             left == right
                 || left.eq_ignore_ascii_case(right)
-                || BROKEN_CHARACTERS.contains(left)
-                || BROKEN_CHARACTERS.contains(right)
+                || crate::translit::BROKEN_CHARACTERS.contains(left)
+                || crate::translit::BROKEN_CHARACTERS.contains(right)
                 || is_homoglyph(*left, *right)
         })
 }
 
 fn has_corrupted_or_nonascii(value: &str) -> bool {
     !value.is_ascii()
-        || has_broken_character(value)
+        || crate::translit::has_broken_character(value)
         || value.chars().any(|character| {
             matches!(character, '\u{FFFD}' | '?' | '¦' | '¢') || character.is_control()
         })
@@ -663,22 +663,22 @@ fn resolve_asset_path(assets_path: &Path, relative_asset: &str) -> Result<Option
     if exact.is_file() {
         return Ok(Some(exact));
     }
-    if !has_broken_character(relative_asset) {
+    if !crate::translit::has_broken_character(relative_asset) {
         // Файла нет по точному имени: ищем ближайший по сходству. В игре
         // встречаются имена с кириллическими буквами вместо латинских.
         return Ok(find_similar_asset_path(assets_path, relative_asset));
     }
     let broken_count = relative_asset
         .chars()
-        .filter(|character| BROKEN_CHARACTERS.contains(character))
+        .filter(|character| crate::translit::BROKEN_CHARACTERS.contains(character))
         .count();
-    if broken_count > MAX_BROKEN_CHARACTERS {
+    if broken_count > crate::translit::MAX_BROKEN_CHARACTERS {
         return Ok(None);
     }
 
     let tiers = [
-        replace_broken_characters_combinations(relative_asset, &TRANSLITERATED_CHARACTERS),
-        replace_broken_characters_combinations(relative_asset, &UMLAUT_CHARACTERS),
+        crate::translit::replace_broken_characters_combinations(relative_asset, &crate::translit::TRANSLITERATED_CHARACTERS),
+        crate::translit::replace_broken_characters_combinations(relative_asset, &crate::translit::UMLAUT_CHARACTERS),
     ];
 
     // Windows считает «ä» и «Ä» одним и тем же именем файла, поэтому одинаковые
@@ -904,14 +904,14 @@ fn referenced_geometry_paths(xml: &str) -> Vec<(GeometryReference, std::ops::Ran
             let Some(matched) = captures.get(1) else {
                 continue;
             };
-            let text = decode_xml_text(matched.as_str().trim());
+            let text = crate::translit::decode_xml_text(matched.as_str().trim());
             let Some(reference) = GeometryReference::parse(&text) else {
                 continue;
             };
             if !reference.is_geometry_reference() {
                 continue;
             }
-            let range = capture_value_range(&matched);
+            let range = crate::reference::capture_value_range(&matched);
             if found
                 .iter()
                 .any(|(_, existing_range)| existing_range == &range)
@@ -982,18 +982,18 @@ fn resolve_product_reference(
 ) -> Option<(PathBuf, ReferenceBase)> {
     let base = reference.path.replace('/', "\\");
     let mut names = vec![base.clone()];
-    if has_broken_character(&base) {
+    if crate::translit::has_broken_character(&base) {
         let broken_count = base
             .chars()
-            .filter(|character| BROKEN_CHARACTERS.contains(character))
+            .filter(|character| crate::translit::BROKEN_CHARACTERS.contains(character))
             .count();
-        if broken_count <= MAX_REFERENCE_VARIANTS {
+        if broken_count <= crate::translit::MAX_REFERENCE_VARIANTS {
             // Испорченный символ в ссылке может означать и умляут, и уже
             // переписанное имя, причём в разных частях пути по-разному, поэтому
             // проверяются все сочетания.
-            let mut replacements: Vec<&str> = TRANSLITERATED_CHARACTERS.to_vec();
-            replacements.extend_from_slice(&UMLAUT_CHARACTERS);
-            names.extend(replace_broken_characters_combinations(&base, &replacements));
+            let mut replacements: Vec<&str> = crate::translit::TRANSLITERATED_CHARACTERS.to_vec();
+            replacements.extend_from_slice(&crate::translit::UMLAUT_CHARACTERS);
+            names.extend(crate::translit::replace_broken_characters_combinations(&base, &replacements));
         }
     }
     let extensions = reference.disk_extensions();
@@ -1139,19 +1139,19 @@ fn asset_chain_umlaut_evidence(
             continue;
         }
         let xml = read_serz_xml(serz_path, &canonical)?;
-        if has_umlauts_in_xml(&xml) {
+        if crate::translit::has_umlauts_in_xml(&xml) {
             evidence.push(format!("Внутри файла: {}", canonical.display()));
         }
         for (reference, _) in referenced_geometry_paths(&xml) {
             let reference_text = reference.to_text();
-            if has_umlauts(&reference_text) {
+            if crate::translit::has_umlauts(&reference_text) {
                 evidence.push(format!(
                     "Ссылка из {}: {reference_text}",
                     canonical.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }
             // Символы, которые игра не грузит, пользователь заменяет сам.
-            unsupported.extend(unsupported_characters(&reference_text));
+            unsupported.extend(crate::translit::unsupported_characters(&reference_text));
             let Some((path, _)) =
                 resolve_product_reference(assets_path, &product_root, &canonical, &reference)
             else {
@@ -1178,10 +1178,10 @@ pub(crate) fn inspect_umlaut_asset(
     relative_asset: &str,
     assets_path: &Path,
     serz_path: &Path,
-) -> (Option<UmlautAsset>, Option<String>) {
+) -> (Option<crate::domain::UmlautAsset>, Option<String>) {
     let mut evidence = Vec::new();
-    let mut unsupported = unsupported_characters(relative_asset);
-    let path_has_umlauts = has_umlauts(relative_asset);
+    let mut unsupported = crate::translit::unsupported_characters(relative_asset);
+    let path_has_umlauts = crate::translit::has_umlauts(relative_asset);
     if path_has_umlauts {
         evidence.push(format!("Умляут в пути ассета: {relative_asset}"));
     }
@@ -1226,18 +1226,18 @@ pub(crate) fn inspect_umlaut_asset(
     }
     // Ассета, которого нет на диске, чинить нечем: для него есть замена.
     let asset = (full_asset_path.is_some() && (!evidence.is_empty() || !unsupported.is_empty()))
-        .then(|| UmlautAsset {
+        .then(|| crate::domain::UmlautAsset {
             path: relative_asset.to_owned(),
         });
     (asset, scan_error)
 }
 
 pub(crate) fn scan_umlaut_assets(
-    inventory: &[ReferencedAsset],
+    inventory: &[crate::domain::ReferencedAsset],
     assets_path: &Path,
     serz_path: &Path,
     max_concurrent_serz: usize,
-) -> Result<(Vec<UmlautAsset>, Vec<String>), String> {
+) -> Result<(Vec<crate::domain::UmlautAsset>, Vec<String>), String> {
     let worker_count = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(2)
@@ -1279,7 +1279,7 @@ pub(crate) fn decode_xml_bytes(bytes: &[u8]) -> String {
 }
 
 fn analyze_route_file(
-    route_file: &RouteFile,
+    route_file: &crate::domain::RouteFile,
     index: usize,
     temp_dir: &Path,
     serz_path: &Path,
@@ -1379,7 +1379,7 @@ fn analyze_route_file(
 
     let xml_text = decode_xml_bytes(&xml_data);
 
-    let references = extract_asset_references_with_locations(&xml_text);
+    let references = crate::reference::extract_asset_references_with_locations(&xml_text);
 
     FileAnalysis {
         from_cache: false,
@@ -1394,10 +1394,10 @@ fn analyze_route_file(
 /// Порядок первого появления сохраняется: по нему собирается список
 /// использований в инвентаре. Вместе с ассетом запоминается, что он из себя
 /// представляет: объект маршрута или файл состава.
-fn count_asset_uses(references: Vec<AssetReference>) -> Vec<(String, u32, AssetKind)> {
+fn count_asset_uses(references: Vec<crate::reference::AssetReference>) -> Vec<(String, u32, crate::domain::AssetKind)> {
     let mut order: Vec<String> = Vec::new();
     let mut counts: HashMap<String, u32> = HashMap::new();
-    let mut kinds: HashMap<String, AssetKind> = HashMap::new();
+    let mut kinds: HashMap<String, crate::domain::AssetKind> = HashMap::new();
     for reference in references {
         let counter = counts.entry(reference.path.clone()).or_insert_with(|| {
             order.push(reference.path.clone());
@@ -1410,7 +1410,7 @@ fn count_asset_uses(references: Vec<AssetReference>) -> Vec<(String, u32, AssetK
         .into_iter()
         .map(|path| {
             let count = counts.get(&path).copied().unwrap_or_default();
-            let kind = kinds.get(&path).copied().unwrap_or(AssetKind::Other);
+            let kind = kinds.get(&path).copied().unwrap_or(crate::domain::AssetKind::Other);
             (path, count, kind)
         })
         .collect()
@@ -1426,8 +1426,8 @@ fn may_contain_asset_reference(file_path: &Path) -> bool {
     let Ok(data) = fs::read(file_path) else {
         return true;
     };
-    data.windows(BLUEPRINT_ID_MARKER.len())
-        .any(|window| window == BLUEPRINT_ID_MARKER.as_bytes())
+    data.windows(crate::translit::BLUEPRINT_ID_MARKER.len())
+        .any(|window| window == crate::translit::BLUEPRINT_ID_MARKER.as_bytes())
 }
 
 /// Ставит изменённый файл маршрута на место.
@@ -1437,15 +1437,15 @@ fn may_contain_asset_reference(file_path: &Path) -> bool {
 /// оригинальную, а сам архив останется нетронутым.
 fn install_route_file(
     route_path: &Path,
-    source_file: &RouteFile,
+    source_file: &crate::domain::RouteFile,
     converted_path: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let target = source_file.install_target(route_path);
     // У записи из архива оригинала на диске нет: резервная копия не нужна, а
     // изменённая версия просто кладётся рядом с архивом.
     let original = match source_file {
-        RouteFile::Path(path) => Some(path.clone()),
-        RouteFile::Archive { .. } => None,
+        crate::domain::RouteFile::Path(path) => Some(path.clone()),
+        crate::domain::RouteFile::Archive { .. } => None,
     };
     if let Some(original) = original
         && target == original
@@ -1468,7 +1468,7 @@ pub(crate) fn check_route<F>(
     ignore_scenarios: bool,
     max_concurrent_serz: usize,
     report_progress: F,
-) -> Result<CheckResult, String>
+) -> Result<crate::domain::CheckResult, String>
 where
     F: Fn(&str) + Sync,
 {
@@ -1508,9 +1508,9 @@ where
     }
 
     // Основные файлы маршрута могут быть упакованы в .ap...
-    let mut route_files: Vec<RouteFile> = collected_route_files
+    let mut route_files: Vec<crate::domain::RouteFile> = collected_route_files
         .into_iter()
-        .map(RouteFile::Path)
+        .map(crate::domain::RouteFile::Path)
         .collect();
     let outside: Vec<String> = route_files
         .iter()
@@ -1531,19 +1531,19 @@ where
     // Тяжёлый глобальный файл сети путей проверяем отдельно и в самом конце:
     // его конвертация занимает минуты и не должна задерживать остальные файлы
     // и отчёты о ходе проверки.
-    let is_tracks_bin = |route_file: &RouteFile| {
+    let is_tracks_bin = |route_file: &crate::domain::RouteFile| {
         route_file
             .route_name(route_path)
             .map(|name| name.eq_ignore_ascii_case("Networks/Tracks.bin"))
             .unwrap_or(false)
     };
     route_files.sort_by_key(|a| is_tracks_bin(a));
-    let normal_files: Vec<RouteFile> = route_files
+    let normal_files: Vec<crate::domain::RouteFile> = route_files
         .iter()
         .filter(|file| !is_tracks_bin(file))
         .cloned()
         .collect();
-    let heavy_files: Vec<RouteFile> = route_files
+    let heavy_files: Vec<crate::domain::RouteFile> = route_files
         .iter()
         .filter(|file| is_tracks_bin(file))
         .cloned()
@@ -1610,7 +1610,7 @@ where
         });
         analyses.extend(chunk_analyses);
     }
-    let mut asset_uses: HashMap<String, Vec<AssetUse>> = HashMap::new();
+    let mut asset_uses: HashMap<String, Vec<crate::domain::AssetUse>> = HashMap::new();
     // Написание пути, как оно встретилось в маршруте: ключ в asset_uses приведён
     // к нижнему регистру, потому что игра регистр не различает.
     let mut asset_names: HashMap<String, String> = HashMap::new();
@@ -1631,7 +1631,7 @@ where
                 );
             }
         }
-        let tile = route_tile_label(route_path, &analysis.file);
+        let tile = crate::reference::route_tile_label(route_path, &analysis.file);
         for (asset, count, kind) in analysis.uses {
             // Игра читает пути без учёта регистра, поэтому ссылки, отличающиеся
             // регистром, относятся к одному ассету.
@@ -1641,7 +1641,7 @@ where
                 .or_insert_with(|| asset.clone());
             let uses = asset_uses.entry(key).or_default();
             for _ in 0..count {
-                uses.push(AssetUse {
+                uses.push(crate::domain::AssetUse {
                     source_file: analysis.file.clone(),
                     tile: tile.clone(),
                     tile_kind: analysis.file.tile_kind(),
@@ -1770,7 +1770,7 @@ where
     report_progress("Проверка имён и строк ассетов на умляуты...");
     let inventory_seed: Vec<_> = asset_uses
         .iter()
-        .map(|(path, uses)| ReferencedAsset {
+        .map(|(path, uses)| crate::domain::ReferencedAsset {
             path: asset_names
                 .get(path)
                 .cloned()
@@ -1822,8 +1822,8 @@ where
             let full_path = relative_asset.replace('/', "\\").to_lowercase();
             let mut variants = vec![inner_path.clone(), product_path.clone(), full_path.clone()];
             for base in [inner_path, product_path, full_path] {
-                variants.push(replace_broken_characters(&base, "ss"));
-                variants.push(replace_broken_characters(&base, "ß"));
+                variants.push(crate::translit::replace_broken_characters(&base, "ss"));
+                variants.push(crate::translit::replace_broken_characters(&base, "ß"));
             }
             // Texture slot prefixes: ensure a trailing extension for image refs.
             let mut texture_variants = Vec::new();
@@ -1873,7 +1873,7 @@ where
         let is_missing = !is_in_archive && resolved_disk_path.is_none() && !is_corrupted;
 
         if is_missing || is_corrupted {
-            missing_assets.push(MissingAsset {
+            missing_assets.push(crate::domain::MissingAsset {
                 path: display_path.clone(),
                 uses: uses.clone(),
                 suggested_repair,
@@ -1882,7 +1882,7 @@ where
             });
         }
 
-        asset_inventory.push(ReferencedAsset {
+        asset_inventory.push(crate::domain::ReferencedAsset {
             path: display_path,
             uses,
             missing: is_missing,
@@ -1891,7 +1891,7 @@ where
     missing_assets.sort_by(|left, right| left.path.cmp(&right.path));
     asset_inventory.sort_by(|left, right| left.path.cmp(&right.path));
 
-    Ok(CheckResult {
+    Ok(crate::domain::CheckResult {
         missing_assets,
         asset_inventory,
         umlaut_assets,
@@ -1914,8 +1914,8 @@ pub(crate) fn replace_missing_asset(
     serz_path: &Path,
     old_asset: &str,
     replacement_path: &Path,
-    uses: &[AssetUse],
-) -> Result<AssetReplacementReport, String> {
+    uses: &[crate::domain::AssetUse],
+) -> Result<crate::domain::AssetReplacementReport, String> {
     let replacement_path = replacement_path
         .canonicalize()
         .map_err(|error| format!("Не удалось проверить новый ассет: {error}"))?;
@@ -2059,7 +2059,7 @@ pub(crate) fn replace_missing_asset(
                 source.display()
             ));
         }
-        if let RouteFile::Path(path) = &source {
+        if let crate::domain::RouteFile::Path(path) = &source {
             let canonical_source = path.canonicalize().map_err(|error| {
                 format!(
                     "Не удалось проверить файл маршрута {}: {error}",
@@ -2095,11 +2095,11 @@ pub(crate) fn replace_missing_asset(
         // Запись из архива лежит только внутри архива: папки с таким именем на
         // диске нет, поэтому временные файлы кладём в папку маршрута.
         let source_parent = match &source_file {
-            RouteFile::Path(path) => path
+            crate::domain::RouteFile::Path(path) => path
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| route_path.to_path_buf()),
-            RouteFile::Archive { .. } => route_path.to_path_buf(),
+            crate::domain::RouteFile::Archive { .. } => route_path.to_path_buf(),
         };
         let temp = create_temporary_work_directory(&source_parent)?;
         let file_path = source_file.materialize(temp.path())?;
@@ -2139,7 +2139,7 @@ pub(crate) fn replace_missing_asset(
                 source_file.display()
             )
         })?;
-        let references = extract_asset_references_with_locations(&xml);
+        let references = crate::reference::extract_asset_references_with_locations(&xml);
         let edits: Vec<_> = references
             .into_iter()
             .filter(|reference| reference.path.eq_ignore_ascii_case(old_asset))
@@ -2242,7 +2242,7 @@ pub(crate) fn replace_missing_asset(
             }
         }
     }
-    Ok(AssetReplacementReport {
+    Ok(crate::domain::AssetReplacementReport {
         replaced_files,
         replaced_instances,
         backups,
@@ -2254,7 +2254,7 @@ pub(crate) fn replace_missing_asset(
 
 struct StagedUmlautFile {
     /// Исходный файл: запись архива .ap или файл на диске.
-    source: RouteFile,
+    source: crate::domain::RouteFile,
     /// Куда класть результат.
     target: PathBuf,
     staged: PathBuf,
@@ -2264,7 +2264,7 @@ struct StagedUmlautFile {
 fn transliterated_asset_path(
     assets_path: &Path,
     source: &Path,
-    fixes: &CharacterFixes,
+    fixes: &crate::translit::CharacterFixes,
 ) -> Result<PathBuf, String> {
     let relative = source
         .strip_prefix(assets_path)
@@ -2282,7 +2282,7 @@ fn transliterated_asset_path(
         .as_os_str()
         .to_string_lossy()
         .into_owned();
-    if has_umlauts(&provider) || has_umlauts(&product) {
+    if crate::translit::has_umlauts(&provider) || crate::translit::has_umlauts(&product) {
         return Err(format!(
             "Умляут найден в имени Provider/Product для {}. Автоматическая транслитерация папок Provider/Product остановлена, чтобы не затронуть другие ассеты.",
             source.display()
@@ -2290,7 +2290,7 @@ fn transliterated_asset_path(
     }
     // Вложенные папки переименовываются вместе с файлами: все ссылки на них
     // обновляются каскадом.
-    let translated = transliterate_text(&relative.to_string_lossy(), fixes);
+    let translated = crate::translit::transliterate_text(&relative.to_string_lossy(), fixes);
     Ok(assets_path.join(translated))
 }
 
@@ -2313,7 +2313,7 @@ fn folders_with_umlauts(assets_path: &Path, asset: &Path) -> Result<Vec<PathBuf>
         current.push(component);
         // Первые два компонента — Provider и Product, их не переименовываем.
         let name = component.as_os_str().to_string_lossy();
-        if index >= 2 && has_umlauts(&name) {
+        if index >= 2 && crate::translit::has_umlauts(&name) {
             folders.push(current.clone());
         }
     }
@@ -2407,7 +2407,7 @@ fn stage_serz_xml(
         )
     })?;
     Ok(StagedUmlautFile {
-        source: RouteFile::Path(source.to_path_buf()),
+        source: crate::domain::RouteFile::Path(source.to_path_buf()),
         target: target.to_path_buf(),
         staged,
         _temp: temp,
@@ -2431,7 +2431,7 @@ fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFile, 
         )
     })?;
     Ok(StagedUmlautFile {
-        source: RouteFile::Path(source.to_path_buf()),
+        source: crate::domain::RouteFile::Path(source.to_path_buf()),
         target: target.to_path_buf(),
         staged,
         _temp: temp,
@@ -2443,9 +2443,9 @@ pub(crate) fn repair_umlaut_asset_chain(
     assets_path: &Path,
     serz_path: &Path,
     asset_relative_path: &str,
-    uses: &[AssetUse],
-    fixes: &CharacterFixes,
-) -> Result<UmlautRepairReport, String> {
+    uses: &[crate::domain::AssetUse],
+    fixes: &crate::translit::CharacterFixes,
+) -> Result<crate::domain::UmlautRepairReport, String> {
     if !serz_path.is_file() {
         return Err(format!("Не найден Serz: {}", serz_path.display()));
     }
@@ -2508,7 +2508,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         .unwrap_or_else(|| product_root.clone());
     let mut queue = vec![canonical_asset.clone()];
     let mut visited = HashSet::new();
-    let mut staged_by_source: HashMap<RouteFile, StagedUmlautFile> = HashMap::new();
+    let mut staged_by_source: HashMap<crate::domain::RouteFile, StagedUmlautFile> = HashMap::new();
     let mut renamed_tg_files: HashMap<PathBuf, PathBuf> = HashMap::new();
     let mut scan_all_geometry = false;
 
@@ -2554,7 +2554,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                 continue;
             }
             let staged = stage_renamed_file(&canonical, &target)?;
-            staged_by_source.insert(RouteFile::Path(canonical), staged);
+            staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
         }
     }
     while let Some(source) = queue.pop() {
@@ -2583,7 +2583,7 @@ pub(crate) fn repair_umlaut_asset_chain(
             let Some((dependency, base)) =
                 resolve_product_reference(&assets_root, &product_root, &canonical, &reference)
             else {
-                if has_umlauts(&reference_text) {
+                if crate::translit::has_umlauts(&reference_text) {
                     return Err(unresolved_reference_error(
                         &canonical,
                         &reference,
@@ -2621,11 +2621,11 @@ pub(crate) fn repair_umlaut_asset_chain(
             if dependency_extension.eq_ignore_ascii_case("GeoPcDx") {
                 queue.push(canonical_dependency.clone());
             } else if dependency_extension.eq_ignore_ascii_case("TgPcDx")
-                && (has_umlauts(&reference_text)
+                && (crate::translit::has_umlauts(&reference_text)
                     || canonical_dependency
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .is_some_and(has_umlauts))
+                        .is_some_and(crate::translit::has_umlauts))
             {
                 // Текстура — это готовый файл: её достаточно переименовать,
                 // внутри умляутов у неё не бывает.
@@ -2650,7 +2650,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         for (range, value) in edits {
             rewritten.replace_range(range, &value);
         }
-        rewritten = transliterate_xml_umlauts_outside(&rewritten, &protected_references, fixes);
+        rewritten = crate::translit::transliterate_xml_umlauts_outside(&rewritten, &protected_references, fixes);
         if rewritten != xml || target_file != canonical {
             validate_xml_document(&rewritten).map_err(|error| {
                 format!(
@@ -2659,7 +2659,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                 )
             })?;
             let staged = stage_serz_xml(&canonical, &target_file, &rewritten, serz_path)?;
-            staged_by_source.insert(RouteFile::Path(canonical), staged);
+            staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
         }
     }
 
@@ -2696,7 +2696,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                 let Some((dependency, _)) =
                     resolve_product_reference(&assets_root, &product_root, &canonical, &reference)
                 else {
-                    if has_umlauts(&reference_text) {
+                    if crate::translit::has_umlauts(&reference_text) {
                         return Err(unresolved_reference_error(
                             &canonical,
                             &reference,
@@ -2731,13 +2731,13 @@ pub(crate) fn repair_umlaut_asset_chain(
                     .unwrap_or("");
                 if extension.eq_ignore_ascii_case("GeoPcDx") {
                     queue.push(dependency.clone());
-                } else if extension.eq_ignore_ascii_case("TgPcDx") && has_umlauts(&reference_text) {
+                } else if extension.eq_ignore_ascii_case("TgPcDx") && crate::translit::has_umlauts(&reference_text) {
                     let target = transliterated_asset_path(&assets_root, &dependency, fixes)?;
                     renamed_tg_files.insert(dependency, target);
                 }
             }
             let target = transliterated_asset_path(&assets_root, &canonical, fixes)?;
-            let rewritten = transliterate_xml_umlauts_outside(&xml, &protected_references, fixes);
+            let rewritten = crate::translit::transliterate_xml_umlauts_outside(&xml, &protected_references, fixes);
             if rewritten != xml || target != canonical {
                 validate_xml_document(&rewritten).map_err(|error| {
                     format!(
@@ -2746,14 +2746,14 @@ pub(crate) fn repair_umlaut_asset_chain(
                     )
                 })?;
                 let staged = stage_serz_xml(&canonical, &target, &rewritten, serz_path)?;
-                staged_by_source.insert(RouteFile::Path(canonical), staged);
+                staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
             }
         }
     }
 
-    let mut renamed_staged: Vec<(RouteFile, StagedUmlautFile)> = Vec::new();
+    let mut renamed_staged: Vec<(crate::domain::RouteFile, StagedUmlautFile)> = Vec::new();
     for (source, target) in &renamed_tg_files {
-        let key = RouteFile::Path(source.clone());
+        let key = crate::domain::RouteFile::Path(source.clone());
         if staged_by_source.contains_key(&key) {
             continue;
         }
@@ -2767,11 +2767,11 @@ pub(crate) fn repair_umlaut_asset_chain(
         .with_extension("xml")
         .to_string_lossy()
         .into_owned();
-    let mut route_sources: HashSet<RouteFile> = HashSet::new();
+    let mut route_sources: HashSet<crate::domain::RouteFile> = HashSet::new();
     if new_relative_asset != asset_relative_path {
         for usage in uses {
             let source = usage.source_file.clone();
-            if let RouteFile::Path(path) = &source {
+            if let crate::domain::RouteFile::Path(path) = &source {
                 let canonical = path.canonicalize().map_err(|error| {
                     format!(
                         "Не удалось открыть файл маршрута {}: {error}",
@@ -2805,11 +2805,11 @@ pub(crate) fn repair_umlaut_asset_chain(
         // Запись из архива лежит только внутри архива: папки с таким именем на
         // диске нет, поэтому временные файлы кладём в папку маршрута.
         let source_parent = match &source {
-            RouteFile::Path(path) => path
+            crate::domain::RouteFile::Path(path) => path
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| route_root.clone()),
-            RouteFile::Archive { .. } => route_root.clone(),
+            crate::domain::RouteFile::Archive { .. } => route_root.clone(),
         };
         let temp = create_temporary_work_directory(&source_parent)?;
         let file_path = source.materialize(temp.path())?;
@@ -2834,7 +2834,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         }
         let mut xml = fs::read_to_string(&xml_path)
             .map_err(|error| format!("Не удалось прочитать {}: {error}", xml_path.display()))?;
-        let references = extract_asset_references_with_locations(&xml);
+        let references = crate::reference::extract_asset_references_with_locations(&xml);
         let mut edits = Vec::new();
         for reference in references
             .into_iter()
@@ -2905,8 +2905,8 @@ pub(crate) fn repair_umlaut_asset_chain(
             ));
         }
         let original_path = match &staged.source {
-            RouteFile::Path(path) => Some(path.clone()),
-            RouteFile::Archive { .. } => None,
+            crate::domain::RouteFile::Path(path) => Some(path.clone()),
+            crate::domain::RouteFile::Archive { .. } => None,
         };
         if staged.target.exists() && original_path.as_deref() != Some(staged.target.as_path()) {
             return Err(format!(
@@ -2930,8 +2930,8 @@ pub(crate) fn repair_umlaut_asset_chain(
         // Файл из архива .ap: оригинал остаётся в архиве, а изменённая копия
         // кладётся рядом и перекроет его, поэтому резервная копия не нужна.
         let original = match &staged.source {
-            RouteFile::Path(path) => Some(path.clone()),
-            RouteFile::Archive { .. } => None,
+            crate::domain::RouteFile::Path(path) => Some(path.clone()),
+            crate::domain::RouteFile::Archive { .. } => None,
         };
         let backup = match &original {
             Some(original) => {
@@ -3000,7 +3000,7 @@ pub(crate) fn repair_umlaut_asset_chain(
     for folder in &emptied_folders {
         let _ = fs::remove_dir(folder);
     }
-    Ok(UmlautRepairReport {
+    Ok(crate::domain::UmlautRepairReport {
         new_asset_path: new_relative_asset,
     })
 }
@@ -3011,9 +3011,9 @@ pub(crate) fn repair_umlaut_asset_chain(
 /// изменённая копия, которую игра прочитает вместо записи архива.
 fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
     match &staged.source {
-        RouteFile::Path(_) => fs::rename(&staged.staged, &staged.target)
+        crate::domain::RouteFile::Path(_) => fs::rename(&staged.staged, &staged.target)
             .map_err(|error| format!("Не удалось установить {}: {error}", staged.target.display())),
-        RouteFile::Archive { .. } => {
+        crate::domain::RouteFile::Archive { .. } => {
             if let Some(parent) = staged.target.parent() {
                 fs::create_dir_all(parent).map_err(|error| {
                     format!("Не удалось создать папку {}: {error}", parent.display())
@@ -3325,11 +3325,9 @@ pub(crate) fn next_backup_path(source_path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AssetKind, AssetUse, TEMP_WORK_DIRECTORY_PREFIX, check_asset_kind_compatibility,
-        collect_route_files, extract_asset_references_with_locations, has_umlauts,
-        leftover_temporary_work_directories, referenced_geometry_paths, route_tile_label,
+        TEMP_WORK_DIRECTORY_PREFIX,
+        collect_route_files, leftover_temporary_work_directories, referenced_geometry_paths,
     };
-    use crate::RouteFile;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -3453,7 +3451,7 @@ mod tests {
         let outside = route.join("TemplateRoutes/route.xml");
         std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
         std::fs::write(&outside, b"<root/>").unwrap();
-        let name = crate::RouteFile::Path(outside).route_name(route).unwrap();
+        let name = crate::domain::RouteFile::Path(outside).route_name(route).unwrap();
         assert!(name.eq_ignore_ascii_case(&inside));
     }
 
@@ -3463,7 +3461,7 @@ mod tests {
     fn changed_archive_file_is_installed_next_to_the_archive() {
         let temp = tempfile::tempdir().unwrap();
         let route = temp.path();
-        let inside = crate::RouteFile::Archive {
+        let inside = crate::domain::RouteFile::Archive {
             archive: route.join("MainContent.ap"),
             name: "TemplateRoutes/route.xml".to_owned(),
             stamp: None,
@@ -3498,10 +3496,10 @@ mod tests {
                 </iRailVehicleBlueprint>
             </root>
         "#;
-        let references = extract_asset_references_with_locations(xml);
+        let references = crate::reference::extract_asset_references_with_locations(xml);
         assert_eq!(references.len(), 2);
-        assert_eq!(references[0].kind, AssetKind::Scenery);
-        assert_eq!(references[1].kind, AssetKind::Vehicle);
+        assert_eq!(references[0].kind, crate::domain::AssetKind::Scenery);
+        assert_eq!(references[1].kind, crate::domain::AssetKind::Vehicle);
     }
 
     /// Замена ассета в маршруте, упакованном в .ap: файл из архива читается
@@ -3535,20 +3533,20 @@ mod tests {
         std::fs::create_dir_all(assets.join("Prov2/Prod2/Scenery")).unwrap();
         std::fs::write(assets.join("Prov2/Prod2/Scenery/New.bin"), b"new").unwrap();
 
-        let uses = [AssetUse {
-            source_file: RouteFile::Archive {
+        let uses = [crate::domain::AssetUse {
+            source_file: crate::domain::RouteFile::Archive {
                 archive: archive.clone(),
                 name: "Scenery/Grass.xml".to_owned(),
                 stamp: None,
             },
             tile: "тайл X=+000000 Z=+000000".to_owned(),
-            tile_kind: RouteFile::Archive {
+            tile_kind: crate::domain::RouteFile::Archive {
                 archive: archive.clone(),
                 name: "Scenery/Grass.xml".to_owned(),
                 stamp: None,
             }
             .tile_kind(),
-            kind: AssetKind::Scenery,
+            kind: crate::domain::AssetKind::Scenery,
         }];
 
         let xml = std::fs::read_to_string(&archive).ok();
@@ -3669,7 +3667,7 @@ mod tests {
             <Provider>Second</Provider><Product>ProductB</Product>
             <BlueprintID>Networks\second.xml</BlueprintID>
         "#;
-        let references = extract_asset_references_with_locations(xml);
+        let references = crate::reference::extract_asset_references_with_locations(xml);
 
         assert_eq!(references.len(), 2);
         assert_eq!(references[0].path, "First/ProductA/Scenery/first.bin");
@@ -3693,7 +3691,7 @@ mod tests {
                 </iBlueprintLibrary-cAbsoluteBlueprintID>
             </BlueprintID>
         "#;
-        let references = extract_asset_references_with_locations(xml);
+        let references = crate::reference::extract_asset_references_with_locations(xml);
 
         assert_eq!(references.len(), 1);
         assert_eq!(
@@ -3760,7 +3758,7 @@ mod tests {
                 </ReskinBlueprintID>
             </cDynamicEntity>
         "#;
-        let references = extract_asset_references_with_locations(xml);
+        let references = crate::reference::extract_asset_references_with_locations(xml);
 
         assert_eq!(references.len(), 2);
         assert_eq!(references[0].path, "First/ProductA/Scenery/first.bin");
@@ -3774,14 +3772,14 @@ mod tests {
             <Product>Marchegger_Ostbahn</Product>
             <BlueprintID>Marchegg\Bruecke Fu&#223;ganger 5.xml</BlueprintID>
         "#;
-        let references = extract_asset_references_with_locations(xml);
+        let references = crate::reference::extract_asset_references_with_locations(xml);
 
         assert_eq!(references.len(), 1);
         assert_eq!(
             references[0].path,
             "RWAustria_3/Marchegger_Ostbahn/Marchegg/Bruecke Fußganger 5.bin"
         );
-        assert!(has_umlauts(&references[0].path));
+        assert!(crate::translit::has_umlauts(&references[0].path));
     }
 
     /// Файл без `BlueprintID` не конвертируется: ссылок в нём быть не может.
@@ -3797,49 +3795,12 @@ mod tests {
         assert!(super::may_contain_asset_reference(&with_marker));
     }
 
-    /// Замена ассета допустима только на ассет того же типа.
-    #[test]
-    fn rejects_replacement_with_another_asset_kind() {
-        assert!(
-            check_asset_kind_compatibility(
-                "Provider/Product/Networks/Track.bin",
-                "Provider/Product/Networks/Other.bin"
-            )
-            .is_ok()
-        );
-        assert!(
-            check_asset_kind_compatibility(
-                "Provider/Product/Scenery/Building.bin",
-                "Provider/Product/Scenery/Other.bin"
-            )
-            .is_ok()
-        );
-        let error = check_asset_kind_compatibility(
-            "Provider/Product/Networks/Track.bin",
-            "Provider/Product/Scenery/Building.bin",
-        )
-        .unwrap_err();
-        assert!(
-            error.contains("Networks"),
-            "для loft-объекта нужен ассет из Networks: {error}"
-        );
-        let error = check_asset_kind_compatibility(
-            "Provider/Product/Scenery/Building.bin",
-            "Provider/Product/Networks/Track.bin",
-        )
-        .unwrap_err();
-        assert!(
-            error.contains("Scenery"),
-            "для scenery-объекта нужен ассет из Scenery: {error}"
-        );
-    }
-
     #[test]
     fn extracts_tile_coordinates_from_route_file_names() {
         let route = Path::new(r"C:\Routes\RouteA");
         let source = route.join("Scenery").join("+000012-000034.bin");
         assert_eq!(
-            route_tile_label(route, &RouteFile::Path(source.clone())),
+            crate::reference::route_tile_label(route, &crate::domain::RouteFile::Path(source.clone())),
             "тайл X=+000012 Z=-000034"
         );
     }

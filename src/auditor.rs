@@ -904,7 +904,7 @@ fn audit_one_file(
     ap_cache: &ApArchiveCache,
 ) -> Vec<BrokenResourceRef> {
     let mut out = Vec::new();
-    let xml = match crate::read_serz_xml(serz_path, file) {
+    let xml = match crate::assets::read_serz_xml(serz_path, file) {
         Ok(x) => x,
         Err(_) => match fs::read(file) {
             Ok(bytes) if bytes.starts_with(b"<?xm") => String::from_utf8_lossy(&bytes).to_string(),

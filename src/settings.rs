@@ -23,13 +23,6 @@ impl Default for AppConfig {
     }
 }
 
-pub type Config = AppConfig;
-pub type AppSettings = AppConfig;
-pub type Settings = AppConfig;
-pub type Configuration = AppConfig;
-pub type AppConfiguration = AppConfig;
-pub type UserSettings = AppConfig;
-
 pub(crate) fn last_game_path_file() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|app_data| {
         PathBuf::from(app_data)
@@ -96,7 +89,7 @@ pub(crate) fn asset_replacement_log_file() -> Option<PathBuf> {
 
 pub(crate) fn append_asset_replacement_log(
     path: &Path,
-    entry: &mut AssetReplacementLogEntry,
+    entry: &mut crate::domain::AssetReplacementLogEntry,
 ) -> Result<(), String> {
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -397,10 +390,6 @@ pub(crate) fn config_file() -> Option<PathBuf> {
     })
 }
 
-pub(crate) fn language_setting_file() -> Option<PathBuf> {
-    config_file()
-}
-
 pub(crate) fn load_config() -> AppConfig {
     config_file()
         .and_then(|path| fs::read_to_string(path).ok())
@@ -430,51 +419,10 @@ pub(crate) fn load_language() -> String {
     load_config().language
 }
 
-pub(crate) fn load_language_setting() -> Result<String, String> {
-    Ok(load_config().language)
-}
-
 pub(crate) fn save_language(lang: &str) -> Result<(), String> {
     let mut config = load_config();
     config.language = lang.to_owned();
     save_config(&config)
-}
-
-pub(crate) fn save_language_setting(lang: &str) -> Result<(), String> {
-    save_language(lang)
-}
-
-pub(crate) fn read_language_setting(path: &Path) -> Result<String, String> {
-    if path.exists() {
-        let contents = fs::read_to_string(path).map_err(|e| e.to_string())?;
-        if let Ok(config) = serde_json::from_str::<AppConfig>(&contents) {
-            return Ok(config.language);
-        }
-        let trimmed = contents.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_owned());
-        }
-    }
-    Ok("ru".to_owned())
-}
-
-pub(crate) fn write_language_setting(path: &Path, lang: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Некорректный путь к настройкам языка.".to_owned())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Не удалось создать папку настроек: {error}"))?;
-    let config = AppConfig {
-        language: lang.to_owned(),
-    };
-    let data = serde_json::to_string_pretty(&config)
-        .map_err(|error| format!("Не удалось подготовить настройку языка: {error}"))?;
-    fs::write(path, data).map_err(|error| {
-        format!(
-            "Не удалось сохранить настройку языка {}: {error}",
-            path.display()
-        )
-    })
 }
 
 pub fn apply_saved_language(lang: &str) {
@@ -487,18 +435,17 @@ pub fn apply_saved_language(lang: &str) {
 #[cfg(test)]
 mod tests {
     use super::append_asset_replacement_log;
-    use crate::AssetReplacementLogEntry;
     use std::fs;
 
     #[test]
     fn appends_replacement_records_as_json_lines() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("logs").join("replacement_log.jsonl");
-        let mut entry = AssetReplacementLogEntry {
+        let mut entry = crate::domain::AssetReplacementLogEntry {
             timestamp_unix_seconds: 0,
             operation: "Замена отсутствующего ассета".to_owned(),
             route_id: Some("route-id".to_owned()),
-            route_name: Some("Route".to_owned()),
+            route_name: Some("crate::domain::Route".to_owned()),
             route_path: Some(temp.path().join("route")),
             original_files: vec![
                 temp.path()
@@ -510,7 +457,7 @@ mod tests {
             replacement_asset: Some("A/B/Scenery/new.bin".to_owned()),
             replaced_files: 1,
             replaced_instances: 2,
-            uses: vec![crate::AssetReplacementLogUse {
+            uses: vec![crate::domain::AssetReplacementLogUse {
                 tile: "тайл X=+000001 Z=-000002".to_owned(),
                 source_file: temp
                     .path()

@@ -4,12 +4,9 @@ use slint::Model;
 
 use rayon::prelude::*;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::cmp::Reverse;
-use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -20,376 +17,8 @@ use zip::ZipArchive;
 
 const DEFAULT_CONCURRENT_SERZ: usize = 8;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct Route {
-    id: String,
-    name: String,
-    path: PathBuf,
-    #[serde(default)]
-    icon_path: Option<PathBuf>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct IncompleteRouteFolder {
-    id: String,
-    path: PathBuf,
-    #[serde(default)]
-    icon_path: Option<PathBuf>,
-    problems: Vec<String>,
-    inventory: Vec<String>,
-    scenario_clues: Vec<String>,
-    file_count: usize,
-    suggested_name: Option<String>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct RouteScanResult {
-    routes: Vec<Route>,
-    incomplete_folders: Vec<IncompleteRouteFolder>,
-}
-
-enum RouteScanItem {
-    Route(Route),
-    Incomplete(IncompleteRouteFolder),
-}
-
-struct CheckResult {
-    missing_assets: Vec<MissingAsset>,
-    asset_inventory: Vec<ReferencedAsset>,
-    umlaut_assets: Vec<UmlautAsset>,
-    conversion_errors: Vec<String>,
-    structure_issues: Vec<String>,
-}
-
-#[derive(Clone)]
-struct MissingAsset {
-    path: String,
-    uses: Vec<AssetUse>,
-    suggested_repair: Option<String>,
-    is_corrupted_link: bool,
-    asset_type: crate::assets::RouteAssetType,
-}
-
-#[derive(Clone)]
-struct ReferencedAsset {
-    path: String,
-    uses: Vec<AssetUse>,
-    missing: bool,
-}
-
-#[derive(Clone)]
-struct UmlautAsset {
-    path: String,
-}
-
-#[derive(Clone)]
-struct AssetUse {
-    source_file: RouteFile,
-    tile: String,
-    tile_kind: TileKind,
-    /// Что за объект: объект маршрута, файл состава или что-то другое.
-    kind: AssetKind,
-}
-
-/// Файл маршрута: обычный файл на диске или запись архива .ap.
-///
-/// Игра читает архив .ap так, будто его нет: записи лежат рядом с файлами
-/// маршрута. Поэтому архив читается прямо из zip, без распаковки целиком.
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum RouteFile {
-    /// Файл лежит на диске.
-    Path(PathBuf),
-    /// Запись архива .ap.
-    Archive {
-        archive: PathBuf,
-        name: String,
-        /// Отпечаток архива, вычисленный один раз при сборе файлов.
-        stamp: Option<crate::analysis_cache::FileStamp>,
-    },
-}
-
-thread_local! {
-    static ZIP_ARCHIVE_CACHE: RefCell<HashMap<PathBuf, zip::ZipArchive<fs::File>>> =
-        RefCell::new(HashMap::new());
-}
-
-impl RouteFile {
-    /// Имя файла маршрута относительно его папки.
-    pub(crate) fn route_name(&self, route_path: &Path) -> Option<String> {
-        match self {
-            RouteFile::Path(path) => {
-                let relative = path.strip_prefix(route_path).ok()?;
-                Some(relative.to_string_lossy().replace('\\', "/"))
-            }
-            RouteFile::Archive { name, .. } => Some(name.replace('\\', "/")),
-        }
-    }
-
-    /// Имя файла без папок: по нему определяется тайл.
-    pub(crate) fn file_name(&self) -> String {
-        match self {
-            RouteFile::Path(path) => path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            RouteFile::Archive { name, .. } => Path::new(name)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        }
-    }
-
-    /// Куда класть изменённую версию файла.
-    ///
-    /// Запись архива кладётся рядом с архивом: игра читает сначала архив, а
-    /// потом файлы рядом с ним, поэтому изменённая версия перекроет оригинал, а
-    /// сам архив останется нетронутым.
-    pub(crate) fn install_target(&self, route_path: &Path) -> PathBuf {
-        match self {
-            RouteFile::Path(path) => path.clone(),
-            RouteFile::Archive { name, .. } => route_path.join(name.replace('\\', "/")),
-        }
-    }
-
-    /// Готовит файл на диске: запись архива распаковывается во временный файл.
-    pub(crate) fn materialize(&self, temp_dir: &Path) -> Result<PathBuf, String> {
-        let RouteFile::Archive { archive, name, .. } = self else {
-            let RouteFile::Path(path) = self else {
-                unreachable!()
-            };
-            return Ok(path.clone());
-        };
-        let relative = Path::new(name);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(format!("Недопустимый путь внутри архива: {name}"));
-        }
-        let target = temp_dir.join(relative);
-        if target.is_file() {
-            return Ok(target);
-        }
-        let data = ZIP_ARCHIVE_CACHE.with(|cache| -> Result<Vec<u8>, String> {
-            let mut cache = cache.borrow_mut();
-            if !cache.contains_key(archive) {
-                let file = fs::File::open(archive).map_err(|error| {
-                    format!("Не удалось открыть архив {}: {error}", archive.display())
-                })?;
-                let zip = zip::ZipArchive::new(file).map_err(|error| {
-                    format!("Не удалось прочитать архив {}: {error}", archive.display())
-                })?;
-                cache.insert(archive.to_path_buf(), zip);
-            }
-            let zip = cache.get_mut(archive).unwrap();
-            let mut member = zip
-                .by_name(name)
-                .map_err(|error| format!("Не удалось прочитать {name} из архива: {error}"))?;
-            let member_size = member.size();
-            let mut reader = BufReader::new(&mut member);
-            let mut data = Vec::with_capacity(member_size as usize);
-            reader
-                .read_to_end(&mut data)
-                .map_err(|error| format!("Не удалось распаковать {name}: {error}"))?;
-            Ok(data)
-        })?;
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("Не удалось создать папку {}: {error}", parent.display())
-            })?;
-        }
-        let mut output =
-            BufWriter::new(fs::File::create(&target).map_err(|error| {
-                format!("Не удалось создать файл {}: {error}", target.display())
-            })?);
-        output
-            .write_all(&data)
-            .map_err(|error| format!("Не удалось распаковать {name}: {error}"))?;
-        output
-            .flush()
-            .map_err(|error| format!("Не удалось записать {name}: {error}"))?;
-        Ok(target)
-    }
-
-    /// Расширение файла.
-    pub(crate) fn extension(&self) -> Option<String> {
-        match self {
-            RouteFile::Path(path) => path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| extension.to_owned()),
-            RouteFile::Archive { name, .. } => Path::new(name)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| extension.to_owned()),
-        }
-    }
-
-    /// Как файл показывать в интерфейсе.
-    pub(crate) fn display(&self) -> String {
-        match self {
-            RouteFile::Path(path) => path.display().to_string(),
-            RouteFile::Archive { archive, name, .. } => {
-                format!("{}!{}", archive.display(), name)
-            }
-        }
-    }
-
-    /// Признаки файла для кэша разбора.
-    pub(crate) fn stamp(&self) -> Option<crate::analysis_cache::FileStamp> {
-        match self {
-            RouteFile::Path(path) => crate::analysis_cache::FileStamp::of(path),
-            RouteFile::Archive { stamp, .. } => *stamp,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AssetKind {
-    Loft,
-    Scenery,
-    /// Файл состава: в XML он лежит внутри `iRailVehicleBlueprint`.
-    Vehicle,
-    Other,
-}
-
-impl AssetKind {
-    /// Файл состава — это поезд, а не объект маршрута.
-    pub(crate) fn is_vehicle(self) -> bool {
-        self == AssetKind::Vehicle
-    }
-
-    /// Код типа для кэша разбора.
-    pub(crate) fn to_code(self) -> u8 {
-        match self {
-            AssetKind::Loft => 0,
-            AssetKind::Scenery => 1,
-            AssetKind::Vehicle => 2,
-            AssetKind::Other => 3,
-        }
-    }
-
-    /// Восстанавливает тип по коду из кэша.
-    pub(crate) fn from_code(code: u8) -> Self {
-        match code {
-            0 => AssetKind::Loft,
-            1 => AssetKind::Scenery,
-            2 => AssetKind::Vehicle,
-            _ => AssetKind::Other,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TileKind {
-    Scenery,
-    Loft,
-    Road,
-    Track,
-    TracksMaster,
-    LoftsMaster,
-    RoadsMaster,
-    RouteProps,
-    Other,
-}
-
-impl TileKind {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Scenery => "Сценери",
-            Self::Loft => "Лофт",
-            Self::Road => "Дорога",
-            Self::Track => "Пути",
-            Self::TracksMaster => "Сеть",
-            Self::LoftsMaster => "Сеть",
-            Self::RoadsMaster => "Сеть",
-            Self::RouteProps => "Свойства",
-            Self::Other => "Прочее",
-        }
-    }
-}
-
-impl RouteFile {
-    pub(crate) fn tile_kind(&self) -> TileKind {
-        let path = self.display().to_lowercase();
-        if path.ends_with("tracks.bin") {
-            TileKind::TracksMaster
-        } else if path.ends_with("lofts.bin") {
-            TileKind::LoftsMaster
-        } else if path.ends_with("roads.bin") {
-            TileKind::RoadsMaster
-        } else if path.ends_with("routeproperties.xml") {
-            TileKind::RouteProps
-        } else if path.contains("track tiles")
-            || path.contains("track tiles\\")
-            || path.contains("track tiles/")
-        {
-            TileKind::Track
-        } else if path.contains("road tiles") {
-            TileKind::Road
-        } else if path.contains("loft tiles") {
-            TileKind::Loft
-        } else if path.contains("scenery") {
-            TileKind::Scenery
-        } else {
-            TileKind::Other
-        }
-    }
-}
-
-struct AssetReplacementReport {
-    replaced_files: usize,
-    replaced_instances: usize,
-    backups: Vec<PathBuf>,
-    replacement_asset: String,
-    log_file: Option<PathBuf>,
-    log_error: Option<String>,
-}
-
-struct UmlautRepairReport {
-    new_asset_path: String,
-}
-
-#[derive(Serialize)]
-struct AssetReplacementLogEntry {
-    timestamp_unix_seconds: u64,
-    operation: String,
-    route_id: Option<String>,
-    route_name: Option<String>,
-    route_path: Option<PathBuf>,
-    original_files: Vec<String>,
-    missing_asset: Option<String>,
-    replacement_asset: Option<String>,
-    replaced_files: usize,
-    replaced_instances: usize,
-    uses: Vec<AssetReplacementLogUse>,
-    backups: Vec<PathBuf>,
-}
-
-#[derive(Serialize)]
-struct AssetReplacementLogUse {
-    tile: String,
-    source_file: String,
-}
-
-struct RouteScanOutcome {
-    result: RouteScanResult,
-    from_cache: bool,
-    notice: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct RouteScanCache {
-    #[serde(default)]
-    icon_scan_version: u8,
-    game_path: String,
-    folder_ids: Vec<String>,
-    ignored_route_ids: Vec<String>,
-    result: RouteScanResult,
-}
-
 mod analysis_cache;
+mod domain;
 mod app;
 mod assets;
 mod auditor;
@@ -404,15 +33,6 @@ mod texture;
 mod translit;
 mod windows;
 
-pub(crate) use assets::*;
-pub(crate) use auditor::*;
-pub(crate) use inventory_ui::*;
-pub(crate) use reference::*;
-pub(crate) use routes::*;
-pub(crate) use scenario::*;
-pub(crate) use settings::*;
-pub(crate) use translit::*;
-pub(crate) use windows::*;
 
 fn load_route_icon_image(icon_path: &std::path::Path) -> slint::Image {
     if let Ok(data) = std::fs::read(icon_path) {
@@ -432,7 +52,7 @@ fn load_route_icon_image(icon_path: &std::path::Path) -> slint::Image {
 fn load_vehicle_preview_image(
     rw_path: &std::path::Path,
     route_path: &std::path::Path,
-    vehicle: &ScenarioVehicle,
+    vehicle: &scenario::ScenarioVehicle,
     resolved: Option<&std::path::PathBuf>,
 ) -> slint::Image {
     let resolved = resolved.cloned().or_else(|| {
@@ -533,7 +153,7 @@ fn load_vehicle_preview_image(
     slint::Image::default()
 }
 
-fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
+fn filter_items(items: &mut Vec<auditor::BrokenResourceRef>, filter: &str) {
     let f = filter.to_lowercase();
     let f = match f.as_str() {
         "geometry" => "геометрия".to_string(),
@@ -548,12 +168,12 @@ fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
     }
     items.retain(|b| {
         let kind = match b.kind {
-            AssetResourceKind::Geometry => "геометрия",
-            AssetResourceKind::Texture => "текстура",
-            AssetResourceKind::Animation => "анимация",
-            AssetResourceKind::Script => "скрипт",
-            AssetResourceKind::Sound => "звуки",
-            AssetResourceKind::ChildBlueprint => "дочерние",
+            auditor::AssetResourceKind::Geometry => "геометрия",
+            auditor::AssetResourceKind::Texture => "текстура",
+            auditor::AssetResourceKind::Animation => "анимация",
+            auditor::AssetResourceKind::Script => "скрипт",
+            auditor::AssetResourceKind::Sound => "звуки",
+            auditor::AssetResourceKind::ChildBlueprint => "дочерние",
         };
         if f.contains("геометр") {
             return kind.contains("геометр");
@@ -574,16 +194,16 @@ fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
     });
 }
 
-fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
+fn sort_items(items: &mut [auditor::BrokenResourceRef], col: usize, asc: bool) {
     items.sort_by(|a, b| {
         let va = match col {
             0 => match a.kind {
-                AssetResourceKind::Geometry => "Геометрия",
-                AssetResourceKind::Texture => "Текстура",
-                AssetResourceKind::Animation => "Анимация",
-                AssetResourceKind::Script => "Скрипт",
-                AssetResourceKind::Sound => "Звуки",
-                AssetResourceKind::ChildBlueprint => "Дочерние объекты",
+                auditor::AssetResourceKind::Geometry => "Геометрия",
+                auditor::AssetResourceKind::Texture => "Текстура",
+                auditor::AssetResourceKind::Animation => "Анимация",
+                auditor::AssetResourceKind::Script => "Скрипт",
+                auditor::AssetResourceKind::Sound => "Звуки",
+                auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
             }
             .to_string(),
             1 => a.expected_path.to_string_lossy().to_string(),
@@ -591,12 +211,12 @@ fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
         };
         let vb = match col {
             0 => match b.kind {
-                AssetResourceKind::Geometry => "Геометрия",
-                AssetResourceKind::Texture => "Текстура",
-                AssetResourceKind::Animation => "Анимация",
-                AssetResourceKind::Script => "Скрипт",
-                AssetResourceKind::Sound => "Звуки",
-                AssetResourceKind::ChildBlueprint => "Дочерние объекты",
+                auditor::AssetResourceKind::Geometry => "Геометрия",
+                auditor::AssetResourceKind::Texture => "Текстура",
+                auditor::AssetResourceKind::Animation => "Анимация",
+                auditor::AssetResourceKind::Script => "Скрипт",
+                auditor::AssetResourceKind::Sound => "Звуки",
+                auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
             }
             .to_string(),
             1 => b.expected_path.to_string_lossy().to_string(),
@@ -610,7 +230,7 @@ fn build_inventory_rows(
     state: &app::AssetInventoryWindowState,
     show_missing: bool,
 ) -> (Vec<slint::ModelRc<slint::StandardListViewItem>>, Vec<bool>) {
-    let mut assets: Vec<&ReferencedAsset> = state.assets.iter().collect();
+    let mut assets: Vec<&domain::ReferencedAsset> = state.assets.iter().collect();
     match state.sort.column {
         inventory_ui::InventorySortColumn::Path => {
             if state.sort.descending {
@@ -819,7 +439,7 @@ fn main() {
     #[derive(Clone)]
     struct ApPickerState {
         archive_path: PathBuf,
-        missing: MissingAsset,
+        missing: domain::MissingAsset,
         rw_path: String,
         entries: Vec<String>,
     }
@@ -936,7 +556,7 @@ fn main() {
             let (asset, tiles) = if let Ok(app) = app.lock() {
                 if let Some(result) = app.result.as_ref() {
                     if let Some(missing) = result.missing_assets.get(idx as usize) {
-                        let mut counts: std::collections::BTreeMap<String, (TileKind, usize)> =
+                        let mut counts: std::collections::BTreeMap<String, (domain::TileKind, usize)> =
                             std::collections::BTreeMap::new();
                         for usage in &missing.uses {
                             let entry = counts
@@ -948,15 +568,15 @@ fn main() {
                             .into_iter()
                             .map(|(tile, (kind, count))| {
                                 let badge = match kind {
-                                    TileKind::Scenery => "[Сценери]",
-                                    TileKind::Loft => "[Лофт]",
-                                    TileKind::Road => "[Дорога]",
-                                    TileKind::Track => "[Пути]",
-                                    TileKind::TracksMaster
-                                    | TileKind::LoftsMaster
-                                    | TileKind::RoadsMaster => "[Сеть]",
-                                    TileKind::RouteProps => "[Свойства]",
-                                    TileKind::Other => "[Прочее]",
+                                    domain::TileKind::Scenery => "[Сценери]",
+                                    domain::TileKind::Loft => "[Лофт]",
+                                    domain::TileKind::Road => "[Дорога]",
+                                    domain::TileKind::Track => "[Пути]",
+                                    domain::TileKind::TracksMaster
+                                    | domain::TileKind::LoftsMaster
+                                    | domain::TileKind::RoadsMaster => "[Сеть]",
+                                    domain::TileKind::RouteProps => "[Свойства]",
+                                    domain::TileKind::Other => "[Прочее]",
                                 };
                                 format!("{} {} ({})", badge, tile, count).into()
                             })
@@ -1128,7 +748,7 @@ fn main() {
             }
             let assets_path = PathBuf::from(rw_path.trim()).join("Assets");
             let start_dir =
-                existing_directory_upwards(&asset_directory(&assets_path, &missing.path))
+                inventory_ui::existing_directory_upwards(&inventory_ui::asset_directory(&assets_path, &missing.path))
                     .unwrap_or_else(|| assets_path.clone());
             let selected = rfd::FileDialog::new()
                 .set_title("Выберите BIN/AP нового объекта")
@@ -1382,7 +1002,7 @@ fn main() {
         }
         if let Ok(mut app) = app_state().lock() {
             let q = app.search_query.to_lowercase();
-            let filtered: Vec<&Route> = app
+            let filtered: Vec<&domain::Route> = app
                 .routes
                 .iter()
                 .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
@@ -1872,7 +1492,7 @@ fn main() {
             && let Some(idx) = app.selected_scenario
             && let Some(scenario) = app.scenarios.get(idx)
         {
-            let _ = open_in_file_explorer(&scenario.path);
+            let _ = windows::open_in_file_explorer(&scenario.path);
         }
     });
     let scenario_handle_close = scenario_win.as_weak();
@@ -2156,7 +1776,7 @@ fn main() {
             && let Some(idx) = app.selected_route
             && let Some(route) = app.routes.get(idx)
         {
-            let _ = open_in_file_explorer(&route.path);
+            let _ = windows::open_in_file_explorer(&route.path);
         }
     });
     inventory_win.on_toggle_missing_only(move || {
@@ -2294,7 +1914,7 @@ fn main() {
                 }
                 cur.to_path_buf()
             };
-            let _ = open_in_file_explorer(&target);
+            let _ = windows::open_in_file_explorer(&target);
         }
     });
     inventory_win.on_open_in_editor(move || {
@@ -2411,7 +2031,7 @@ fn main() {
         if uses.is_empty() {
             return;
         }
-        let missing = MissingAsset {
+        let missing = domain::MissingAsset {
             path: asset.path,
             uses,
             suggested_repair: None,
@@ -2458,9 +2078,9 @@ fn main() {
     let auditor_win = FolderAuditorWindow::new().unwrap();
     let auditor_handle = auditor_win.as_weak();
     let auditor_handle2 = auditor_win.as_weak();
-    let all_audit_items: std::sync::Arc<std::sync::Mutex<Vec<BrokenResourceRef>>> =
+    let all_audit_items: std::sync::Arc<std::sync::Mutex<Vec<auditor::BrokenResourceRef>>> =
         std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let current_display_items: std::sync::Arc<std::sync::Mutex<Vec<BrokenResourceRef>>> =
+    let current_display_items: std::sync::Arc<std::sync::Mutex<Vec<auditor::BrokenResourceRef>>> =
         std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let audit_sort_col: std::sync::Arc<std::sync::Mutex<usize>> =
         std::sync::Arc::new(std::sync::Mutex::new(0));
@@ -2517,7 +2137,7 @@ fn main() {
             .map(|a| a.serz_process_limit)
             .unwrap_or(8)
             .max(1);
-        let serz_path = crate::preferred_serz_path(std::path::Path::new(&rw_path));
+        let serz_path = crate::assets::preferred_serz_path(std::path::Path::new(&rw_path));
         let assets_root = path
             .ancestors()
             .find(|p| {
@@ -2532,7 +2152,7 @@ fn main() {
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(|| path.clone())
             });
-        let ap_cache = ApArchiveCache::new();
+        let ap_cache = auditor::ApArchiveCache::new();
         let path_for_thread = path;
         let window_weak_thread = window_weak;
         let all_store = all_audit_items_for_start.clone();
@@ -2556,7 +2176,7 @@ fn main() {
                     });
                 })
             };
-            let report = crate::audit_folder_with_progress(
+            let report = crate::auditor::audit_folder_with_progress(
                 &path_for_thread,
                 &assets_root,
                 &serz_path,
@@ -2577,7 +2197,7 @@ fn main() {
                 .upgrade()
                 .map(|w| w.get_active_filter().to_string())
                 .unwrap_or_else(|| "all".to_string());
-            let mut items: Vec<BrokenResourceRef> = report.broken_references;
+            let mut items: Vec<auditor::BrokenResourceRef> = report.broken_references;
             filter_items(&mut items, &filter);
             sort_items(&mut items, col, asc);
             if let Ok(mut store) = current_store.lock() {
@@ -2589,12 +2209,12 @@ fn main() {
                     let mut rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = Vec::new();
                     for b in &items {
                         let kind = match b.kind {
-                            AssetResourceKind::Geometry => "Геометрия",
-                            AssetResourceKind::Texture => "Текстура",
-                            AssetResourceKind::Animation => "Анимация",
-                            AssetResourceKind::Script => "Скрипт",
-                            AssetResourceKind::Sound => "Звуки",
-                            AssetResourceKind::ChildBlueprint => "Дочерние объекты",
+                            auditor::AssetResourceKind::Geometry => "Геометрия",
+                            auditor::AssetResourceKind::Texture => "Текстура",
+                            auditor::AssetResourceKind::Animation => "Анимация",
+                            auditor::AssetResourceKind::Script => "Скрипт",
+                            auditor::AssetResourceKind::Sound => "Звуки",
+                            auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
                         };
                         let mut item0 = slint::StandardListViewItem::default();
                         item0.text = kind.into();
@@ -2638,12 +2258,12 @@ fn main() {
                 let mut rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = Vec::new();
                 for b in &items {
                     let kind = match b.kind {
-                        AssetResourceKind::Geometry => "Геометрия",
-                        AssetResourceKind::Texture => "Текстура",
-                        AssetResourceKind::Animation => "Анимация",
-                        AssetResourceKind::Script => "Скрипт",
-                        AssetResourceKind::Sound => "Звуки",
-                        AssetResourceKind::ChildBlueprint => "Дочерние объекты",
+                        auditor::AssetResourceKind::Geometry => "Геометрия",
+                        auditor::AssetResourceKind::Texture => "Текстура",
+                        auditor::AssetResourceKind::Animation => "Анимация",
+                        auditor::AssetResourceKind::Script => "Скрипт",
+                        auditor::AssetResourceKind::Sound => "Звуки",
+                        auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
                     };
                     let mut item0 = slint::StandardListViewItem::default();
                     item0.text = kind.into();
@@ -2673,7 +2293,7 @@ fn main() {
         }
         let target_path = items[row as usize].parent_file.clone();
         println!("[Auditor] Opening path: {:?}", target_path);
-        let _ = open_in_explorer(&target_path);
+        let _ = windows::open_in_explorer(&target_path);
         let _ = auditor_weak_for_open;
     });
     let auditor_weak_for_missing = auditor_win.as_weak();
@@ -2688,7 +2308,7 @@ fn main() {
         }
         let target_path = items[row as usize].expected_path.clone();
         println!("[Auditor] Opening path: {:?}", target_path);
-        let _ = open_in_explorer(&target_path);
+        let _ = windows::open_in_explorer(&target_path);
         let _ = auditor_weak_for_missing;
     });
     let auditor_weak_for_sort = auditor_win.as_weak();
@@ -2729,12 +2349,12 @@ fn main() {
                 let mut rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = Vec::new();
                 for b in &items {
                     let kind = match b.kind {
-                        AssetResourceKind::Geometry => "Геометрия",
-                        AssetResourceKind::Texture => "Текстура",
-                        AssetResourceKind::Animation => "Анимация",
-                        AssetResourceKind::Script => "Скрипт",
-                        AssetResourceKind::Sound => "Звуки",
-                        AssetResourceKind::ChildBlueprint => "Дочерние объекты",
+                        auditor::AssetResourceKind::Geometry => "Геометрия",
+                        auditor::AssetResourceKind::Texture => "Текстура",
+                        auditor::AssetResourceKind::Animation => "Анимация",
+                        auditor::AssetResourceKind::Script => "Скрипт",
+                        auditor::AssetResourceKind::Sound => "Звуки",
+                        auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
                     };
                     let mut item0 = slint::StandardListViewItem::default();
                     item0.text = kind.into();
@@ -2792,7 +2412,7 @@ fn main() {
             .unwrap_or_default();
         let serz_path = crate::assets::find_serz_path(&asset_path)
             .or_else(|| {
-                let p = crate::preferred_serz_path(Path::new(&rw_path));
+                let p = crate::assets::preferred_serz_path(Path::new(&rw_path));
                 if p.is_file() { Some(p) } else { None }
             })
             .unwrap_or_else(|| PathBuf::from("serz.exe"));
@@ -2974,6 +2594,19 @@ fn main() {
     });
     ui.run().unwrap();
 }
+
+#[cfg(test)]
+pub(crate) use assets::*;
+#[cfg(test)]
+pub(crate) use domain::*;
+#[cfg(test)]
+pub(crate) use reference::*;
+#[cfg(test)]
+pub(crate) use routes::*;
+#[cfg(test)]
+pub(crate) use settings::*;
+#[cfg(test)]
+pub(crate) use translit::*;
 
 #[cfg(test)]
 mod tests {

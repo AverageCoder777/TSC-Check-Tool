@@ -6,7 +6,6 @@
 //! хранится не каждая ссылка, а счётчик вхождений. Пути ассетов вынесены в
 //! общую таблицу: на большом маршруте это уменьшает кэш в десятки раз.
 
-use crate::AssetKind;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -63,7 +62,7 @@ impl FileStamp {
 
 pub(crate) struct CachedFile {
     pub(crate) stamp: FileStamp,
-    pub(crate) uses: Vec<(String, u32, AssetKind)>,
+    pub(crate) uses: Vec<(String, u32, crate::domain::AssetKind)>,
 }
 
 pub(crate) struct AnalysisCache {
@@ -94,7 +93,7 @@ impl AnalysisCache {
                 .into_iter()
                 .filter_map(|[asset, count, kind]| {
                     let path = cache.assets.get(asset as usize)?.clone();
-                    Some((path, count, AssetKind::from_code(kind as u8)))
+                    Some((path, count, crate::domain::AssetKind::from_code(kind as u8)))
                 })
                 .collect();
             files.insert(
@@ -215,7 +214,7 @@ mod tests {
             stamp,
             uses: uses
                 .iter()
-                .map(|(path, count)| (path.to_string(), *count, AssetKind::Other))
+                .map(|(path, count)| (path.to_string(), *count, crate::domain::AssetKind::Other))
                 .collect(),
         }
     }

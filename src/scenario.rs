@@ -7,7 +7,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::translit::decode_xml_text;
 
 /// Вид состава: игрок, ИИ или статический (loose).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -148,7 +147,7 @@ fn consist_name(consist: &str) -> String {
             .find('<')
             .map(|i| value_start + i)
             .unwrap_or(loc_block.len());
-        let value = decode_xml_text(&loc_block[value_start..value_end])
+        let value = crate::translit::decode_xml_text(&loc_block[value_start..value_end])
             .trim()
             .to_owned();
         if !value.is_empty() {
@@ -474,7 +473,7 @@ pub(crate) fn element_text(xml: &str, element: &str) -> String {
                 Some(index) => &value[..index],
                 None => value,
             };
-            return decode_xml_text(text).trim().to_owned();
+            return crate::translit::decode_xml_text(text).trim().to_owned();
         }
         search_from = abs + open.len();
     }
@@ -701,7 +700,6 @@ pub(crate) fn is_hidden_scenario_type(scenario_type: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::check_route;
     #[test]
     fn checks_real_route_x() {
         let rw_path = PathBuf::from(r"X:\SteamLibrary\steamapps\common\RailWorks");
@@ -710,7 +708,7 @@ mod tests {
         if !route.is_dir() || !serz.is_file() {
             return;
         }
-        let result = check_route(&route, &rw_path.join("Assets"), &serz, false, 1, |_| {});
+        let result = crate::assets::check_route(&route, &rw_path.join("Assets"), &serz, false, 1, |_| {});
         match result {
             Ok(r) => {
                 println!(
