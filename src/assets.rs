@@ -371,6 +371,52 @@ pub(crate) fn fallback_serz_path(serz_path: &Path) -> Option<PathBuf> {
     fallback.is_file().then_some(fallback)
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SerzError {
+    #[error("serz process failed: {0}")]
+    Process(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+impl From<String> for SerzError {
+    fn from(value: String) -> Self {
+        Self::Process(value)
+    }
+}
+
+impl From<SerzError> for String {
+    fn from(value: SerzError) -> Self {
+        value.to_string()
+    }
+}
+
+impl SerzError {
+    pub(crate) fn contains(&self, needle: &str) -> bool {
+        self.to_string().contains(needle)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum AssetError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Message(String),
+}
+
+impl From<String> for AssetError {
+    fn from(value: String) -> Self {
+        Self::Message(value)
+    }
+}
+
+impl From<AssetError> for String {
+    fn from(value: AssetError) -> Self {
+        value.to_string()
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct SerzTool {
     pub(crate) primary: PathBuf,
@@ -385,30 +431,30 @@ impl SerzTool {
         }
     }
 
-    pub(crate) fn bin_to_xml(&self, input: &Path, output: &Path) -> Result<(), String> {
+    pub(crate) fn bin_to_xml(&self, input: &Path, output: &Path) -> Result<(), SerzError> {
         convert_bin_to_xml(&self.primary, input, output).or_else(|primary_error| {
             let Some(fallback) = &self.fallback else {
                 return Err(primary_error);
             };
             convert_bin_to_xml(fallback, input, output).map_err(|fallback_error| {
-                format!(
+                SerzError::from(format!(
                     "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
                     fallback.display()
-                )
+                ))
             })
         })
     }
 
-    pub(crate) fn xml_to_bin(&self, input: &Path, output: &Path) -> Result<(), String> {
+    pub(crate) fn xml_to_bin(&self, input: &Path, output: &Path) -> Result<(), SerzError> {
         convert_xml_to_bin(&self.primary, input, output).or_else(|primary_error| {
             let Some(fallback) = &self.fallback else {
                 return Err(primary_error);
             };
             convert_xml_to_bin(fallback, input, output).map_err(|fallback_error| {
-                format!(
+                SerzError::from(format!(
                     "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
                     fallback.display()
-                )
+                ))
             })
         })
     }
@@ -802,7 +848,7 @@ fn find_similar_asset_path(assets_path: &Path, relative_asset: &str) -> Option<P
     None
 }
 
-pub(crate) fn read_serz_xml(serz_path: &Path, asset_path: &Path) -> Result<String, String> {
+pub(crate) fn read_serz_xml(serz_path: &Path, asset_path: &Path) -> Result<String, SerzError> {
     let temp = tempdir().map_err(|error| format!("Не удалось создать временную папку: {error}"))?;
     let xml_path = temp.path().join("asset.xml");
 let conversion = SerzTool::new(serz_path).bin_to_xml(asset_path, &xml_path);
@@ -3063,7 +3109,7 @@ fn escape_xml_text(text: &str) -> String {
 
 /// Запускает serz.exe с таймаутом, чтобы зависший дочерний процесс не
 /// блокировал пул потоков навсегда.
-fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Output, String> {
+fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Output, SerzError> {
     use std::process::{Command, Stdio};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -3097,13 +3143,13 @@ fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Output
     });
     match rx.recv_timeout(Duration::from_secs(5)) {
         Ok(Ok(output)) => Ok(output),
-        Ok(Err(error)) => Err(format!("не удалось дождаться serz.exe: {error}")),
+        Ok(Err(error)) => Err(SerzError::Process(format!("не удалось дождаться serz.exe: {error}"))),
         Err(_) => {
             if let Some(mut child) = child.lock().unwrap().take() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
-            Err("serz.exe завис и был остановлен по таймауту".to_owned())
+            Err("serz.exe завис и был остановлен по таймауту".to_owned().into())
         }
     }
 }
@@ -3112,7 +3158,7 @@ pub(crate) fn convert_bin_to_xml(
     serz_path: &Path,
     bin_path: &Path,
     xml_path: &Path,
-) -> Result<(), String> {
+) -> Result<(), SerzError> {
     if xml_path.exists() {
         fs::remove_file(xml_path).map_err(|error| {
             format!(
@@ -3138,13 +3184,13 @@ pub(crate) fn convert_bin_to_xml(
         return Err(format!(
             "Serz завершился успешно, но не создал непустой XML-файл: {}",
             xml_path.display()
-        ));
+        ).into());
     }
     if !has_complete_xml_tail(xml_path)? {
         return Err(format!(
             "Serz создал незавершённый XML для {}. Файл использует формат, который не поддерживает конвертация в XML.",
             bin_path.display()
-        ));
+        ).into());
     }
     Ok(())
 }
@@ -3182,7 +3228,7 @@ pub(crate) fn convert_xml_to_bin(
     serz_path: &Path,
     xml_path: &Path,
     target_asset_path: &Path,
-) -> Result<(), String> {
+) -> Result<(), SerzError> {
     let staging_output = xml_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -3220,7 +3266,7 @@ pub(crate) fn convert_xml_to_bin(
         return Err(format!(
             "Serz не сгенерировал данные или вернул пустой файл: {}",
             staging_output.display()
-        ));
+        ).into());
     }
 
     fs::copy(&staging_output, target_asset_path).map_err(|error| {
@@ -3238,7 +3284,7 @@ pub(crate) fn validate_serz_process(
     status_success: bool,
     stdout: &str,
     stderr: &str,
-) -> Result<(), String> {
+) -> Result<(), SerzError> {
     if !status_success {
         let detail = if !stderr.trim().is_empty() {
             stderr.trim().to_owned()
@@ -3247,10 +3293,10 @@ pub(crate) fn validate_serz_process(
         } else {
             stdout.trim().to_owned()
         };
-        return Err(detail);
+        return Err(detail.into());
     }
     if !stderr.trim().is_empty() {
-        return Err(format!("Serz сообщил об ошибке: {}", stderr.trim()));
+        return Err(format!("Serz сообщил об ошибке: {}", stderr.trim()).into());
     }
     Ok(())
 }

@@ -38,7 +38,7 @@ pub fn open_and_sync_with_vscode(
 
     let xml = read_serz_xml(serz_path, binary_asset_path).or_else(|err| {
         if let Some(fallback) = crate::assets::fallback_serz_path(serz_path) {
-            read_serz_xml(&fallback, binary_asset_path).map_err(|e| format!("{err}; {e}"))
+            read_serz_xml(&fallback, binary_asset_path).map_err(|e| crate::assets::SerzError::from(format!("{err}; {e}")))
         } else {
             Err(err)
         }
@@ -230,13 +230,13 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
     let xml = read_serz_xml(&serz_path, target)
         .or_else(|err| {
             if let Some(fallback) = crate::assets::fallback_serz_path(&serz_path) {
-                read_serz_xml(&fallback, target).map_err(|e| format!("{err}; {e}"))
+                read_serz_xml(&fallback, target).map_err(|e| crate::assets::SerzError::from(format!("{err}; {e}")))
             } else {
                 Err(err)
             }
         })
         .inspect_err(|e| {
-            show_native_error("Ошибка", e);
+            show_native_error("Ошибка", &e.to_string());
         })?;
     let initial_xml = xml.clone();
     fs::write(&temp_xml_path, &xml).map_err(|e| {
@@ -283,8 +283,8 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
 
 let conv = crate::assets::SerzTool::new(&serz_path).xml_to_bin(&temp_xml_path, target);
     if let Err(e) = conv {
-        show_native_error("Ошибка конвертации Serz", &e);
-        return Err(e);
+        show_native_error("Ошибка конвертации Serz", &e.to_string());
+        return Err(e.into());
     }
     let _ = fs::remove_file(&temp_xml_path);
     let _ = fs::remove_dir(&sync_dir);
