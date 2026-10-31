@@ -1,7 +1,4 @@
 use super::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
-use walkdir::WalkDir;
 
 pub fn resolve_asset_path(assets_path: &Path, relative_asset: &str) -> Result<Option<PathBuf>, String> {
     let exact = assets_path.join(relative_asset.replace('/', "\\"));

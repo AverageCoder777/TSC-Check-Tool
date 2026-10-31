@@ -1,7 +1,5 @@
 use super::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
-use walkdir::WalkDir;
+use std::collections::{HashMap, HashSet};
 
 pub struct FileAnalysis {
     /// Разбор взят из кэша: файл не менялся с прошлой проверки.

@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::translit;
 
 /// Буквы, которые выглядят одинаково, но различаются кодом.
 ///

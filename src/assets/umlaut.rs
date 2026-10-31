@@ -1,6 +1,5 @@
 use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
 use walkdir::WalkDir;
 
 /// Результат проверки цепочки ассета на сломанные символы.

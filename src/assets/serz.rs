@@ -1,7 +1,4 @@
 use super::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
-use walkdir::WalkDir;
 
 pub(crate) fn preferred_serz_path(rw_path: &Path) -> PathBuf {
     let serz64 = rw_path.join("serz64.exe");
@@ -43,11 +40,7 @@ impl From<SerzError> for String {
     }
 }
 
-impl SerzError {
-    pub(crate) fn contains(&self, needle: &str) -> bool {
-        self.to_string().contains(needle)
-    }
-}
+
 
 #[derive(Clone)]
 pub(crate) struct SerzTool {

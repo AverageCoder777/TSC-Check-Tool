@@ -1,6 +1,5 @@
 use super::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
+use std::collections::HashSet;
 use walkdir::WalkDir;
 
 pub(crate) fn is_skipped_route_scan_directory(name: &str, ignore_scenarios: bool) -> bool {

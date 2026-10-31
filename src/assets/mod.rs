@@ -1,9 +1,6 @@
 ﻿//! Serz conversion and asset-reference checks.
 
 use super::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
-use walkdir::WalkDir;
 
 mod fuzzy;
 mod types;
@@ -16,16 +13,16 @@ mod replacement;
 mod umlaut;
 mod transaction;
 
-pub use fuzzy::*;
-pub use types::*;
-pub use serz::*;
-pub use scanner::*;
-pub use checker::*;
-pub use resolver::*;
-pub use xml_reference::*;
-pub use replacement::*;
-pub use umlaut::*;
-pub use transaction::*;
+pub(crate) use fuzzy::*;
+pub(crate) use types::*;
+pub(crate) use serz::*;
+pub(crate) use scanner::*;
+pub(crate) use checker::*;
+pub(crate) use resolver::*;
+pub(crate) use xml_reference::*;
+pub(crate) use replacement::*;
+pub(crate) use umlaut::*;
+pub(crate) use transaction::*;
 
 #[cfg(test)]
 #[path = "../tests/assets.rs"]

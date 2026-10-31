@@ -86,13 +86,15 @@
         assert!(validate_serz_process(true, "", "").is_ok());
         assert!(
             validate_serz_process(false, "Could not open input file", "")
-                .unwrap_err()
-                .contains("Could not open input file")
+.unwrap_err()
+.to_string()
+.contains("Could not open input file")
         );
         assert!(
             validate_serz_process(true, "Converting input.bin", "warning")
-                .unwrap_err()
-                .contains("warning")
+.unwrap_err()
+.to_string()
+.contains("warning")
         );
     }
 

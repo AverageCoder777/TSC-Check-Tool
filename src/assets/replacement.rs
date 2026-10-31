@@ -1,7 +1,5 @@
 use super::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
-use walkdir::WalkDir;
+use std::collections::HashSet;
 
 pub fn is_safe_for_global_replacement(
     relative_path: &str,
