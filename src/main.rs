@@ -1216,121 +1216,134 @@ fn main() {
         let ui_handle = ui_handle3.clone();
         let scenario_handle = scenario_handle.clone();
         std::thread::spawn(move || {
-            let mut app = match app.lock() {
-                Ok(guard) => guard,
-                Err(_) => return,
-            };
-            app.refresh_scenarios();
-            let hide = app.hide_quick_drive_free_roam;
-            let filtered_indices: Vec<usize> = app
-                .scenarios
-                .iter()
-                .enumerate()
-                .filter(|(_, s)| {
-                    !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type)
-                })
-                .map(|(i, _)| i)
-                .collect();
-            let ui_idx = idx as usize;
-            let Some(&scen_idx) = filtered_indices.get(ui_idx) else {
-                return;
-            };
-            if scen_idx >= app.scenarios.len() {
-                return;
-            }
-            crate::scenario::load_scenario_metadata(&mut app.scenarios[scen_idx]);
+            // 1. Быстро забираем данные под замком, затем сразу отпускаем его.
+            let (scen_idx, scen_items, scenario, rw_path, route_path, consist_names, consist_player, need_info) = {
+                let mut app = match app.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return,
+                };
+                app.refresh_scenarios();
+                let hide = app.hide_quick_drive_free_roam;
+                let filtered_indices: Vec<usize> = app
+                    .scenarios
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| {
+                        !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                let ui_idx = idx as usize;
+                let Some(&scen_idx) = filtered_indices.get(ui_idx) else {
+                    return;
+                };
+                if scen_idx >= app.scenarios.len() {
+                    return;
+                }
+                crate::scenario::load_scenario_metadata(&mut app.scenarios[scen_idx]);
 
-            let scen_items: Vec<ScenarioItem> = app
-                .scenarios
-                .iter()
-                .filter(|s| !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type))
-                .map(|s| ScenarioItem {
-                    name: s.name.clone().into(),
-                    scenario_type: s.scenario_type.clone().into(),
-                })
-                .collect();
+                let scen_items: Vec<ScenarioItem> = app
+                    .scenarios
+                    .iter()
+                    .filter(|s| !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type))
+                    .map(|s| ScenarioItem {
+                        name: s.name.clone().into(),
+                        scenario_type: s.scenario_type.clone().into(),
+                    })
+                    .collect();
 
-            let needs_load = app.scenarios[scen_idx].consists.is_none();
-            if needs_load {
-                let scenario_path = app.scenarios[scen_idx].path.clone();
-                let serz_path =
-                    crate::assets::preferred_serz_path(std::path::Path::new(app.rw_path.trim()));
-                let consists = crate::scenario::load_consists(&scenario_path, &serz_path);
-                app.scenarios[scen_idx].consists = Some(consists);
-            }
+                let needs_load = app.scenarios[scen_idx].consists.is_none();
+                if needs_load {
+                    let scenario_path = app.scenarios[scen_idx].path.clone();
+                    let serz_path =
+                        crate::assets::preferred_serz_path(std::path::Path::new(app.rw_path.trim()));
+                    let consists = crate::scenario::load_consists(&scenario_path, &serz_path);
+                    app.scenarios[scen_idx].consists = Some(consists);
+                }
 
-            let scenario = app.scenarios[scen_idx].clone();
-            let rw_path = app.rw_path.clone();
-            let route_path = app
-                .selected_route
-                .and_then(|i| app.routes.get(i))
-                .map(|r| r.path.clone())
-                .unwrap_or_default();
+                let scenario = app.scenarios[scen_idx].clone();
+                let rw_path = app.rw_path.clone();
+                let route_path = app
+                    .selected_route
+                    .and_then(|i| app.routes.get(i))
+                    .map(|r| r.path.clone())
+                    .unwrap_or_default();
 
-            let consist_names: Vec<slint::SharedString> = scenario
-                .consists
-                .as_ref()
-                .map(|c| c.iter().map(|x| x.name.clone().into()).collect())
-                .unwrap_or_default();
-            let consist_player: Vec<bool> = scenario
-                .consists
-                .as_ref()
-                .map(|c| c.iter().map(|x| x.is_player).collect())
-                .unwrap_or_default();
-
-            if app.scenario_consist_info.is_none()
-                || app
-                    .scenario_consist_info
+                let consist_names: Vec<slint::SharedString> = scenario
+                    .consists
                     .as_ref()
-                    .map(|v| v.len())
-                    .unwrap_or(0)
-                    != consist_names.len()
-            {
+                    .map(|c| c.iter().map(|x| x.name.clone().into()).collect())
+                    .unwrap_or_default();
+                let consist_player: Vec<bool> = scenario
+                    .consists
+                    .as_ref()
+                    .map(|c| c.iter().map(|x| x.is_player).collect())
+                    .unwrap_or_default();
+
+                let need_info = app.scenario_consist_info.is_none()
+                    || app
+                        .scenario_consist_info
+                        .as_ref()
+                        .map(|v| v.len())
+                        .unwrap_or(0)
+                        != consist_names.len();
+
+                (scen_idx, scen_items, scenario, rw_path, route_path, consist_names, consist_player, need_info)
+            };
+
+            // 2. Тяжелая работа БЕЗ удержания глобального мьютекса.
+            let (computed_info, computed_vf) = if need_info {
                 let mut info = Vec::new();
                 let mut vf = Vec::new();
                 if let Some(consists) = scenario.consists.as_ref() {
-                    let (i, v): (Vec<(String, bool)>, Vec<Vec<bool>>) = consists
-                        .par_iter()
-                        .map(|c| {
-                            let mut all_ok = true;
-                            let mut flags = Vec::with_capacity(c.vehicles.len());
-                            for veh in &c.vehicles {
-                                let exists = crate::blueprint::vehicle_blueprint_exists(
-                                    std::path::Path::new(&rw_path),
-                                    &veh.provider,
-                                    &veh.product,
-                                    &veh.blueprint,
-                                );
-                                flags.push(!exists);
-                                if !exists {
-                                    all_ok = false;
-                                }
-                            }
-                            ((c.name.clone(), all_ok), flags)
-                        })
-                        .unzip();
+                    let (i, v) =
+                        crate::scenario::analyze_consists_parallel(consists, &rw_path);
                     info = i;
                     vf = v;
                 }
-                app.scenario_consist_info = Some(info);
-                app.scenario_vehicle_files = Some(vf);
-            }
+                (Some(info), Some(vf))
+            } else {
+                (None, None)
+            };
 
-            let vehicle_files = app.scenario_vehicle_files.clone().unwrap_or_default();
-            app.selected_scenario = Some(scen_idx);
-            app.selected_consist = Some(0);
-            app.scenario_window_open = true;
+            let serz_path = crate::assets::preferred_serz_path(std::path::Path::new(rw_path.trim()));
+            let weather_name = crate::scenario::weather_display_name(
+                std::path::Path::new(rw_path.trim()),
+                std::path::Path::new(&route_path),
+                &serz_path,
+                &scenario.weather,
+            );
 
-            let consist_missing: Vec<bool> = app
-                .scenario_consist_info
-                .as_ref()
-                .map(|info| info.iter().map(|(_, ok)| !*ok).collect())
-                .unwrap_or_default();
-            let consist_complete: Vec<bool> = app
-                .scenario_consist_info
-                .as_ref()
-                .map(|info| info.iter().map(|(_, ok)| *ok).collect())
-                .unwrap_or_default();
+            // 3. Быстро сохраняем результат под замком.
+            let (vehicle_files, consist_missing, consist_complete) = {
+                let mut app = match app.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return,
+                };
+                if need_info {
+                    if let (Some(info), Some(vf)) = (computed_info, computed_vf) {
+                        app.scenario_consist_info = Some(info);
+                        app.scenario_vehicle_files = Some(vf);
+                    }
+                }
+                let vehicle_files = app.scenario_vehicle_files.clone().unwrap_or_default();
+                app.selected_scenario = Some(scen_idx);
+                app.selected_consist = Some(0);
+                app.scenario_window_open = true;
+
+                let consist_missing: Vec<bool> = app
+                    .scenario_consist_info
+                    .as_ref()
+                    .map(|info| info.iter().map(|(_, ok)| !*ok).collect())
+                    .unwrap_or_default();
+                let consist_complete: Vec<bool> = app
+                    .scenario_consist_info
+                    .as_ref()
+                    .map(|info| info.iter().map(|(_, ok)| *ok).collect())
+                    .unwrap_or_default();
+
+                (vehicle_files, consist_missing, consist_complete)
+            };
 
             let vehicles: Vec<slint::SharedString> = scenario
                 .consists
@@ -1373,13 +1386,6 @@ fn main() {
                 "Выберите единицу техники".to_owned()
             };
 
-            let weather_name = crate::scenario::weather_display_name(
-                std::path::Path::new(rw_path.trim()),
-                std::path::Path::new(&route_path),
-                &crate::assets::preferred_serz_path(std::path::Path::new(rw_path.trim())),
-                &scenario.weather,
-            );
-
             let scenario_name = scenario.name.clone();
             let scenario_title = format!(
                 "Сценарий: {}",
@@ -1401,9 +1407,7 @@ fn main() {
             let scenario_start_time = fallback(&scenario.start_time);
             let scenario_weather = fallback(&weather_name);
 
-            let ui_selected_scenario = ui_idx as i32;
-
-            drop(app);
+            let ui_selected_scenario = idx as i32;
 
             let result = slint::invoke_from_event_loop(move || {
                 let Some(ui) = ui_handle.upgrade() else {

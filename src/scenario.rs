@@ -359,6 +359,38 @@ pub(crate) fn load_scenario_metadata(scenario: &mut RouteScenario) {
     scenario.metadata_loaded = true;
 }
 
+/// Параллельно проверяет наличие блюпринтов техники в составах сценария.
+///
+/// Возвращает кортеж: (список (имя состава, все ли блюпринты найдены),
+/// флаги отсутствия блюпринтов для каждой единицы техники). Выполняется вне
+/// удержания глобального мьютекса приложения, чтобы не блокировать UI.
+pub(crate) fn analyze_consists_parallel(
+    consists: &[ScenarioConsist],
+    rw_path: &str,
+) -> (Vec<(String, bool)>, Vec<Vec<bool>>) {
+    use rayon::prelude::*;
+    consists
+        .par_iter()
+        .map(|c| {
+            let mut all_ok = true;
+            let mut flags = Vec::with_capacity(c.vehicles.len());
+            for veh in &c.vehicles {
+                let exists = crate::blueprint::vehicle_blueprint_exists(
+                    std::path::Path::new(rw_path),
+                    &veh.provider,
+                    &veh.product,
+                    &veh.blueprint,
+                );
+                flags.push(!exists);
+                if !exists {
+                    all_ok = false;
+                }
+            }
+            ((c.name.clone(), all_ok), flags)
+        })
+        .unzip()
+}
+
 /// Загружает составы техники из Scenario.bin сценария (через Serz в XML).
 pub(crate) fn load_consists(scenario_path: &Path, serz_path: &Path) -> Vec<ScenarioConsist> {
     let Some(xml) = read_scenario_file(scenario_path, serz_path) else {
