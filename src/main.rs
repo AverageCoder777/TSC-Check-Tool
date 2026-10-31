@@ -673,6 +673,13 @@ fn build_inventory_rows(
     (rows, safe_flags)
 }
 
+static APP_STATE: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<app::CheckerApp>>> =
+    std::sync::OnceLock::new();
+
+fn app_state() -> std::sync::Arc<std::sync::Mutex<app::CheckerApp>> {
+    APP_STATE.get().cloned().expect("app state not initialized")
+}
+
 fn handle_cli_args() {
     // Headless CLI / "Open With" support
     let cli_args: Vec<String> = std::env::args().collect();
@@ -793,6 +800,7 @@ fn main() {
     handle_cli_args();
     // Handle file association launch: TS-Checker opened with a .bin/.GeoPcDx file.
     let app = std::sync::Arc::new(std::sync::Mutex::new(app::CheckerApp::default()));
+    let _ = APP_STATE.set(app.clone());
     let ui = MainWindow::new().unwrap();
     crate::settings::apply_saved_language(&crate::settings::load_language());
     let ui_handle = ui.as_weak();
@@ -800,30 +808,12 @@ fn main() {
         app.start_route_scan();
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
-    let app_clone = app.clone();
-    let app_clone2 = app.clone();
-    let app_clone3 = app.clone();
-    let app_clone4 = app.clone();
-    let app_clone5 = app.clone();
-    let app_clone6 = app.clone();
-    let app_clone8 = app.clone();
-    let app_clone9 = app.clone();
-    let app_clone10 = app.clone();
-    let app_clone11 = app.clone();
-    let app_clone13 = app.clone();
-    let app_clone14 = app.clone();
-    let app_clone15 = app.clone();
-    let app_clone16 = app.clone();
-    let app_clone17 = app.clone();
-    let app_clone18 = app.clone();
-    let app_clone19 = app.clone();
     let clipboard = std::sync::Arc::new(std::sync::Mutex::new(arboard::Clipboard::new().unwrap()));
     let mut last_count: usize = 0;
     let mut last_query = String::new();
     let mut last_thumbnails_enabled: bool = false;
     let mut last_status = String::new();
     let mut last_check_log = String::new();
-    let app_clone7 = app.clone();
     let missing_win = MissingAssetsWindow::new().unwrap();
     let missing_handle = missing_win.as_weak();
     #[derive(Clone)]
@@ -873,7 +863,7 @@ fn main() {
         }
     });
     missing_win.on_repair_corrupted({
-        let app = app_clone7.clone();
+        let app = app_state().clone();
         move |idx| {
             if let Ok(mut app) = app.lock() {
                 let missing_assets = app
@@ -899,7 +889,7 @@ fn main() {
         }
     });
     missing_win.on_repair_all_corrupted({
-        let app = app_clone7.clone();
+        let app = app_state().clone();
         move || {
             if let Ok(mut app) = app.lock() {
                 let missing_assets = app
@@ -940,7 +930,7 @@ fn main() {
     });
 
     missing_win.on_inspect_tiles({
-        let app = app_clone7.clone();
+        let app = app_state().clone();
         let handle = missing_handle.clone();
         move |idx| {
             let (asset, tiles) = if let Ok(app) = app.lock() {
@@ -1018,7 +1008,7 @@ fn main() {
     ap_picker_win.on_confirm_selection({
         let state = ap_picker_state.clone();
         let handle = ap_picker_handle.clone();
-        let app = app_clone7.clone();
+        let app = app_state().clone();
         move || {
             let (archive_path, missing, rw_path, _selected_index, entry) = {
                 let guard = match state.lock() {
@@ -1112,7 +1102,7 @@ fn main() {
 
     missing_win.on_replace_missing(move |idx| {
         let (missing, rw_path) = {
-            if let Ok(app) = app_clone7.lock() {
+            if let Ok(app) = app_state().lock() {
                 if let Some(result) = app.result.as_ref() {
                     if let Some(missing) = result.missing_assets.get(idx as usize) {
                         (Some(missing.clone()), app.rw_path.clone())
@@ -1131,7 +1121,7 @@ fn main() {
                 path: missing.path.clone(),
                 uses: missing.uses.clone(),
             }) {
-                if let Ok(mut app) = app_clone7.lock() {
+                if let Ok(mut app) = app_state().lock() {
                     app.status = "Замена путевых объектов в Tracks.bin заблокирована для предотвращения повреждения маршрута.".to_owned();
                 }
                 return;
@@ -1177,7 +1167,7 @@ fn main() {
                         pw.set_selected_index(-1);
                         let _ = pw.show();
                     }
-                } else if let Ok(mut app) = app_clone7.lock() {
+                } else if let Ok(mut app) = app_state().lock() {
                         let replacement_relative = replacement
                             .strip_prefix(&assets_path)
                             .map(|p| p.to_string_lossy().to_string())
@@ -1212,7 +1202,7 @@ fn main() {
                 Some(ui) => ui,
                 None => return,
             };
-            if let Ok(mut app) = app_clone.lock() {
+            if let Ok(mut app) = app_state().lock() {
                 app.receive_background_results();
                 if app.inventory_refresh_pending {
                     let inv_weak = inv_handle_timer_slot_clone
@@ -1390,7 +1380,7 @@ fn main() {
         if let Some(ui) = ui_handle2.upgrade() {
             ui.set_selected_route(idx);
         }
-        if let Ok(mut app) = app_clone2.lock() {
+        if let Ok(mut app) = app_state().lock() {
             let q = app.search_query.to_lowercase();
             let filtered: Vec<&Route> = app
                 .routes
@@ -1439,15 +1429,14 @@ fn main() {
         if let Some(ui) = ui_handle_start_check.upgrade() {
             ui.set_show_log(true);
         }
-        if let Ok(mut app) = app_clone3.lock() {
+        if let Ok(mut app) = app_state().lock() {
             app.start_check();
         }
     });
-    let app_clone_reset = app.clone();
     let ui_handle_reset = ui_handle;
     ui.on_reset_log(move || {
         if let Some(ui) = ui_handle_reset.upgrade()
-            && let Ok(app) = app_clone_reset.lock()
+            && let Ok(app) = app_state().lock()
         {
             ui.set_check_log(app.check_log.clone().into());
         }
@@ -1470,7 +1459,7 @@ fn main() {
     let settings_handle3 = settings_win.as_weak();
     let settings_handle4 = settings_win.as_weak();
     let settings_handle5 = settings_win.as_weak();
-    if let Ok(app) = app_clone11.lock() {
+    if let Ok(app) = app_state().lock() {
         let available = settings::maximum_serz_processes();
         let all_presets: [usize; 6] = [1, 6, 8, 12, 16, 32];
         let presets: Vec<slint::SharedString> = all_presets
@@ -1542,10 +1531,9 @@ fn main() {
             }
         }
     });
-    let app_clone_lang = app_clone11.clone();
     settings_win.on_language_selected(move |lang| {
         let lang = lang.to_string();
-        if let Ok(mut app) = app_clone_lang.lock() {
+        if let Ok(mut app) = app_state().lock() {
             app.language = lang.clone();
         }
         crate::settings::apply_saved_language(&lang);
@@ -1556,7 +1544,6 @@ fn main() {
             sw.set_language_index(idx as i32);
         }
     });
-    let app_clone12 = app_clone11.clone();
     settings_win.on_serz_preset_selected(move |i| {
         if let Some(sw) = settings_handle4.upgrade() {
             let presets = sw.get_serz_presets();
@@ -1564,7 +1551,7 @@ fn main() {
                 && let Ok(limit) = item.to_string().parse::<usize>()
             {
                 sw.set_serz_process_limit(limit as i32);
-                if let Ok(mut app) = app_clone12.lock() {
+                if let Ok(mut app) = app_state().lock() {
                     app.serz_process_limit = limit;
                 }
             }
@@ -1581,7 +1568,7 @@ fn main() {
             let lang_idx = sw.get_language_index() as usize;
             let langs = ["ru", "en", "de"];
             let language = langs.get(lang_idx).copied().unwrap_or("ru").to_owned();
-            if let Ok(mut app) = app_clone11.lock() {
+            if let Ok(mut app) = app_state().lock() {
                 app.serz_process_limit = limit;
                 app.locoswap_path = path.clone();
                 app.rw_path = game_path.clone();
@@ -1605,7 +1592,7 @@ fn main() {
     let scenario_handle2 = scenario_win.as_weak();
     let ui_handle3 = ui.as_weak();
     ui.on_scenario_selected(move |idx| {
-        let app = app_clone18.clone();
+        let app = app_state().clone();
         let ui_handle = ui_handle3.clone();
         let scenario_handle = scenario_handle.clone();
         std::thread::spawn(move || {
@@ -1836,7 +1823,7 @@ fn main() {
     });
 
     scenario_win.on_consist_selected(move |idx| {
-        if let Ok(mut app) = app_clone15.lock() {
+        if let Ok(mut app) = app_state().lock() {
             let scen_idx = match app.selected_scenario {
                 Some(i) => i,
                 None => return,
@@ -1879,12 +1866,9 @@ fn main() {
             }
         }
     });
-    let app_clone_locoswap_consist = app.clone();
-    let app_clone_open_scenario_folder = app.clone();
-    let app_clone_close_scenario = app.clone();
     let ui_handle_close_scenario = ui.as_weak();
     scenario_win.on_open_scenario_folder(move || {
-        if let Ok(app) = app_clone_open_scenario_folder.lock()
+        if let Ok(app) = app_state().lock()
             && let Some(idx) = app.selected_scenario
             && let Some(scenario) = app.scenarios.get(idx)
         {
@@ -1897,7 +1881,7 @@ fn main() {
             let _ = sw.hide();
         }
         let ui_handle = ui_handle_close_scenario.clone();
-        if let Ok(mut app) = app_clone_close_scenario.lock() {
+        if let Ok(mut app) = app_state().lock() {
             app.scenario_window_open = false;
             let hide = app.hide_quick_drive_free_roam;
             let scen: Vec<ScenarioItem> = app
@@ -1925,7 +1909,7 @@ fn main() {
         }
     });
     scenario_win.on_open_locoswap(move || {
-        if let Ok(app) = app_clone16.lock() {
+        if let Ok(app) = app_state().lock() {
             let path = app.locoswap_path.clone();
             if !path.is_empty() && std::path::Path::new(&path).is_file() {
                 let mut cmd = std::process::Command::new(&path);
@@ -1942,7 +1926,7 @@ fn main() {
         }
     });
     scenario_win.on_open_locoswap_consist(move |idx| {
-        if let Ok(app) = app_clone_locoswap_consist.lock() {
+        if let Ok(app) = app_state().lock() {
             let locoswap_path = app.locoswap_path.clone();
             if locoswap_path.is_empty() || !std::path::Path::new(&locoswap_path).is_file() {
                 return;
@@ -1974,10 +1958,9 @@ fn main() {
                 .spawn();
         }
     });
-    let app_clone_vehicle_preview = app.clone();
     let scenario_handle_preview = scenario_win.as_weak();
     scenario_win.on_vehicle_selected(move |idx| {
-        if let Ok(mut app) = app_clone_vehicle_preview.lock() {
+        if let Ok(mut app) = app_state().lock() {
             app.selected_vehicle = Some(idx as usize);
             let rw_path = std::path::PathBuf::from(app.rw_path.trim());
             let route_path = app
@@ -2052,9 +2035,8 @@ fn main() {
             }
         }
     });
-    let app_clone_open_vehicle_preview = app.clone();
     scenario_win.on_open_selected_vehicle_path(move || {
-        if let Ok(app) = app_clone_open_vehicle_preview.lock() {
+        if let Ok(app) = app_state().lock() {
             let scen_idx = match app.selected_scenario {
                 Some(i) => i,
                 None => return,
@@ -2113,7 +2095,7 @@ fn main() {
         }
     });
     scenario_win.on_open_vehicle_path(move |idx| {
-        if let Ok(app) = app_clone17.lock() {
+        if let Ok(app) = app_state().lock() {
             let scen_idx = match app.selected_scenario {
                 Some(i) => i,
                 None => return,
@@ -2170,7 +2152,7 @@ fn main() {
         }
     });
     ui.on_open_route_folder(move || {
-        if let Ok(app) = app_clone4.lock()
+        if let Ok(app) = app_state().lock()
             && let Some(idx) = app.selected_route
             && let Some(route) = app.routes.get(idx)
         {
@@ -2182,7 +2164,7 @@ fn main() {
             let cur = inv.get_show_missing_only();
             inv.set_show_missing_only(!cur);
             let show_missing = !cur;
-            if let Ok(app) = app_clone6.lock()
+            if let Ok(app) = app_state().lock()
                 && let Ok(state) = app.asset_inventory_state.lock()
             {
                 let (rows, safe) = build_inventory_rows(&state, show_missing);
@@ -2194,7 +2176,7 @@ fn main() {
     inventory_win.on_sort_ascending(move |column| {
         if let Some(inv) = inv_handle3.upgrade() {
             let show_missing = inv.get_show_missing_only();
-            if let Ok(app) = app_clone8.lock() {
+            if let Ok(app) = app_state().lock() {
                 if let Ok(mut state) = app.asset_inventory_state.lock() {
                     match column {
                         0 => {
@@ -2219,7 +2201,7 @@ fn main() {
     inventory_win.on_sort_descending(move |column| {
         if let Some(inv) = inv_handle4.upgrade() {
             let show_missing = inv.get_show_missing_only();
-            if let Ok(app) = app_clone9.lock() {
+            if let Ok(app) = app_state().lock() {
                 if let Ok(mut state) = app.asset_inventory_state.lock() {
                     match column {
                         0 => {
@@ -2244,7 +2226,7 @@ fn main() {
     inventory_win.on_search_changed(move |text| {
         if let Some(inv) = inv_handle5.upgrade() {
             let show_missing = inv.get_show_missing_only();
-            if let Ok(app) = app_clone10.lock() {
+            if let Ok(app) = app_state().lock() {
                 if let Ok(mut state) = app.asset_inventory_state.lock() {
                     state.search = text.to_string();
                 }
@@ -2282,7 +2264,7 @@ fn main() {
             if path_text.is_empty() {
                 return;
             }
-            let rw_path = if let Ok(app) = app_clone13.lock() {
+            let rw_path = if let Ok(app) = app_state().lock() {
                 app.rw_path.clone()
             } else {
                 String::new()
@@ -2330,7 +2312,7 @@ fn main() {
             if path_text.is_empty() {
                 return;
             }
-            let rw_path = if let Ok(app) = app_clone14.lock() {
+            let rw_path = if let Ok(app) = app_state().lock() {
                 app.rw_path.clone()
             } else {
                 String::new()
@@ -2344,7 +2326,7 @@ fn main() {
             if full.is_file() {
                 let serz_path = crate::assets::find_serz_path(&full)
                     .unwrap_or_else(|| std::path::PathBuf::from("serz64.exe"));
-                let app_for_status = app_clone14.clone();
+                let app_for_status = app_state().clone();
                 let _ = crate::external_editor::open_and_sync_with_vscode(
                     &full,
                     &serz_path,
@@ -2357,7 +2339,6 @@ fn main() {
             }
         }
     });
-    let app_clone_replace = app.clone();
     inventory_win.on_replace_inventory_asset(move |selected| {
         if selected < 0 {
             return;
@@ -2376,7 +2357,7 @@ fn main() {
         if asset_path.is_empty() {
             return;
         }
-        let rw_path = if let Ok(app) = app_clone_replace.lock() {
+        let rw_path = if let Ok(app) = app_state().lock() {
             app.rw_path.clone()
         } else {
             return;
@@ -2384,7 +2365,7 @@ fn main() {
         if rw_path.trim().is_empty() {
             return;
         }
-        let asset = if let Ok(app) = app_clone_replace.lock() {
+        let asset = if let Ok(app) = app_state().lock() {
             if let Ok(state) = app.asset_inventory_state.lock() {
                 state.assets.iter().find(|a| a.path == asset_path).cloned()
             } else {
@@ -2397,7 +2378,7 @@ fn main() {
             return;
         };
         if !crate::assets::is_safe_for_global_replacement(&asset.path, &asset.uses) {
-            if let Ok(mut app) = app_clone_replace.lock() {
+            if let Ok(mut app) = app_state().lock() {
                 app.status = "Замена этого ассета запрещена (путевая инфраструктура).".to_owned();
             }
             return;
@@ -2437,7 +2418,7 @@ fn main() {
             is_corrupted_link: false,
             asset_type,
         };
-        if let Ok(mut app) = app_clone_replace.lock() {
+        if let Ok(mut app) = app_state().lock() {
             app.inventory_replacement_pending_check = true;
             app.asset_replacement_queue
                 .push((missing, picked, replacement_relative));
@@ -2445,7 +2426,7 @@ fn main() {
         }
     });
     inventory_win.on_scan_umlauts(move || {
-        if let Ok(app) = app_clone19.lock() {
+        if let Ok(app) = app_state().lock() {
             let _ = app
                 .inventory_action_tx
                 .send(crate::app::InventoryAction::ScanUmlauts);
@@ -2458,7 +2439,7 @@ fn main() {
         }
     });
     ui.on_show_inventory(move || {
-        if let Ok(mut app) = app_clone5.lock() {
+        if let Ok(mut app) = app_state().lock() {
             app.open_asset_inventory();
             if let Some(inv) = inv_handle.upgrade() {
                 if let Ok(state) = app.asset_inventory_state.lock() {
@@ -2498,7 +2479,6 @@ fn main() {
     let audit_sort_col_for_sort = audit_sort_col;
     let audit_sort_asc_for_sort = audit_sort_asc;
     let current_display_items_for_open = current_display_items.clone();
-    let app_clone_auditor = app.clone();
     ui.on_open_folder_auditor(move || {
         if let Some(w) = auditor_handle.upgrade() {
             let _ = w.show();
@@ -2528,11 +2508,11 @@ fn main() {
             eprintln!("[Auditor] Invalid folder path: {:?}", path);
             return;
         }
-        let rw_path = app_clone_auditor
+        let rw_path = app_state()
             .lock()
             .map(|a| a.rw_path.clone())
             .unwrap_or_default();
-        let max_threads = app_clone_auditor
+        let max_threads = app_state()
             .lock()
             .map(|a| a.serz_process_limit)
             .unwrap_or(8)
@@ -2774,7 +2754,6 @@ fn main() {
     });
     let auditor_weak_for_edit = auditor_win.as_weak();
     let current_display_for_edit = current_display_items.clone();
-    let app_clone_edit = app;
     auditor_win.on_edit_in_vscode(move |row| {
         let items = current_display_for_edit
             .lock()
@@ -2807,7 +2786,7 @@ fn main() {
             });
             return;
         };
-        let rw_path = app_clone_edit
+        let rw_path = app_state()
             .lock()
             .map(|a| a.rw_path.clone())
             .unwrap_or_default();
