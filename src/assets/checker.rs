@@ -465,22 +465,6 @@ where
 
 pub type ApCache = HashMap<PathBuf, HashSet<String>>;
 
-pub trait AsThreadPool {
-    fn as_thread_pool(&self) -> &rayon::ThreadPool;
-}
-
-impl AsThreadPool for rayon::ThreadPool {
-    fn as_thread_pool(&self) -> &rayon::ThreadPool {
-        self
-    }
-}
-
-impl AsThreadPool for &rayon::ThreadPool {
-    fn as_thread_pool(&self) -> &rayon::ThreadPool {
-        *self
-    }
-}
-
 pub(crate) fn validate_route_structure(
     route_path: &Path,
     assets_path: &Path,
@@ -515,22 +499,17 @@ pub(crate) fn validate_route_structure(
     issues
 }
 
-pub(crate) fn scan_product_ap_archives<I, P>(
-    product_dirs: I,
-    pool: P,
-) -> Result<ApCache, String>
-where
-    I: IntoIterator,
-    I::Item: AsRef<Path>,
-    P: AsThreadPool,
-{
+pub(crate) fn scan_product_ap_archives(
+    product_dirs: &HashSet<PathBuf>,
+    pool: &rayon::ThreadPool,
+) -> Result<ApCache, String> {
     let dirs: Vec<PathBuf> = product_dirs
-        .into_iter()
-        .map(|path| path.as_ref().to_path_buf())
+        .iter()
+        .map(|path| path.clone())
         .collect();
 
     let results: Result<Vec<(PathBuf, HashSet<String>)>, String> =
-        pool.as_thread_pool().install(|| {
+        pool.install(|| {
             dirs.par_iter()
                 .map(|product_dir| {
                     let mut files = HashSet::new();
