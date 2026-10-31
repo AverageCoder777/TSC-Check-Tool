@@ -155,37 +155,6 @@ pub fn may_contain_asset_reference(file_path: &Path) -> bool {
         .any(|window| window == crate::translit::BLUEPRINT_ID_MARKER.as_bytes())
 }
 
-/// Ставит изменённый файл маршрута на место.
-///
-/// Для файла из архива .ap копия кладётся рядом с архивом: игра читает сначала
-/// архив, а потом файлы рядом с ним, поэтому изменённая версия перекроет
-/// оригинальную, а сам архив останется нетронутым.
-pub fn install_route_file(
-    route_path: &Path,
-    source_file: &crate::domain::RouteFile,
-    converted_path: &Path,
-) -> Result<Option<PathBuf>, String> {
-    let target = source_file.install_target(route_path);
-    // У записи из архива оригинала на диске нет: резервная копия не нужна, а
-    // изменённая версия просто кладётся рядом с архивом.
-    let original = match source_file {
-        crate::domain::RouteFile::Path(path) => Some(path.clone()),
-        crate::domain::RouteFile::Archive { .. } => None,
-    };
-    if let Some(original) = original
-        && target == original
-    {
-        return install_converted_asset(&original, converted_path).map(Some);
-    }
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Не удалось создать папку {}: {error}", parent.display()))?;
-    }
-    fs::copy(converted_path, &target)
-        .map_err(|error| format!("Не удалось записать {}: {error}", target.display()))?;
-    Ok(None)
-}
-
 pub(crate) fn check_route<F>(
     route_path: &Path,
     assets_path: &Path,
