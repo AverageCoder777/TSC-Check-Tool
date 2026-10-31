@@ -371,6 +371,49 @@ pub(crate) fn fallback_serz_path(serz_path: &Path) -> Option<PathBuf> {
     fallback.is_file().then_some(fallback)
 }
 
+#[derive(Clone)]
+pub(crate) struct SerzTool {
+    pub(crate) primary: PathBuf,
+    pub(crate) fallback: Option<PathBuf>,
+}
+
+impl SerzTool {
+    pub(crate) fn new(serz_path: &Path) -> Self {
+        Self {
+            primary: serz_path.to_path_buf(),
+            fallback: fallback_serz_path(serz_path),
+        }
+    }
+
+    pub(crate) fn bin_to_xml(&self, input: &Path, output: &Path) -> Result<(), String> {
+        convert_bin_to_xml(&self.primary, input, output).or_else(|primary_error| {
+            let Some(fallback) = &self.fallback else {
+                return Err(primary_error);
+            };
+            convert_bin_to_xml(fallback, input, output).map_err(|fallback_error| {
+                format!(
+                    "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
+                    fallback.display()
+                )
+            })
+        })
+    }
+
+    pub(crate) fn xml_to_bin(&self, input: &Path, output: &Path) -> Result<(), String> {
+        convert_xml_to_bin(&self.primary, input, output).or_else(|primary_error| {
+            let Some(fallback) = &self.fallback else {
+                return Err(primary_error);
+            };
+            convert_xml_to_bin(fallback, input, output).map_err(|fallback_error| {
+                format!(
+                    "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
+                    fallback.display()
+                )
+            })
+        })
+    }
+}
+
 pub(crate) fn find_serz_path(target: &Path) -> Option<PathBuf> {
     for ancestor in target.ancestors() {
         if ancestor
@@ -762,17 +805,7 @@ fn find_similar_asset_path(assets_path: &Path, relative_asset: &str) -> Option<P
 pub(crate) fn read_serz_xml(serz_path: &Path, asset_path: &Path) -> Result<String, String> {
     let temp = tempdir().map_err(|error| format!("Не удалось создать временную папку: {error}"))?;
     let xml_path = temp.path().join("asset.xml");
-    let conversion = convert_bin_to_xml(serz_path, asset_path, &xml_path).or_else(|error| {
-        let Some(fallback) = fallback_serz_path(serz_path) else {
-            return Err(error);
-        };
-        convert_bin_to_xml(&fallback, asset_path, &xml_path).map_err(|fallback_error| {
-            format!(
-                "{error}; повторная попытка через {} не удалась: {fallback_error}",
-                fallback.display()
-            )
-        })
-    });
+let conversion = SerzTool::new(serz_path).bin_to_xml(asset_path, &xml_path);
     conversion?;
     let bytes = fs::read(&xml_path)
         .map_err(|error| format!("Не удалось прочитать XML {}: {error}", xml_path.display()))?;
@@ -1340,19 +1373,7 @@ fn analyze_route_file(
             };
         }
         let xml_path = temp_dir.join(format!("{index:08}.xml"));
-        let conversion_result = convert_bin_to_xml(serz_path, &file_path, &xml_path).or_else(
-            |primary_error| {
-                let Some(fallback) = fallback_serz_path(serz_path) else {
-                    return Err(primary_error);
-                };
-                convert_bin_to_xml(&fallback, &file_path, &xml_path).map_err(|fallback_error| {
-                    format!(
-                        "{primary_error}; повторная попытка через {} тоже не удалась: {fallback_error}",
-                        fallback.display()
-                    )
-                })
-            },
-        );
+let conversion_result = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
         if let Err(error) = conversion_result {
             return FileAnalysis {
                 from_cache: false,
@@ -2134,19 +2155,7 @@ pub(crate) fn replace_missing_asset(
         let file_path = source_file.materialize(temp.path())?;
         let xml_path = temp.path().join("source.xml");
         if is_binary {
-            let conversion =
-                convert_bin_to_xml(serz_path, &file_path, &xml_path).or_else(|error| {
-                    let Some(fallback) = fallback_serz_path(serz_path) else {
-                        return Err(error);
-                    };
-                    convert_bin_to_xml(&fallback, &file_path, &xml_path).map_err(
-                        |fallback_error| {
-                            format!(
-                                "{error}; повторная попытка через Serz тоже не удалась: {fallback_error}"
-                            )
-                        },
-                    )
-                });
+let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
             conversion.map_err(|error| {
                 format!(
                     "Не удалось прочитать {} перед заменой: {error}",
@@ -2213,20 +2222,7 @@ pub(crate) fn replace_missing_asset(
 
         let converted_path = if is_binary {
             let converted_path = temp.path().join("replacement.bin");
-            let conversion = convert_xml_to_bin(serz_path, &xml_path, &converted_path).or_else(
-                |error| {
-                    let Some(fallback) = fallback_serz_path(serz_path) else {
-                        return Err(error);
-                    };
-                    convert_xml_to_bin(&fallback, &xml_path, &converted_path).map_err(
-                        |fallback_error| {
-                            format!(
-                                "{error}; повторная попытка через Serz тоже не удалась: {fallback_error}"
-                            )
-                        },
-                    )
-                },
-            );
+let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path);
             conversion.map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
@@ -2418,17 +2414,7 @@ fn stage_serz_xml(
     // Serz собирает только .bin: файл геометрии приходится собирать тем же
     // форматом, а нужное расширение получит при переносе на место.
     let staged = temp.path().join("transliterated.bin");
-    let conversion = convert_xml_to_bin(serz_path, &xml_path, &staged).or_else(|error| {
-        let Some(fallback) = fallback_serz_path(serz_path) else {
-            return Err(error);
-        };
-        convert_xml_to_bin(&fallback, &xml_path, &staged).map_err(|fallback_error| {
-            format!(
-                "{error}; повторная попытка через {} не удалась: {fallback_error}",
-                fallback.display()
-            )
-        })
-    });
+let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
     conversion.map_err(|error| {
         format!(
             "Не удалось подготовить изменённый файл {}: {error}",
@@ -2854,18 +2840,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         let file_path = source.materialize(temp.path())?;
         let xml_path = temp.path().join("route.xml");
         if is_binary {
-            let conversion =
-                convert_bin_to_xml(serz_path, &file_path, &xml_path).or_else(|error| {
-                    let Some(fallback) = fallback_serz_path(serz_path) else {
-                        return Err(error);
-                    };
-                    convert_bin_to_xml(&fallback, &file_path, &xml_path).map_err(|fallback_error| {
-                        format!(
-                            "{error}; повторная попытка через {} не удалась: {fallback_error}",
-                            fallback.display()
-                        )
-                    })
-                });
+let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
             conversion?;
         } else {
             fs::copy(&file_path, &xml_path)
@@ -2903,17 +2878,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         let staged_path = if is_binary {
             let mut staged = temp.path().join("route-new");
             staged.set_extension(source.extension().unwrap());
-            let conversion = convert_xml_to_bin(serz_path, &xml_path, &staged).or_else(|error| {
-                let Some(fallback) = fallback_serz_path(serz_path) else {
-                    return Err(error);
-                };
-                convert_xml_to_bin(&fallback, &xml_path, &staged).map_err(|fallback_error| {
-                    format!(
-                        "{error}; повторная попытка через {} не удалась: {fallback_error}",
-                        fallback.display()
-                    )
-                })
-            });
+let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
             conversion?;
             staged
         } else {

@@ -281,15 +281,7 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let conv =
-        crate::assets::convert_xml_to_bin(&serz_path, &temp_xml_path, target).or_else(|err| {
-            if let Some(fallback) = crate::assets::fallback_serz_path(&serz_path) {
-                crate::assets::convert_xml_to_bin(&fallback, &temp_xml_path, target)
-                    .map_err(|e| format!("{err}; {e}"))
-            } else {
-                Err(err)
-            }
-        });
+let conv = crate::assets::SerzTool::new(&serz_path).xml_to_bin(&temp_xml_path, target);
     if let Err(e) = conv {
         show_native_error("Ошибка конвертации Serz", &e);
         return Err(e);
@@ -401,16 +393,8 @@ fn run_watcher(
                     xml_path.display(),
                     binary_path.display()
                 );
-                let serz = serz_path.to_path_buf();
-                let conversion = crate::assets::convert_xml_to_bin(&serz, xml_path, binary_path)
-                    .or_else(|err| {
-                        if let Some(fallback) = crate::assets::fallback_serz_path(&serz) {
-                            crate::assets::convert_xml_to_bin(&fallback, xml_path, binary_path)
-                                .map_err(|e| format!("{err}; {e}"))
-                        } else {
-                            Err(err)
-                        }
-                    });
+let serz = crate::assets::SerzTool::new(&serz_path);
+let conversion = serz.xml_to_bin(xml_path, binary_path);
                 match conversion {
                     Ok(()) => {
                         println!(
