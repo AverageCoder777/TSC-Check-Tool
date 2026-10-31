@@ -59,6 +59,7 @@ pub(crate) struct ReferencedAsset {
     pub(crate) path: String,
     pub(crate) uses: Vec<AssetUse>,
     pub(crate) missing: bool,
+    pub(crate) path_search: String,
 }
 
 #[derive(Clone)]
@@ -73,6 +74,8 @@ pub(crate) struct AssetUse {
     pub(crate) tile_kind: TileKind,
     /// Что за объект: объект маршрута, файл состава или что-то другое.
     pub(crate) kind: AssetKind,
+    pub(crate) tile_search: String,
+    pub(crate) source_file_search: String,
 }
 
 /// Файл маршрута: обычный файл на диске или запись архива .ap.

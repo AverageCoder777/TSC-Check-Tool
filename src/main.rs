@@ -5,7 +5,9 @@ use slint::Model;
 use rayon::prelude::*;
 use regex::Regex;
 use std::cmp::Reverse;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -17,6 +19,14 @@ use tempfile::tempdir;
 use zip::ZipArchive;
 
 const DEFAULT_CONCURRENT_SERZ: usize = 8;
+
+thread_local! {
+    static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
+}
+
+pub(crate) fn clear_route_icon_cache() {
+    ROUTE_ICON_CACHE.with(|cache| cache.borrow_mut().clear());
+}
 
 mod analysis_cache;
 mod app;
@@ -103,23 +113,27 @@ fn load_vehicle_preview_image(
         .unwrap_or_else(|| vehicle.blueprint.clone());
     let mut base_dir = String::new();
     let mut found = false;
+    // Один проход по архиву: ищем блюпринт и сразу строим карту имён записей.
+    let mut entry_index_by_name: HashMap<String, usize> = HashMap::with_capacity(zip.len());
     for index in 0..zip.len() {
         let Ok(entry) = zip.by_index(index) else {
             continue;
         };
         let name = entry.name().unwrap_or_default().to_string();
-        let entry_stem = Path::new(&name)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if entry_stem.eq_ignore_ascii_case(&stem) {
-            base_dir = name
-                .rsplit_once('/')
-                .or_else(|| name.rsplit_once('\\'))
-                .map(|(dir, _)| dir.to_owned())
+        entry_index_by_name.insert(name.to_lowercase(), index);
+        if !found {
+            let entry_stem = Path::new(&name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            found = true;
-            break;
+            if entry_stem.eq_ignore_ascii_case(&stem) {
+                base_dir = name
+                    .rsplit_once('/')
+                    .or_else(|| name.rsplit_once('\\'))
+                    .map(|(dir, _)| dir.to_owned())
+                    .unwrap_or_default();
+                found = true;
+            }
         }
     }
     if !found {
@@ -135,14 +149,10 @@ fn load_vehicle_preview_image(
         )
     };
 
-    for index in 0..zip.len() {
-        let Ok(mut entry) = zip.by_index(index) else {
-            continue;
+    if let Some(index) = entry_index_by_name.get(&image_name.to_lowercase()) {
+        let Ok(mut entry) = zip.by_index(*index) else {
+            return slint::Image::default();
         };
-        let entry_name = entry.name().unwrap_or_default().to_string();
-        if !entry_name.eq_ignore_ascii_case(&image_name) {
-            continue;
-        }
         let mut data = Vec::new();
         if std::io::Read::read_to_end(&mut entry, &mut data).is_ok()
             && let Ok(image) = slint::Image::load_from_data(&data, Some("png"))
@@ -192,6 +202,25 @@ fn filter_items(items: &mut Vec<auditor::BrokenResourceRef>, filter: &str) {
         }
         kind.contains(&f)
     });
+}
+
+fn map_broken_resources_to_ui(
+    items: &[auditor::BrokenResourceRef],
+) -> slint::ModelRc<slint::ModelRc<slint::StandardListViewItem>> {
+    let rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = items
+        .iter()
+        .map(|b| {
+            let kind = b.kind.label();
+            let mut item0 = slint::StandardListViewItem::default();
+            item0.text = kind.into();
+            let mut item1 = slint::StandardListViewItem::default();
+            item1.text = b.expected_path.to_string_lossy().to_string().into();
+            let mut item2 = slint::StandardListViewItem::default();
+            item2.text = b.parent_file.to_string_lossy().to_string().into();
+            slint::ModelRc::new(slint::VecModel::from(vec![item0, item1, item2]))
+        })
+        .collect();
+    slint::ModelRc::new(slint::VecModel::from(rows))
 }
 
 fn sort_items(items: &mut [auditor::BrokenResourceRef], col: usize, asc: bool) {
@@ -255,10 +284,10 @@ fn build_inventory_rows(
             continue;
         }
         if !search.is_empty() {
-            let matches = a.path.to_lowercase().contains(&search)
+            let matches = a.path_search.contains(&search)
                 || a.uses.iter().any(|u| {
-                    u.tile.to_lowercase().contains(&search)
-                        || u.source_file.display().to_lowercase().contains(&search)
+                    u.tile_search.contains(&search)
+                        || u.source_file_search.contains(&search)
                 });
             if !matches {
                 continue;
@@ -933,6 +962,19 @@ fn main() {
                 last_count = app.routes.len();
                 last_query = q.clone();
                 last_thumbnails_enabled = app.route_thumbnails_enabled;
+                // Загружаем иконки маршрутов один раз, затем переиспользуем потоковый кэш.
+                if app.route_thumbnails_enabled {
+                    for route in &app.routes {
+                        if let Some(path) = &route.icon_path {
+                            ROUTE_ICON_CACHE.with(|cache| {
+                                let mut cache = cache.borrow_mut();
+                                if !cache.contains_key(path) {
+                                    cache.insert(path.clone(), load_route_icon_image(path));
+                                }
+                            });
+                        }
+                    }
+                }
                 let query = q.to_lowercase();
                 let items: Vec<RouteItem> = app
                     .routes
@@ -940,10 +982,12 @@ fn main() {
                     .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
                     .map(|r| {
                         let icon = if app.route_thumbnails_enabled {
-                            match r.icon_path.clone() {
-                                Some(p) => load_route_icon_image(&p),
-                                None => slint::Image::default(),
-                            }
+                            r.icon_path
+                                .as_ref()
+                                .and_then(|p| {
+                                    ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned())
+                                })
+                                .unwrap_or_default()
                         } else {
                             slint::Image::default()
                         };
@@ -2204,27 +2248,7 @@ fn main() {
             let ww = window_weak_thread;
             slint::invoke_from_event_loop(move || {
                 if let Some(w) = ww.upgrade() {
-                    let mut rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = Vec::new();
-                    for b in &items {
-                        let kind = match b.kind {
-                            auditor::AssetResourceKind::Geometry => "Геометрия",
-                            auditor::AssetResourceKind::Texture => "Текстура",
-                            auditor::AssetResourceKind::Animation => "Анимация",
-                            auditor::AssetResourceKind::Script => "Скрипт",
-                            auditor::AssetResourceKind::Sound => "Звуки",
-                            auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
-                        };
-                        let mut item0 = slint::StandardListViewItem::default();
-                        item0.text = kind.into();
-                        let mut item1 = slint::StandardListViewItem::default();
-                        item1.text = b.expected_path.to_string_lossy().to_string().into();
-                        let mut item2 = slint::StandardListViewItem::default();
-                        item2.text = b.parent_file.to_string_lossy().to_string().into();
-                        rows.push(slint::ModelRc::new(slint::VecModel::from(vec![
-                            item0, item1, item2,
-                        ])));
-                    }
-                    w.set_broken_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+                    w.set_broken_rows(map_broken_resources_to_ui(&items));
                     w.set_audit_progress(1.0);
                     w.set_audit_status(format!("Готово: {} проблем", items.len()).into());
                     w.set_selected_row(-1);

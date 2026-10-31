@@ -348,6 +348,7 @@ impl CheckerApp {
         self.route_scan = Some(rx);
         self.routes.clear();
         self.selected_route = None;
+        crate::clear_route_icon_cache();
         if !preserve_incomplete {
             self.incomplete_folders.clear();
             self.selected_incomplete = None;

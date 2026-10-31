@@ -1666,6 +1666,8 @@ where
                     tile: tile.clone(),
                     tile_kind: analysis.file.tile_kind(),
                     kind,
+                    tile_search: tile.to_lowercase(),
+                    source_file_search: analysis.file.display().to_lowercase(),
                 });
             }
         }
@@ -1797,6 +1799,11 @@ where
                 .unwrap_or_else(|| path.clone()),
             uses: uses.clone(),
             missing: false,
+            path_search: asset_names
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| path.clone())
+                .to_lowercase(),
         })
         .collect();
     let (umlaut_assets, umlaut_errors) =
@@ -1902,10 +1909,12 @@ where
             });
         }
 
+        let path_search = display_path.to_lowercase();
         asset_inventory.push(crate::domain::ReferencedAsset {
             path: display_path,
             uses,
             missing: is_missing,
+            path_search,
         });
     }
     missing_assets.sort_by(|left, right| left.path.cmp(&right.path));
@@ -3579,6 +3588,8 @@ mod tests {
             }
             .tile_kind(),
             kind: crate::domain::AssetKind::Scenery,
+            tile_search: "тайл X=+000000 Z=+000000".to_lowercase(),
+            source_file_search: "Scenery/Grass.xml".to_lowercase(),
         }];
 
         let xml = std::fs::read_to_string(&archive).ok();

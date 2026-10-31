@@ -249,7 +249,7 @@ pub(crate) fn scan_route_folder(
         Ok(crate::domain::RouteScanItem::Incomplete(report))
     } else {
         let name = read_route_name(path, id)?;
-        Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
+Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
             id: id.to_owned(),
             name,
             path: path.to_path_buf(),

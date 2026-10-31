@@ -15,6 +15,19 @@ pub enum AssetResourceKind {
     ChildBlueprint,
 }
 
+impl AssetResourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Geometry => "Геометрия",
+            Self::Texture => "Текстура",
+            Self::Animation => "Анимация",
+            Self::Script => "Скрипт",
+            Self::Sound => "Звуки",
+            Self::ChildBlueprint => "Дочерние объекты",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BrokenResourceRef {
     pub parent_file: PathBuf,
