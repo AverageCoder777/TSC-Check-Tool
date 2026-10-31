@@ -66,16 +66,16 @@ pub(crate) fn is_homoglyph(left: char, right: char) -> bool {
 /// Отличаться могут только буквы-«двойники» и испорченные символы: любые другие
 /// различия означают, что это другой файл.
 pub(crate) fn names_match(expected: &str, candidate: &str) -> bool {
-    let expected: Vec<char> = expected.chars().collect();
-    let candidate: Vec<char> = candidate.chars().collect();
-    expected.len() == candidate.len()
-        && expected.iter().zip(candidate.iter()).all(|(left, right)| {
-            left == right
-                || left.eq_ignore_ascii_case(right)
-                || crate::translit::BROKEN_CHARACTERS.contains(left)
-                || crate::translit::BROKEN_CHARACTERS.contains(right)
-                || is_homoglyph(*left, *right)
-        })
+    if expected.chars().count() != candidate.chars().count() {
+        return false;
+    }
+    expected.chars().zip(candidate.chars()).all(|(left, right)| {
+        left == right
+            || left.eq_ignore_ascii_case(&right)
+            || crate::translit::BROKEN_CHARACTERS.contains(&left)
+            || crate::translit::BROKEN_CHARACTERS.contains(&right)
+            || is_homoglyph(left, right)
+    })
 }
 
 pub(crate) fn has_corrupted_or_nonascii(value: &str) -> bool {
