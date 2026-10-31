@@ -116,10 +116,32 @@ pub(crate) fn normalize_fuzzy_segment(value: &str) -> String {
 }
 
 pub(crate) fn fold_german_diphthongs(value: &str) -> String {
-    value
-        .replace("ae", "a")
-        .replace("oe", "o")
-        .replace("ue", "u")
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if let Some(next) = chars.peek().copied() {
+            match (ch, next) {
+                ('a', 'e') => {
+                    out.push('a');
+                    chars.next();
+                    continue;
+                }
+                ('o', 'e') => {
+                    out.push('o');
+                    chars.next();
+                    continue;
+                }
+                ('u', 'e') => {
+                    out.push('u');
+                    chars.next();
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out.push(ch);
+    }
+    out
 }
 
 pub(crate) fn glitch_match(query: &[char], candidate: &[char]) -> bool {
