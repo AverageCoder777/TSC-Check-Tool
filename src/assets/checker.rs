@@ -122,26 +122,34 @@ let conversion_result = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_pat
 pub fn count_asset_uses(
     references: Vec<crate::reference::AssetReference>,
 ) -> Vec<(String, u32, crate::domain::AssetKind)> {
-    let mut order: Vec<String> = Vec::new();
-    let mut counts: HashMap<String, u32> = HashMap::new();
-    let mut kinds: HashMap<String, crate::domain::AssetKind> = HashMap::new();
-    for reference in references {
-        let counter = counts.entry(reference.path.clone()).or_insert_with(|| {
-            order.push(reference.path.clone());
-            kinds.insert(reference.path.clone(), reference.kind);
-            0
-        });
-        *counter += 1;
+    struct Entry {
+        count: u32,
+        kind: crate::domain::AssetKind,
     }
+
+    let mut order = Vec::new();
+    let mut map: HashMap<String, Entry> = HashMap::with_capacity(references.len());
+
+    for reference in references {
+        match map.get_mut(&reference.path) {
+            Some(entry) => {
+                entry.count += 1;
+            }
+            None => {
+                order.push(reference.path.clone());
+                map.insert(
+                    reference.path,
+                    Entry { count: 1, kind: reference.kind },
+                );
+            }
+        }
+    }
+
     order
         .into_iter()
-        .map(|path| {
-            let count = counts.get(&path).copied().unwrap_or_default();
-            let kind = kinds
-                .get(&path)
-                .copied()
-                .unwrap_or(crate::domain::AssetKind::Other);
-            (path, count, kind)
+        .filter_map(|path| {
+            map.remove(&path)
+                .map(|entry| (path, entry.count, entry.kind))
         })
         .collect()
 }
