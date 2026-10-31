@@ -320,4 +320,25 @@ impl InventoryController {
             }
         });
     }
+
+    pub fn refresh(&self) {
+        let Ok(mut app) = self.app.lock() else {
+            return;
+        };
+        if !app.inventory_refresh_pending {
+            return;
+        }
+        let Some(inv) = self.weak.upgrade() else {
+            return;
+        };
+        let show_missing = inv.get_show_missing_only();
+        let (rows, safe) = if let Ok(state) = app.asset_inventory_state.lock() {
+            crate::inventory_ui::build_inventory_rows(&state, show_missing)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+        inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
+        app.inventory_refresh_pending = false;
+    }
 }

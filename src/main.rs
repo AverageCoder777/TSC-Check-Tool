@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use tempfile::tempdir;
 use zip::ZipArchive;
@@ -21,6 +21,7 @@ const DEFAULT_CONCURRENT_SERZ: usize = 8;
 
 thread_local! {
     static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
+    static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = RefCell::new(None);
 }
 
 pub(crate) fn clear_route_icon_cache() {
@@ -62,8 +63,6 @@ fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     slint::Image::load_from_path(icon_path).unwrap_or_default()
 }
 
-
-
 pub(crate) fn map_broken_resources_to_ui(
     items: &[auditor::BrokenResourceRef],
 ) -> slint::ModelRc<slint::ModelRc<slint::StandardListViewItem>> {
@@ -83,11 +82,8 @@ pub(crate) fn map_broken_resources_to_ui(
     slint::ModelRc::new(slint::VecModel::from(rows))
 }
 
-
-
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static MISSING_WEAK: OnceLock<slint::Weak<MissingAssetsWindow>> = OnceLock::new();
-static INV_SLOT: OnceLock<Arc<Mutex<Option<slint::Weak<AssetInventoryWindow>>>>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn schedule_ui_sync() {
@@ -111,25 +107,8 @@ fn app_state() -> Arc<Mutex<app::CheckerApp>> {
 }
 
 fn sync_ui(ui: &MainWindow) {
-    let inv_slot = INV_SLOT.get().cloned();
     if let Ok(mut app) = app_state().lock() {
         app.receive_background_results();
-        if app.inventory_refresh_pending {
-            let inv_weak = inv_slot
-                .as_ref()
-                .and_then(|slot| slot.lock().ok().and_then(|g| g.clone()));
-            if let Some(inv) = inv_weak.and_then(|w| w.upgrade()) {
-                let show_missing = inv.get_show_missing_only();
-                let (rows, safe) = if let Ok(state) = app.asset_inventory_state.lock() {
-                    crate::inventory_ui::build_inventory_rows(&state, show_missing)
-                } else {
-                    (Vec::new(), Vec::new())
-                };
-                inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
-                inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-                app.inventory_refresh_pending = false;
-            }
-        }
         if !app.is_checking()
             && app.result.is_some()
             && app.missing_assets_popup.is_some()
@@ -149,8 +128,7 @@ fn sync_ui(ui: &MainWindow) {
                 .iter()
                 .map(|m| m.suggested_repair.clone().unwrap_or_default().into())
                 .collect();
-            let corrupted: Vec<bool> =
-                missing_assets.iter().map(|m| m.is_corrupted_link).collect();
+            let corrupted: Vec<bool> = missing_assets.iter().map(|m| m.is_corrupted_link).collect();
             let types: Vec<slint::SharedString> = missing_assets
                 .iter()
                 .map(|m| crate::assets::RouteAssetType::label(m.asset_type).into())
@@ -173,9 +151,9 @@ fn sync_ui(ui: &MainWindow) {
                 mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(corrupted)));
                 mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
                 mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-                mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::<
-                    slint::SharedString,
-                >::default()));
+                mw.set_active_tile_list(slint::ModelRc::new(
+                    slint::VecModel::<slint::SharedString>::default(),
+                ));
                 mw.set_active_tile_asset("".into());
                 let _ = mw.show();
                 app.missing_assets_shown = true;
@@ -250,6 +228,11 @@ fn sync_ui(ui: &MainWindow) {
         }
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
+    INVENTORY_CONTROLLER.with(|cell| {
+        if let Some(controller) = cell.borrow().as_ref() {
+            controller.refresh();
+        }
+    });
 }
 
 fn handle_cli_args() {
@@ -777,9 +760,6 @@ fn main() {
             }
         }
     });
-    let inv_handle_timer_slot = Arc::new(Mutex::new(None::<slint::Weak<AssetInventoryWindow>>));
-    let _ = INV_SLOT.set(inv_handle_timer_slot.clone());
-
     let ui_handle2 = ui.as_weak();
     let app = app_for_controllers.clone();
     ui.on_route_selected(move |idx| {
@@ -851,10 +831,16 @@ fn main() {
         }
     });
     let inventory = inventory_controller::InventoryController::new(app_for_controllers.clone());
-    if let Ok(mut slot) = inv_handle_timer_slot.lock() {
-        *slot = Some(inventory.window.as_weak());
-    }
-    inventory.bind();
+    INVENTORY_CONTROLLER.with(|cell| {
+        *cell.borrow_mut() = Some(inventory);
+    });
+    let inventory_weak_for_show =
+        INVENTORY_CONTROLLER.with(|cell| cell.borrow().as_ref().unwrap().weak.clone());
+    INVENTORY_CONTROLLER.with(|cell| {
+        if let Some(inv) = cell.borrow().as_ref() {
+            inv.bind();
+        }
+    });
     let settings = settings_controller::SettingsController::new(app_for_controllers.clone());
     settings.bind();
 
@@ -870,7 +856,6 @@ fn main() {
             let _ = windows::open_in_file_explorer(&route.path);
         }
     });
-    let inventory_weak_for_show = inventory.weak.clone();
     let app = app_for_controllers.clone();
     ui.on_show_inventory(move || {
         if let Ok(mut app) = app.lock() {
