@@ -68,7 +68,6 @@ impl SettingsController {
         }
 
         // pick locoswap
-        let app = self.app.clone();
         self.window.on_pick_locoswap(move || {
             if let Some(sw) = settings_handle.upgrade() {
                 let current = sw.get_locoswap_path().to_string();
@@ -86,7 +85,6 @@ impl SettingsController {
         });
 
         // pick game
-        let app = self.app.clone();
         self.window.on_pick_game(move || {
             if let Some(sw) = settings_handle3.upgrade() {
                 let current = sw.get_game_path().to_string();

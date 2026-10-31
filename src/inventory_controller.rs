@@ -21,7 +21,6 @@ impl InventoryController {
     }
 
     pub fn bind(&self) {
-        let app = self.app.clone();
         let inv_handle2 = self.weak.clone();
         let inv_handle3 = self.weak.clone();
         let inv_handle4 = self.weak.clone();

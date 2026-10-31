@@ -10,21 +10,19 @@ pub struct AuditorController {
     pub window: FolderAuditorWindow,
     pub state: Arc<Mutex<AuditorState>>,
     pub weak: Weak<FolderAuditorWindow>,
-    pub app: Arc<Mutex<crate::app::CheckerApp>>,
     pub audit_generation: Arc<AtomicU64>,
 }
 
 impl AuditorController {
-    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
+    pub fn new() -> Self {
         let window = FolderAuditorWindow::new().unwrap();
         let weak = window.as_weak();
         let state = Arc::new(Mutex::new(AuditorState::default()));
-        Self { window, state, weak, app, audit_generation: Arc::new(AtomicU64::new(0)) }
+        Self { window, state, weak, audit_generation: Arc::new(AtomicU64::new(0)) }
     }
 
     pub fn bind(&self, _ui_weak: Weak<crate::MainWindow>) {
         let audit_generation = self.audit_generation.clone();
-        let app = self.app.clone();
         let auditor_handle2 = self.weak.clone();
         let auditor_state_for_start = self.state.clone();
         let auditor_state_for_filter = self.state.clone();
@@ -32,7 +30,6 @@ impl AuditorController {
         let auditor_state_for_open = self.state.clone();
         let auditor_state_for_edit = self.state.clone();
 
-    let app = self.app.clone();
         self.window.on_pick_folder(move || {
         if let Some(w) = auditor_handle2.upgrade() {
             let current = w.get_folder_path().to_string();
@@ -49,7 +46,6 @@ impl AuditorController {
         }
     });
     let auditor_weak_for_start = self.weak.clone();
-    let app = self.app.clone();
         self.window.on_start_audit(move |folder_path| {
         println!("[Auditor] start-audit callback: {}", folder_path);
         let window_weak = auditor_weak_for_start.clone();
@@ -153,7 +149,6 @@ impl AuditorController {
         });
     });
     let auditor_weak_for_filter = self.weak.clone();
-    let app = self.app.clone();
         self.window.on_filter_changed(move |filter| {
         println!("[Auditor] filter-changed: {}", filter);
         let ww = auditor_weak_for_filter.clone();
@@ -177,7 +172,6 @@ impl AuditorController {
     });
     let auditor_weak_for_open = self.weak.clone();
     let auditor_state_for_open_source = auditor_state_for_open.clone();
-    let app = self.app.clone();
         self.window.on_open_source_file(move |row| {
         let items = auditor_state_for_open_source
             .lock()
@@ -193,7 +187,6 @@ impl AuditorController {
     });
     let auditor_weak_for_missing = self.weak.clone();
     let auditor_state_for_missing_folder = auditor_state_for_open.clone();
-    let app = self.app.clone();
         self.window.on_open_missing_target_folder(move |row| {
         let items = auditor_state_for_missing_folder
             .lock()
@@ -209,7 +202,6 @@ impl AuditorController {
     });
     let auditor_weak_for_sort = self.weak.clone();
     let auditor_state_for_sort_closure = auditor_state_for_sort.clone();
-    let app = self.app.clone();
         self.window.on_sort_column(move |col| {
         let col = col as usize;
         let col_now;
@@ -250,7 +242,6 @@ impl AuditorController {
     });
     let auditor_weak_for_edit = self.weak.clone();
     let auditor_state_for_edit_closure = auditor_state_for_edit.clone();
-    let app = self.app.clone();
         self.window.on_edit_in_vscode(move |row| {
         let items = auditor_state_for_edit_closure
             .lock()

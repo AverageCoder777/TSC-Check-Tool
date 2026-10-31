@@ -5,7 +5,6 @@ use slint::Model;
 use rayon::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
-use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
@@ -890,7 +889,7 @@ fn main() {
             }
         }
     });
-    let auditor = auditor_controller::AuditorController::new(app_for_controllers.clone());
+    let auditor = auditor_controller::AuditorController::new();
     let auditor_weak_for_open_folder = auditor.weak.clone();
     ui.on_open_folder_auditor(move || {
         if let Some(w) = auditor_weak_for_open_folder.upgrade() {

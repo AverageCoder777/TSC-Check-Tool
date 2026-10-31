@@ -21,7 +21,6 @@ impl ScenarioController {
     }
 
     pub fn bind(&self, ui: &crate::MainWindow) {
-        let app = self.app.clone();
         let scenario_handle = self.weak.clone();
         let scenario_handle2 = self.weak.clone();
         let ui_handle3 = ui.as_weak();
