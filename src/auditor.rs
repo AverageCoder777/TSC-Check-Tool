@@ -1131,3 +1131,19 @@ pub fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
 #[cfg(test)]
 #[path = "tests/auditor.rs"]
 mod tests;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CheckError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Message(String),
+}
+
+impl From<String> for CheckError {
+    fn from(value: String) -> Self { Self::Message(value) }
+}
+
+impl From<CheckError> for String {
+    fn from(value: CheckError) -> Self { value.to_string() }
+}
