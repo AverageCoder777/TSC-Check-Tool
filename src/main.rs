@@ -443,6 +443,24 @@ fn handle_cli_args() {
     }
 }
 
+struct AuditorState {
+    all_items: Vec<auditor::BrokenResourceRef>,
+    display_items: Vec<auditor::BrokenResourceRef>,
+    sort_col: usize,
+    sort_asc: bool,
+}
+
+impl Default for AuditorState {
+    fn default() -> Self {
+        Self {
+            all_items: Vec::new(),
+            display_items: Vec::new(),
+            sort_col: 0,
+            sort_asc: true,
+        }
+    }
+}
+
 fn main() {
     handle_cli_args();
     // Handle file association launch: TS-Checker opened with a .bin/.GeoPcDx file.
@@ -2122,25 +2140,12 @@ fn main() {
     let auditor_win = FolderAuditorWindow::new().unwrap();
     let auditor_handle = auditor_win.as_weak();
     let auditor_handle2 = auditor_win.as_weak();
-    let all_audit_items: Arc<Mutex<Vec<auditor::BrokenResourceRef>>> =
-        Arc::new(Mutex::new(Vec::new()));
-    let current_display_items: Arc<Mutex<Vec<auditor::BrokenResourceRef>>> =
-        Arc::new(Mutex::new(Vec::new()));
-    let audit_sort_col: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-    let audit_sort_asc: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));
-    let all_audit_items_for_start = all_audit_items.clone();
-    let current_display_items_for_start = current_display_items.clone();
-    let audit_sort_col_for_start = audit_sort_col.clone();
-    let audit_sort_asc_for_start = audit_sort_asc.clone();
-    let all_audit_items_for_filter = all_audit_items.clone();
-    let current_display_items_for_filter = current_display_items.clone();
-    let audit_sort_col_for_filter = audit_sort_col.clone();
-    let audit_sort_asc_for_filter = audit_sort_asc.clone();
-    let all_audit_items_for_sort = all_audit_items;
-    let current_display_items_for_sort = current_display_items.clone();
-    let audit_sort_col_for_sort = audit_sort_col;
-    let audit_sort_asc_for_sort = audit_sort_asc;
-    let current_display_items_for_open = current_display_items.clone();
+    let auditor_state = Arc::new(Mutex::new(AuditorState::default()));
+    let auditor_state_for_start = auditor_state.clone();
+    let auditor_state_for_filter = auditor_state.clone();
+    let auditor_state_for_sort = auditor_state.clone();
+    let auditor_state_for_open = auditor_state.clone();
+    let auditor_state_for_edit = auditor_state.clone();
     ui.on_open_folder_auditor(move || {
         if let Some(w) = auditor_handle.upgrade() {
             let _ = w.show();
@@ -2197,11 +2202,8 @@ fn main() {
         let ap_cache = auditor::ApArchiveCache::new();
         let path_for_thread = path;
         let window_weak_thread = window_weak;
-        let all_store = all_audit_items_for_start.clone();
-        let current_store = current_display_items_for_start.clone();
-        let sort_col_store = audit_sort_col_for_start.clone();
-        let sort_asc_store = audit_sort_asc_for_start.clone();
-        let results_store = all_store;
+        let state_store = auditor_state_for_start.clone();
+        let results_store = state_store.clone();
         std::thread::spawn(move || {
             println!("[Auditor] Starting audit for: {:?}", path_for_thread);
             let progress_cb: Arc<dyn Fn(usize, usize) + Send + Sync> = {
@@ -2230,11 +2232,13 @@ fn main() {
                 "[Auditor] Audit done, broken: {}",
                 report.broken_references.len()
             );
-            if let Ok(mut store) = results_store.lock() {
-                *store = report.broken_references.clone();
+            if let Ok(mut state) = results_store.lock() {
+                state.all_items = report.broken_references.clone();
             }
-            let col = *sort_col_store.lock().unwrap();
-            let asc = *sort_asc_store.lock().unwrap();
+            let (col, asc) = match state_store.lock() {
+                Ok(s) => (s.sort_col, s.sort_asc),
+                Err(_) => (0, true),
+            };
             let filter = window_weak_thread
                 .upgrade()
                 .map(|w| w.get_active_filter().to_string())
@@ -2242,8 +2246,8 @@ fn main() {
             let mut items: Vec<auditor::BrokenResourceRef> = report.broken_references;
             filter_items(&mut items, &filter);
             sort_items(&mut items, col, asc);
-            if let Ok(mut store) = current_store.lock() {
-                *store = items.clone();
+            if let Ok(mut state) = state_store.lock() {
+                state.display_items = items.clone();
             }
             let ww = window_weak_thread;
             slint::invoke_from_event_loop(move || {
@@ -2261,54 +2265,30 @@ fn main() {
     auditor_win.on_filter_changed(move |filter| {
         println!("[Auditor] filter-changed: {}", filter);
         let ww = auditor_weak_for_filter.clone();
-        let all_store = all_audit_items_for_filter.clone();
-        let current_store = current_display_items_for_filter.clone();
-        let sort_col_store = audit_sort_col_for_filter.clone();
-        let sort_asc_store = audit_sort_asc_for_filter.clone();
-        let all_items = all_store.lock().map(|g| g.clone()).unwrap_or_default();
-        let col = *sort_col_store.lock().unwrap();
-        let asc = *sort_asc_store.lock().unwrap();
+        let state_store = auditor_state_for_filter.clone();
+        let all_items = state_store.lock().map(|g| g.all_items.clone()).unwrap_or_default();
+        let (col, asc) = state_store.lock().map(|g| (g.sort_col, g.sort_asc)).unwrap_or((0, true));
         let mut items = all_items;
         filter_items(&mut items, filter.as_str());
         sort_items(&mut items, col, asc);
-        if let Ok(mut store) = current_store.lock() {
-            *store = items.clone();
+        if let Ok(mut state) = state_store.lock() {
+            state.display_items = items.clone();
         }
         slint::invoke_from_event_loop(move || {
             if let Some(w) = ww.upgrade() {
                 w.set_active_filter(filter.clone());
-                let mut rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = Vec::new();
-                for b in &items {
-                    let kind = match b.kind {
-                        auditor::AssetResourceKind::Geometry => "Геометрия",
-                        auditor::AssetResourceKind::Texture => "Текстура",
-                        auditor::AssetResourceKind::Animation => "Анимация",
-                        auditor::AssetResourceKind::Script => "Скрипт",
-                        auditor::AssetResourceKind::Sound => "Звуки",
-                        auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
-                    };
-                    let mut item0 = slint::StandardListViewItem::default();
-                    item0.text = kind.into();
-                    let mut item1 = slint::StandardListViewItem::default();
-                    item1.text = b.expected_path.to_string_lossy().to_string().into();
-                    let mut item2 = slint::StandardListViewItem::default();
-                    item2.text = b.parent_file.to_string_lossy().to_string().into();
-                    rows.push(slint::ModelRc::new(slint::VecModel::from(vec![
-                        item0, item1, item2,
-                    ])));
-                }
-                w.set_broken_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+                w.set_broken_rows(map_broken_resources_to_ui(&items));
                 w.set_selected_row(-1);
             }
         })
         .ok();
     });
     let auditor_weak_for_open = auditor_win.as_weak();
-    let current_display_for_open = current_display_items_for_open.clone();
+    let auditor_state_for_open_source = auditor_state_for_open.clone();
     auditor_win.on_open_source_file(move |row| {
-        let items = current_display_for_open
+        let items = auditor_state_for_open_source
             .lock()
-            .map(|g| g.clone())
+            .map(|g| g.display_items.clone())
             .unwrap_or_default();
         if row < 0 || row as usize >= items.len() {
             return;
@@ -2319,11 +2299,11 @@ fn main() {
         let _ = auditor_weak_for_open;
     });
     let auditor_weak_for_missing = auditor_win.as_weak();
-    let current_display_for_missing = current_display_items_for_open;
+    let auditor_state_for_missing_folder = auditor_state_for_open.clone();
     auditor_win.on_open_missing_target_folder(move |row| {
-        let items = current_display_for_missing
+        let items = auditor_state_for_missing_folder
             .lock()
-            .map(|g| g.clone())
+            .map(|g| g.display_items.clone())
             .unwrap_or_default();
         if row < 0 || row as usize >= items.len() {
             return;
@@ -2334,72 +2314,51 @@ fn main() {
         let _ = auditor_weak_for_missing;
     });
     let auditor_weak_for_sort = auditor_win.as_weak();
-    let all_for_sort = all_audit_items_for_sort;
-    let current_for_sort = current_display_items_for_sort;
-    let sort_col_for_sort = audit_sort_col_for_sort;
-    let sort_asc_for_sort = audit_sort_asc_for_sort;
+    let auditor_state_for_sort_closure = auditor_state_for_sort.clone();
     auditor_win.on_sort_column(move |col| {
         let col = col as usize;
-        let mut c = sort_col_for_sort.lock().unwrap();
-        let mut a = sort_asc_for_sort.lock().unwrap();
-        if *c == col {
-            *a = !*a;
-        } else {
-            *c = col;
-            *a = true;
+        let col_now;
+        let asc_now;
+        let all_items_snapshot;
+        {
+            let mut state = auditor_state_for_sort_closure.lock().unwrap();
+            if state.sort_col == col {
+                state.sort_asc = !state.sort_asc;
+            } else {
+                state.sort_col = col;
+                state.sort_asc = true;
+            }
+            col_now = state.sort_col;
+            asc_now = state.sort_asc;
+            all_items_snapshot = state.all_items.clone();
         }
-        let col_now = *c;
-        let asc_now = *a;
-        drop(c);
-        drop(a);
         let filter = auditor_weak_for_sort
             .upgrade()
             .map(|w| w.get_active_filter().to_string())
             .unwrap_or_else(|| "all".to_string());
-        let all_items = all_for_sort.lock().map(|g| g.clone()).unwrap_or_default();
-        let mut items = all_items;
+        let mut items = all_items_snapshot;
         filter_items(&mut items, &filter);
         sort_items(&mut items, col_now, asc_now);
-        if let Ok(mut store) = current_for_sort.lock() {
-            *store = items.clone();
+        if let Ok(mut state) = auditor_state_for_sort_closure.lock() {
+            state.display_items = items.clone();
         }
         let ww = auditor_weak_for_sort.clone();
         slint::invoke_from_event_loop(move || {
             if let Some(w) = ww.upgrade() {
                 w.set_sort_col(col_now as i32);
                 w.set_sort_ascending(asc_now);
-                let mut rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = Vec::new();
-                for b in &items {
-                    let kind = match b.kind {
-                        auditor::AssetResourceKind::Geometry => "Геометрия",
-                        auditor::AssetResourceKind::Texture => "Текстура",
-                        auditor::AssetResourceKind::Animation => "Анимация",
-                        auditor::AssetResourceKind::Script => "Скрипт",
-                        auditor::AssetResourceKind::Sound => "Звуки",
-                        auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
-                    };
-                    let mut item0 = slint::StandardListViewItem::default();
-                    item0.text = kind.into();
-                    let mut item1 = slint::StandardListViewItem::default();
-                    item1.text = b.expected_path.to_string_lossy().to_string().into();
-                    let mut item2 = slint::StandardListViewItem::default();
-                    item2.text = b.parent_file.to_string_lossy().to_string().into();
-                    rows.push(slint::ModelRc::new(slint::VecModel::from(vec![
-                        item0, item1, item2,
-                    ])));
-                }
-                w.set_broken_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+                w.set_broken_rows(map_broken_resources_to_ui(&items));
                 w.set_selected_row(-1);
             }
         })
         .ok();
     });
     let auditor_weak_for_edit = auditor_win.as_weak();
-    let current_display_for_edit = current_display_items.clone();
+    let auditor_state_for_edit_closure = auditor_state_for_edit.clone();
     auditor_win.on_edit_in_vscode(move |row| {
-        let items = current_display_for_edit
+        let items = auditor_state_for_edit_closure
             .lock()
-            .map(|g| g.clone())
+            .map(|g| g.display_items.clone())
             .unwrap_or_default();
         if row < 0 || row as usize >= items.len() {
             return;
@@ -2468,7 +2427,7 @@ fn main() {
     });
 
     // Texture viewer integration
-    let current_display_for_preview = current_display_items;
+    let auditor_state_for_preview = auditor_state.clone();
     let viewer_win = TextureViewerWindow::new().unwrap();
     let viewer_weak = viewer_win.as_weak();
     let tex_state: Arc<Mutex<Option<(u32, u32, Vec<u8>, PathBuf)>>> = Arc::new(Mutex::new(None));
@@ -2477,9 +2436,9 @@ fn main() {
     let tex_state_for_export = tex_state.clone();
     let tex_state_for_replace = tex_state;
     auditor_win.on_preview_texture(move |row| {
-        let items = current_display_for_preview
+        let items = auditor_state_for_preview
             .lock()
-            .map(|g| g.clone())
+            .map(|g| g.display_items.clone())
             .unwrap_or_default();
         if row < 0 || row as usize >= items.len() {
             return;
