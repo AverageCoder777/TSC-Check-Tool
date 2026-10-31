@@ -59,6 +59,7 @@ pub fn analyze_route_file(
         let xml_path = temp_dir.join(format!("{index:08}.xml"));
 let conversion_result = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
         if let Err(error) = conversion_result {
+            let _ = fs::remove_file(&xml_path);
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
@@ -66,9 +67,13 @@ let conversion_result = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_pat
                 error: Some(format!("{}: {error}", file_path.display())),
             };
         }
-        match fs::read(xml_path) {
-            Ok(data) => data,
+        match fs::read(&xml_path) {
+            Ok(data) => {
+                let _ = fs::remove_file(&xml_path);
+                data
+            }
             Err(error) => {
+                let _ = fs::remove_file(&xml_path);
                 return FileAnalysis {
                     from_cache: false,
                     file: route_file.clone(),
