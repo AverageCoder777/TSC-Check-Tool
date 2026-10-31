@@ -2291,15 +2291,19 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path)
     }
 
     let mut backups = Vec::new();
+    let mut transaction = FileTransaction::new();
     let mut replaced_files = 0;
     for (source_file, _temp, converted_path) in staged {
-        match install_route_file(route_path, &source_file, &converted_path) {
-            Ok(backup) => {
-                replaced_files += 1;
-                if let Some(backup) = backup {
-                    backups.push(backup);
-                }
+    match install_route_file(route_path, &source_file, &converted_path) {
+        Ok(backup) => {
+            if let Some(backup_path) = &backup {
+                transaction.record(source_file.install_target(route_path), backup_path.clone());
             }
+            replaced_files += 1;
+            if let Some(backup) = backup {
+                backups.push(backup);
+            }
+        }
             Err(error) => {
                 return Err(format!(
                     "Заменено размещений: {replaced_instances}; успешно изменено файлов: {replaced_files}. Ошибка в {}: {error}. Созданные резервные копии: {}",
@@ -2313,6 +2317,7 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path)
             }
         }
     }
+    transaction.commit();
     Ok(crate::domain::AssetReplacementReport {
         replaced_files,
         replaced_instances,
@@ -2321,6 +2326,39 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path)
         log_file: None,
         log_error: None,
     })
+}
+
+#[derive(Default)]
+pub(crate) struct FileTransaction {
+    records: Vec<(PathBuf, PathBuf)>,
+    committed: bool,
+}
+
+impl FileTransaction {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn record(&mut self, original: PathBuf, backup: PathBuf) {
+        self.records.push((original, backup));
+    }
+
+    pub(crate) fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for FileTransaction {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        for (original, backup) in &self.records {
+            if backup.exists() {
+                let _ = fs::rename(backup, original);
+            }
+        }
+    }
 }
 
 struct StagedUmlautFile {
@@ -2975,7 +3013,7 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
             })?;
         }
     }
-    let mut committed: Vec<(PathBuf, PathBuf, Option<PathBuf>)> = Vec::new();
+    let mut transaction = FileTransaction::new();
     for staged in &prepared {
         // Файл из архива .ap: оригинал остаётся в архиве, а изменённая копия
         // кладётся рядом и перекроет его, поэтому резервная копия не нужна.
@@ -2988,61 +3026,26 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
                 let backup = match next_backup_path(original) {
                     Ok(path) => path,
                     Err(error) => {
-                        let rollback_errors = rollback_umlaut_changes(&committed);
-                        let rollback_detail = if rollback_errors.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" Ошибки отката: {}", rollback_errors.join("; "))
-                        };
-                        return Err(format!("{error}.{rollback_detail}"));
+                        return Err(format!("{error}"));
                     }
                 };
                 if let Err(error) = fs::rename(original, &backup) {
-                    let rollback_errors = rollback_umlaut_changes(&committed);
-                    let rollback_detail = if rollback_errors.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" Ошибки отката: {}", rollback_errors.join("; "))
-                    };
                     return Err(format!(
-                        "Не удалось создать резервную копию {}: {error}.{rollback_detail}",
+                        "Не удалось создать резервную копию {}: {error}.",
                         original.display()
                     ));
                 }
+                transaction.record(original.clone(), backup.clone());
                 Some(backup)
             }
             None => None,
         };
         if let Err(error) = install_staged_file(staged) {
-            let restore = match (&backup, &original) {
-                (Some(backup), Some(original)) => fs::rename(backup, original),
-                _ => Ok(()),
-            };
-            let rollback_errors = rollback_umlaut_changes(&committed);
-            let rollback_detail = if rollback_errors.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    " Дополнительные ошибки отката: {}",
-                    rollback_errors.join("; ")
-                )
-            };
-            return Err(match restore {
-                Ok(()) => format!(
-                    "Не удалось установить {}: {error}. Файл восстановлен.{rollback_detail}",
-                    staged.target.display()
-                ),
-                Err(restore_error) => format!(
-                    "Не удалось установить {}: {error}; восстановление тоже не удалось: {restore_error}.{rollback_detail}",
-                    staged.target.display()
-                ),
-            });
+            return Err(format!(
+                "Не удалось установить {}: {error}.",
+                staged.target.display()
+            ));
         }
-        committed.push((
-            original.unwrap_or_else(|| staged.target.clone()),
-            staged.target.clone(),
-            backup,
-        ));
     }
     // Старые папки с умляутами остались пустыми: убираем их, чтобы в Assets
     // не осталось дублей с непонятным назначением.
@@ -3050,6 +3053,7 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
     for folder in &emptied_folders {
         let _ = fs::remove_dir(folder);
     }
+    transaction.commit();
     Ok(crate::domain::UmlautRepairReport {
         new_asset_path: new_relative_asset,
     })
@@ -3076,29 +3080,6 @@ fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
                 })
         }
     }
-}
-
-fn rollback_umlaut_changes(committed: &[(PathBuf, PathBuf, Option<PathBuf>)]) -> Vec<String> {
-    let mut errors = Vec::new();
-    for (source, target, backup) in committed.iter().rev() {
-        if target.exists()
-            && let Err(error) = fs::remove_file(target)
-        {
-            errors.push(format!("не удалось удалить {}: {error}", target.display()));
-            continue;
-        }
-        let Some(backup) = backup else {
-            continue;
-        };
-        if let Err(error) = fs::rename(backup, source) {
-            errors.push(format!(
-                "не удалось восстановить {} из {}: {error}",
-                source.display(),
-                backup.display()
-            ));
-        }
-    }
-    errors
 }
 
 fn escape_xml_text(text: &str) -> String {
