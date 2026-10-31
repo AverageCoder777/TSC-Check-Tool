@@ -121,52 +121,65 @@ fn sync_ui(ui: &MainWindow) {
             });
         }
         let q = ui.get_search_query().to_string();
+        let search_changed = app.search_query != q;
         app.search_query = q.clone();
-        if app.route_thumbnails_enabled {
-            for route in &app.routes {
-                if let Some(path) = &route.icon_path {
-                    ROUTE_ICON_CACHE.with(|cache| {
-                        let mut cache = cache.borrow_mut();
-                        if !cache.contains_key(path) {
-                            cache.insert(path.clone(), load_route_icon_image(path));
-                        }
-                    });
+        let routes_dirty = search_changed
+            || app.synced_routes_revision != app.routes_revision
+            || app.synced_ignored_count != app.ignored_route_ids.len()
+            || app.synced_incomplete_count != app.incomplete_folders.len()
+            || app.synced_thumbnails != app.route_thumbnails_enabled;
+        if routes_dirty {
+            if app.route_thumbnails_enabled {
+                for route in &app.routes {
+                    if let Some(path) = &route.icon_path {
+                        ROUTE_ICON_CACHE.with(|cache| {
+                            let mut cache = cache.borrow_mut();
+                            if !cache.contains_key(path) {
+                                cache.insert(path.clone(), load_route_icon_image(path));
+                            }
+                        });
+                    }
                 }
             }
+            let query = q.to_lowercase();
+            let items: Vec<RouteItem> = app
+                .routes
+                .iter()
+                .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
+                .map(|r| {
+                    let icon = if app.route_thumbnails_enabled {
+                        r.icon_path
+                            .as_ref()
+                            .and_then(|p| ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned()))
+                            .unwrap_or_default()
+                    } else {
+                        slint::Image::default()
+                    };
+                    RouteItem {
+                        name: r.name.clone().into(),
+                        icon_source: icon,
+                    }
+                })
+                .collect();
+            ui.set_route_items(slint::ModelRc::new(slint::VecModel::from(items)));
+            let ignored: Vec<slint::SharedString> = app
+                .ignored_route_ids
+                .iter()
+                .map(|id| id.clone().into())
+                .collect();
+            ui.set_ignored_routes(slint::ModelRc::new(slint::VecModel::from(ignored)));
+            let incomplete: Vec<slint::SharedString> = app
+                .incomplete_folders
+                .iter()
+                .map(|f| f.id.clone().into())
+                .collect();
+            ui.set_incomplete_folders(slint::ModelRc::new(slint::VecModel::from(incomplete)));
+            app.synced_search_query = q.clone();
+            app.synced_routes_revision = app.routes_revision;
+            app.synced_ignored_count = app.ignored_route_ids.len();
+            app.synced_incomplete_count = app.incomplete_folders.len();
+            app.synced_thumbnails = app.route_thumbnails_enabled;
         }
-        let query = q.to_lowercase();
-        let items: Vec<RouteItem> = app
-            .routes
-            .iter()
-            .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
-            .map(|r| {
-                let icon = if app.route_thumbnails_enabled {
-                    r.icon_path
-                        .as_ref()
-                        .and_then(|p| ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned()))
-                        .unwrap_or_default()
-                } else {
-                    slint::Image::default()
-                };
-                RouteItem {
-                    name: r.name.clone().into(),
-                    icon_source: icon,
-                }
-            })
-            .collect();
-        ui.set_route_items(slint::ModelRc::new(slint::VecModel::from(items)));
-        let ignored: Vec<slint::SharedString> = app
-            .ignored_route_ids
-            .iter()
-            .map(|s| s.clone().into())
-            .collect();
-        ui.set_ignored_routes(slint::ModelRc::new(slint::VecModel::from(ignored)));
-        let incomplete: Vec<slint::SharedString> = app
-            .incomplete_folders
-            .iter()
-            .map(|f| f.id.clone().into())
-            .collect();
-        ui.set_incomplete_folders(slint::ModelRc::new(slint::VecModel::from(incomplete)));
         if let Some(route) = app.selected_route.and_then(|i| app.routes.get(i)) {
             ui.set_selected_route_name(route.name.clone().into());
             ui.set_selected_route_id(route.id.clone().into());

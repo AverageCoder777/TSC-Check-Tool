@@ -75,6 +75,12 @@ pub(crate) struct CheckerApp {
     pub(crate) missing_assets_shown: bool,
     pub(crate) inventory_refresh_pending: bool,
     pub(crate) inventory_replacement_pending_check: bool,
+    pub(crate) synced_search_query: String,
+    pub(crate) routes_revision: u64,
+    pub(crate) synced_routes_revision: u64,
+    pub(crate) synced_ignored_count: usize,
+    pub(crate) synced_incomplete_count: usize,
+    pub(crate) synced_thumbnails: bool,
 }
 
 impl Default for CheckerApp {
@@ -170,6 +176,12 @@ impl Default for CheckerApp {
             missing_assets_shown: false,
             inventory_refresh_pending: false,
             inventory_replacement_pending_check: false,
+            synced_search_query: String::new(),
+            routes_revision: 0,
+            synced_routes_revision: 0,
+            synced_ignored_count: 0,
+            synced_incomplete_count: 0,
+            synced_thumbnails: false,
         }
     }
 }
@@ -648,6 +660,7 @@ impl CheckerApp {
                     }
                     self.routes = routes.routes;
                     self.incomplete_folders = routes.incomplete_folders;
+                    self.routes_revision = self.routes_revision.wrapping_add(1);
                     self.selected_incomplete = (!self.incomplete_folders.is_empty()).then_some(0);
                     self.selected_route = (!self.routes.is_empty()).then_some(0);
                 }
