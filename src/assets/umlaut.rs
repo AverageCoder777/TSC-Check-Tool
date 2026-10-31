@@ -300,60 +300,6 @@ pub fn translated_reference(
     Ok(text)
 }
 
-pub fn stage_serz_xml(
-    source: &Path,
-    target: &Path,
-    xml: &str,
-    serz_path: &Path,
-) -> Result<StagedUmlautFile, String> {
-    let parent = source
-        .parent()
-        .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
-    let temp = create_temporary_work_directory(parent)?;
-    let xml_path = temp.path().join("transliterated.xml");
-    fs::write(&xml_path, xml)
-        .map_err(|error| format!("Не удалось записать временный XML: {error}"))?;
-    // Serz собирает только .bin: файл геометрии приходится собирать тем же
-    // форматом, а нужное расширение получит при переносе на место.
-    let staged = temp.path().join("transliterated.bin");
-let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
-    conversion.map_err(|error| {
-        format!(
-            "Не удалось подготовить изменённый файл {}: {error}",
-            source.display()
-        )
-    })?;
-    Ok(StagedUmlautFile {
-        source: crate::domain::RouteFile::Path(source.to_path_buf()),
-        target: target.to_path_buf(),
-        staged,
-        _temp: temp,
-    })
-}
-
-pub fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFile, String> {
-    let parent = source
-        .parent()
-        .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
-    let temp = create_temporary_work_directory(parent)?;
-    let staged = temp.path().join(
-        source
-            .file_name()
-            .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?,
-    );
-    fs::copy(source, &staged).map_err(|error| {
-        format!(
-            "Не удалось подготовить переименование {}: {error}",
-            source.display()
-        )
-    })?;
-    Ok(StagedUmlautFile {
-        source: crate::domain::RouteFile::Path(source.to_path_buf()),
-        target: target.to_path_buf(),
-        staged,
-        _temp: temp,
-    })
-}
 
 pub(crate) fn repair_umlaut_asset_chain(
     route_path: &Path,
@@ -881,22 +827,14 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
 ///
 /// Файл из архива .ap не переносится: вместо этого рядом с архивом кладётся
 /// изменённая копия, которую игра прочитает вместо записи архива.
-pub fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
-    match &staged.source {
-        crate::domain::RouteFile::Path(_) => fs::rename(&staged.staged, &staged.target)
-            .map_err(|error| format!("Не удалось установить {}: {error}", staged.target.display())),
-        crate::domain::RouteFile::Archive { .. } => {
-            if let Some(parent) = staged.target.parent() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    format!("Не удалось создать папку {}: {error}", parent.display())
-                })?;
-            }
-            fs::copy(&staged.staged, &staged.target)
-                .map(|_| ())
-                .map_err(|error| {
-                    format!("Не удалось записать {}: {error}", staged.target.display())
-                })
-        }
-    }
+
+
+pub struct StagedUmlautFile {
+    /// Исходный файл: запись архива .ap или файл на диске.
+    pub source: crate::domain::RouteFile,
+    /// Куда класть результат.
+    pub target: PathBuf,
+    pub staged: PathBuf,
+    pub _temp: tempfile::TempDir,
 }
 

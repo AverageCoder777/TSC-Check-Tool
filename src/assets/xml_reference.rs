@@ -165,3 +165,20 @@ pub fn escape_xml_text(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+
+pub(crate) fn validate_xml_document(xml: &str) -> Result<(), String> {
+    for event in xml::reader::EventReader::new(xml.as_bytes()) {
+        event.map_err(|error| format!("Некорректный XML: {error}"))?;
+    }
+    Ok(())
+}
+
+
+pub fn first_blueprint_tag(xml: &str) -> Option<String> {
+    let regex = Regex::new(r"<(c[A-Za-z0-9]+Blueprint)").ok()?;
+    regex
+        .captures(xml)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str().to_owned())
+}
+

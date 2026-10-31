@@ -33,12 +33,124 @@ impl Drop for FileTransaction {
     }
 }
 
-pub struct StagedUmlautFile {
-    /// Исходный файл: запись архива .ap или файл на диске.
-    pub source: crate::domain::RouteFile,
-    /// Куда класть результат.
-    pub target: PathBuf,
-    pub staged: PathBuf,
-    pub _temp: tempfile::TempDir,
+
+
+pub(crate) fn install_converted_asset(
+    source_path: &Path,
+    converted_path: &Path,
+) -> Result<PathBuf, String> {
+    let backup_path = next_backup_path(source_path)?;
+    fs::rename(source_path, &backup_path).map_err(|error| {
+        format!(
+            "Не удалось сохранить резервную копию {}: {error}",
+            backup_path.display()
+        )
+    })?;
+    if let Err(error) = fs::rename(converted_path, source_path) {
+        return match fs::rename(&backup_path, source_path) {
+            Ok(()) => Err(format!(
+                "Не удалось записать новый файл: {error}. Исходник восстановлен."
+            )),
+            Err(restore_error) => Err(format!(
+                "Не удалось записать новый файл: {error}. Не удалось восстановить исходник из {}: {restore_error}",
+                backup_path.display()
+            )),
+        };
+    }
+    Ok(backup_path)
 }
 
+
+pub(crate) fn next_backup_path(source_path: &Path) -> Result<PathBuf, String> {
+    let file_name = source_path
+        .file_name()
+        .ok_or_else(|| format!("Некорректный путь к файлу: {}", source_path.display()))?;
+    for index in 1_u64.. {
+        let mut backup_name = file_name.to_os_string();
+        backup_name.push(format!(".bak{index}"));
+        let backup_path = source_path.with_file_name(backup_name);
+        if !backup_path.exists() {
+            return Ok(backup_path);
+        }
+    }
+    Err(format!(
+        "Не удалось подобрать имя резервной копии для {}",
+        source_path.display()
+    ))
+}
+
+
+pub fn stage_serz_xml(
+    source: &Path,
+    target: &Path,
+    xml: &str,
+    serz_path: &Path,
+) -> Result<StagedUmlautFile, String> {
+    let parent = source
+        .parent()
+        .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
+    let temp = create_temporary_work_directory(parent)?;
+    let xml_path = temp.path().join("transliterated.xml");
+    fs::write(&xml_path, xml)
+        .map_err(|error| format!("Не удалось записать временный XML: {error}"))?;
+    // Serz собирает только .bin: файл геометрии приходится собирать тем же
+    // форматом, а нужное расширение получит при переносе на место.
+    let staged = temp.path().join("transliterated.bin");
+let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
+    conversion.map_err(|error| {
+        format!(
+            "Не удалось подготовить изменённый файл {}: {error}",
+            source.display()
+        )
+    })?;
+    Ok(StagedUmlautFile {
+        source: crate::domain::RouteFile::Path(source.to_path_buf()),
+        target: target.to_path_buf(),
+        staged,
+        _temp: temp,
+    })
+}
+
+
+pub fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFile, String> {
+    let parent = source
+        .parent()
+        .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
+    let temp = create_temporary_work_directory(parent)?;
+    let staged = temp.path().join(
+        source
+            .file_name()
+            .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?,
+    );
+    fs::copy(source, &staged).map_err(|error| {
+        format!(
+            "Не удалось подготовить переименование {}: {error}",
+            source.display()
+        )
+    })?;
+    Ok(StagedUmlautFile {
+        source: crate::domain::RouteFile::Path(source.to_path_buf()),
+        target: target.to_path_buf(),
+        staged,
+        _temp: temp,
+    })
+}
+
+pub fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
+    match &staged.source {
+        crate::domain::RouteFile::Path(_) => fs::rename(&staged.staged, &staged.target)
+            .map_err(|error| format!("Не удалось установить {}: {error}", staged.target.display())),
+        crate::domain::RouteFile::Archive { .. } => {
+            if let Some(parent) = staged.target.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!("Не удалось создать папку {}: {error}", parent.display())
+                })?;
+            }
+            fs::copy(&staged.staged, &staged.target)
+                .map(|_| ())
+                .map_err(|error| {
+                    format!("Не удалось записать {}: {error}", staged.target.display())
+                })
+        }
+    }
+}
