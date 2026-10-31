@@ -668,15 +668,21 @@ impl CheckerApp {
             }
         }
 
-        let check_message = self.check.as_ref().and_then(|rx| match rx.try_recv() {
-            Ok(message) => Some(Ok(message)),
-            Err(TryRecvError::Disconnected) => Some(Err(
-                "Не удалось получить результат проверки маршрута.".to_owned(),
-            )),
-            Err(TryRecvError::Empty) => None,
-        });
-        if let Some(message) = check_message {
-            match message {
+        while self.check.is_some() {
+            let check_message = {
+                let rx = self.check.as_ref().unwrap();
+                match rx.try_recv() {
+                    Ok(message) => Some(Ok(message)),
+                    Err(TryRecvError::Disconnected) => Some(Err(
+                        "Не удалось получить результат проверки маршрута.".to_owned(),
+                    )),
+                    Err(TryRecvError::Empty) => None,
+                }
+            };
+            let Some(check_message) = check_message else {
+                break;
+            };
+            match check_message {
                 Ok(CheckMessage::Progress(status)) => {
                     if status.starts_with("Анализ файла:") || status.starts_with("Анализ файлов:")
                     {

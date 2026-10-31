@@ -88,17 +88,18 @@ static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn schedule_ui_sync() {
+    let Some(weak) = UI_WEAK.get().cloned() else {
+        return;
+    };
     if UI_SYNC_PENDING.swap(true, Ordering::SeqCst) {
         return;
     }
-    if let Some(weak) = UI_WEAK.get().cloned() {
-        let _ = slint::invoke_from_event_loop(move || {
-            UI_SYNC_PENDING.store(false, Ordering::SeqCst);
-            if let Some(ui) = weak.upgrade() {
-                sync_ui(&ui);
-            }
-        });
-    }
+    let _ = slint::invoke_from_event_loop(move || {
+        UI_SYNC_PENDING.store(false, Ordering::SeqCst);
+        if let Some(ui) = weak.upgrade() {
+            sync_ui(&ui);
+        }
+    });
 }
 
 static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
