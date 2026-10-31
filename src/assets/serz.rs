@@ -42,7 +42,25 @@ impl From<SerzError> for String {
 
 
 
-#[derive(Clone)]
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum AssetError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Message(String),
+}
+
+impl From<String> for AssetError {
+    fn from(value: String) -> Self {
+        Self::Message(value)
+    }
+}
+
+impl From<AssetError> for String {
+    fn from(value: AssetError) -> Self {
+        value.to_string()
+    }
+}
 pub(crate) struct SerzTool {
     pub(crate) primary: PathBuf,
     pub(crate) fallback: Option<PathBuf>,

@@ -346,7 +346,6 @@ impl Default for AuditorState {
 
 fn main() {
     handle_cli_args();
-    // Handle file association launch: TS-Checker opened with a .bin/.GeoPcDx file.
     let app = Arc::new(Mutex::new(app::CheckerApp::default()));
     let _ = APP.set(app.clone());
     let app_for_controllers = app.clone();
