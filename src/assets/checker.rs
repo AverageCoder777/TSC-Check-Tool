@@ -219,30 +219,7 @@ where
     report_progress("Сканирование файлов маршрута...");
     let collected_route_files = collect_route_files(route_path, ignore_scenarios)?;
 
-    let mut structure_issues = Vec::new();
-    if !route_path.join("RouteProperties.xml").is_file() {
-        structure_issues.push("не найден RouteProperties.xml".to_owned());
-    }
-    if !assets_path.is_dir() {
-        structure_issues.push("не найдена папка Assets".to_owned());
-    }
-    if collected_route_files.is_empty() {
-        structure_issues.push("не найдено файлов .bin или .xml для проверки".to_owned());
-    }
-    let unexpected_directories = unexpected_route_directories(route_path)?;
-    if !unexpected_directories.is_empty() {
-        structure_issues.push(format!(
-            "неизвестные папки маршрута не проверялись: {}",
-            unexpected_directories.join(", ")
-        ));
-    }
-    let leftover_work_directories = leftover_temporary_work_directories(route_path)?;
-    if !leftover_work_directories.is_empty() {
-        structure_issues.push(format!(
-            "в маршруте остались рабочие каталоги программы (можно удалить): {}",
-            leftover_work_directories.join(", ")
-        ));
-    }
+    let mut structure_issues = validate_route_structure(route_path, assets_path, &collected_route_files);
 
     // Основные файлы маршрута могут быть упакованы в .ap...
     let mut route_files: Vec<crate::domain::RouteFile> = collected_route_files
@@ -438,74 +415,8 @@ where
         })
         .collect();
 
-    let archive_results: Result<Vec<(PathBuf, HashSet<String>, Vec<String>)>, String> = pool
-        .install(|| {
-            product_dirs
-                .par_iter()
-                .map(|product_dir| {
-                    let mut files = HashSet::new();
-                    let mut errors = Vec::new();
-                    match fs::read_dir(product_dir) {
-                        Ok(entries) => {
-                            for entry in entries {
-                                let archive_path = match entry {
-                                    Ok(entry) => entry.path(),
-                                    Err(error) => {
-                                        errors.push(format!(
-                                            "Ошибка при чтении {}: {error}",
-                                            product_dir.display()
-                                        ));
-                                        continue;
-                                    }
-                                };
-                                if !archive_path
-                                    .extension()
-                                    .is_some_and(|extension| extension.eq_ignore_ascii_case("ap"))
-                                {
-                                    continue;
-                                }
-                                let archive_file = match fs::File::open(&archive_path) {
-                                    Ok(file) => file,
-                                    Err(error) => {
-                                        errors.push(format!(
-                                            "Не удалось открыть {}: {error}",
-                                            archive_path.display()
-                                        ));
-                                        continue;
-                                    }
-                                };
-                                let archive = match ZipArchive::new(archive_file) {
-                                    Ok(archive) => archive,
-                                    Err(error) => {
-                                        errors.push(format!(
-                                            "Не удалось прочитать архив ассетов {}: {error}",
-                                            archive_path.display()
-                                        ));
-                                        continue;
-                                    }
-                                };
-                                for name in archive.file_names().flatten() {
-                                    files.insert(name.replace('/', "\\").trim().to_lowercase());
-                                }
-                            }
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => {
-                            return Err(format!(
-                                "Не удалось прочитать {}: {error}",
-                                product_dir.display()
-                            ));
-                        }
-                    }
-                    Ok((product_dir.clone(), files, errors))
-                })
-                .collect()
-        });
-    let archive_results = archive_results?;
-    for (product_dir, files, errors) in archive_results {
-        structure_issues.extend(errors);
-        ap_cache.insert(product_dir, files);
-    }
+    let scanned = scan_product_ap_archives(&product_dirs, &pool)?;
+    ap_cache.extend(scanned);
 
     report_progress("Проверка имён и строк ассетов на умляуты...");
     let inventory_seed: Vec<_> = asset_uses
@@ -535,30 +446,152 @@ where
     // папки, и её продукт подключают к маршруту, даже если прямых ссылок на
     // него в файлах маршрута нет.
 
+    let (missing_assets, asset_inventory) = resolve_missing_and_corrupted(asset_uses, &asset_names, &ap_cache, assets_path);
+
+    Ok(crate::domain::CheckResult {
+        missing_assets,
+        asset_inventory,
+        umlaut_assets,
+        conversion_errors,
+        structure_issues,
+    })
+}
+
+
+
+pub type ApCache = HashMap<PathBuf, HashSet<String>>;
+
+pub trait AsThreadPool {
+    fn as_thread_pool(&self) -> &rayon::ThreadPool;
+}
+
+impl AsThreadPool for rayon::ThreadPool {
+    fn as_thread_pool(&self) -> &rayon::ThreadPool {
+        self
+    }
+}
+
+impl AsThreadPool for &rayon::ThreadPool {
+    fn as_thread_pool(&self) -> &rayon::ThreadPool {
+        *self
+    }
+}
+
+pub(crate) fn validate_route_structure(
+    route_path: &Path,
+    assets_path: &Path,
+    files: &[PathBuf],
+) -> Vec<String> {
+    let mut issues = Vec::new();
+    if !route_path.join("RouteProperties.xml").is_file() {
+        issues.push("не найден RouteProperties.xml".to_owned());
+    }
+    if !assets_path.is_dir() {
+        issues.push("не найдена папка Assets".to_owned());
+    }
+    if files.is_empty() {
+        issues.push("не найдено файлов .bin или .xml для проверки".to_owned());
+    }
+    if let Ok(directories) = unexpected_route_directories(route_path)
+        && !directories.is_empty()
+    {
+        issues.push(format!(
+            "неизвестные папки маршрута не проверялись: {}",
+            directories.join(", ")
+        ));
+    }
+    if let Ok(leftover) = leftover_temporary_work_directories(route_path)
+        && !leftover.is_empty()
+    {
+        issues.push(format!(
+            "в маршруте остались рабочие каталоги программы (можно удалить): {}",
+            leftover.join(", ")
+        ));
+    }
+    issues
+}
+
+pub(crate) fn scan_product_ap_archives<I, P>(
+    product_dirs: I,
+    pool: P,
+) -> Result<ApCache, String>
+where
+    I: IntoIterator,
+    I::Item: AsRef<Path>,
+    P: AsThreadPool,
+{
+    let dirs: Vec<PathBuf> = product_dirs
+        .into_iter()
+        .map(|path| path.as_ref().to_path_buf())
+        .collect();
+
+    let results: Result<Vec<(PathBuf, HashSet<String>)>, String> =
+        pool.as_thread_pool().install(|| {
+            dirs.par_iter()
+                .map(|product_dir| {
+                    let mut files = HashSet::new();
+                    match fs::read_dir(product_dir) {
+                        Ok(entries) => {
+                            for entry in entries {
+                                let archive_path = match entry {
+                                    Ok(entry) => entry.path(),
+                                    Err(_) => continue,
+                                };
+                                if !archive_path
+                                    .extension()
+                                    .is_some_and(|extension| extension.eq_ignore_ascii_case("ap"))
+                                {
+                                    continue;
+                                }
+                                let Ok(archive_file) = fs::File::open(&archive_path) else {
+                                    continue;
+                                };
+                                let Ok(archive) = ZipArchive::new(archive_file) else {
+                                    continue;
+                                };
+                                for name in archive.file_names().flatten() {
+                                    files.insert(name.replace('/', "\\").trim().to_lowercase());
+                                }
+                            }
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(format!(
+                                "Не удалось прочитать {}: {error}",
+                                product_dir.display()
+                            ));
+                        }
+                    }
+                    Ok((product_dir.clone(), files))
+                })
+                .collect()
+        });
+
+    let results = results?;
+    let mut ap_cache = HashMap::new();
+    for (product_dir, files) in results {
+        ap_cache.insert(product_dir, files);
+    }
+    Ok(ap_cache)
+}
+
+pub(crate) fn resolve_missing_and_corrupted(
+    asset_uses: HashMap<String, Vec<crate::domain::AssetUse>>,
+    asset_names: &HashMap<String, String>,
+    ap_cache: &ApCache,
+    assets_path: &Path,
+) -> (Vec<crate::domain::MissingAsset>, Vec<crate::domain::ReferencedAsset>) {
     let mut asset_inventory = Vec::with_capacity(asset_uses.len());
     let mut missing_assets = Vec::new();
     for (relative_asset, uses) in asset_uses {
-        // Файлы составов (поездов) при проверке маршрута не учитываются: игра
-        // ссылается на них отдельно от объектов маршрута, а проверять их нужно
-        // вместе со сценариями.
         if uses.iter().any(|usage| usage.kind.is_vehicle()) {
             continue;
         }
-        // Показываем путь так, как он записан в маршруте, но ищем файл без
-        // учёта регистра: игра регистр не различает.
         let display_path = asset_names
             .get(&relative_asset)
             .cloned()
             .unwrap_or_else(|| relative_asset.clone());
-        let full_asset_path = match resolve_asset_path(assets_path, &relative_asset) {
-            Ok(path) => path,
-            Err(error) => {
-                structure_issues.push(format!(
-                    "Не удалось однозначно сопоставить ассет {display_path}: {error}"
-                ));
-                None
-            }
-        };
+        let full_asset_path = resolve_asset_path(assets_path, &relative_asset).ok().flatten();
         let parts: Vec<&str> = relative_asset.split('/').collect();
         let in_archive = if parts.len() >= 3 {
             let product_dir = assets_path.join(parts[0]).join(parts[1]);
@@ -570,7 +603,6 @@ where
                 variants.push(crate::translit::replace_broken_characters(&base, "ss"));
                 variants.push(crate::translit::replace_broken_characters(&base, "ß"));
             }
-            // Texture slot prefixes: ensure a trailing extension for image refs.
             let mut texture_variants = Vec::new();
             for variant in &variants {
                 if !variant.ends_with(".tgpcdx")
@@ -594,13 +626,10 @@ where
             if let Some(exact_path) = full_asset_path {
                 (Some(exact_path), None, false)
             } else if is_in_archive {
-                // Exists inside .ap archive - perfectly valid!
                 (None, None, false)
             } else if let Some((fuzzy_disk_path, relative_repair)) =
                 fuzzy_resolve_disk_path(assets_path, &relative_asset)
             {
-                // Fuzzy candidates are only auto-repairable corrupted/encoding variants.
-                // Clean ASCII names that merely look similar are genuinely missing.
                 let query_corrupted = has_corrupted_or_nonascii(&relative_asset);
                 let umlaut_folded_equivalent = !relative_asset.is_ascii()
                     && normalize_fuzzy_segment(&relative_asset)
@@ -611,12 +640,9 @@ where
                     (None, None, false)
                 }
             } else {
-                // Genuinely missing
                 (None, None, false)
             };
-
         let is_missing = !is_in_archive && resolved_disk_path.is_none() && !is_corrupted;
-
         if is_missing || is_corrupted {
             missing_assets.push(crate::domain::MissingAsset {
                 path: display_path.clone(),
@@ -626,7 +652,6 @@ where
                 asset_type: classify_route_asset_type(&display_path, &uses),
             });
         }
-
         let path_search = display_path.to_lowercase();
         asset_inventory.push(crate::domain::ReferencedAsset {
             path: display_path,
@@ -637,13 +662,5 @@ where
     }
     missing_assets.sort_by(|left, right| left.path.cmp(&right.path));
     asset_inventory.sort_by(|left, right| left.path.cmp(&right.path));
-
-    Ok(crate::domain::CheckResult {
-        missing_assets,
-        asset_inventory,
-        umlaut_assets,
-        conversion_errors,
-        structure_issues,
-    })
+    (missing_assets, asset_inventory)
 }
-
