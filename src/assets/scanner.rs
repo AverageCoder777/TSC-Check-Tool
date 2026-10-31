@@ -108,6 +108,7 @@ pub(crate) fn collect_route_files(
 /// игра читает его так, будто его нет.
 pub(crate) fn collect_archive_members(
     route_path: &Path,
+    ignore_scenarios: bool,
 ) -> Result<Vec<crate::domain::RouteFile>, String> {
     let mut members = Vec::new();
     let entries = fs::read_dir(route_path)
@@ -138,7 +139,7 @@ pub(crate) fn collect_archive_members(
             if !seen_names.insert(normalized_name.to_lowercase()) {
                 continue;
             }
-            let relative = Path::new(&name);
+            let relative = Path::new(&normalized_name);
             if relative.is_absolute()
                 || relative
                     .components()
@@ -151,6 +152,23 @@ pub(crate) fn collect_archive_members(
             }) {
                 continue;
             }
+
+            // Фильтрация по директориям верхнего уровня внутри архива
+            let mut components = relative.components();
+            let Some(first) = components.next() else {
+                continue;
+            };
+            let in_route_root = components.next().is_none();
+            let first_str = first.as_os_str().to_string_lossy();
+            let in_allowed_directory = is_allowed_route_directory(&first_str, ignore_scenarios);
+            let in_non_asset_directory = matches!(
+                first_str.to_ascii_lowercase().as_str(),
+                "terrain" | "mixmap" | "routeinfo" | "routeinformation"
+            );
+            if !(in_route_root || in_allowed_directory) || in_non_asset_directory {
+                continue;
+            }
+
             members.push(crate::domain::RouteFile::Archive {
                 archive: path.clone(),
                 name: name.to_owned(),

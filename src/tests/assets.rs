@@ -91,7 +91,7 @@
             zip.finish().unwrap();
         }
 
-        let members = super::collect_archive_members(route).unwrap();
+        let members = super::collect_archive_members(route, false).unwrap();
         assert_eq!(members.len(), 1);
         assert!(
             members[0].file_name().ends_with("+000000+000000.bin"),
@@ -110,19 +110,19 @@
             let file = std::fs::File::create(route.join("MainContent.ap")).unwrap();
             let mut zip = zip::ZipWriter::new(file);
             zip.start_file(
-                "TemplateRoutes/route.xml",
+                "Scenery/route.xml",
                 zip::write::SimpleFileOptions::default(),
             )
             .unwrap();
             zip.write_all(b"<root/>").unwrap();
             zip.finish().unwrap();
         }
-        let members = super::collect_archive_members(route).unwrap();
+        let members = super::collect_archive_members(route, false).unwrap();
         let inside = members[0].route_name(route).unwrap();
-        assert_eq!(inside, "TemplateRoutes/route.xml");
+        assert_eq!(inside, "Scenery/route.xml");
 
         // Тот же файл рядом с архивом: игра читает его вместо файла из архива.
-        let outside = route.join("TemplateRoutes/route.xml");
+        let outside = route.join("Scenery/route.xml");
         std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
         std::fs::write(&outside, b"<root/>").unwrap();
         let name = crate::domain::RouteFile::Path(outside)
@@ -139,11 +139,11 @@
         let route = temp.path();
         let inside = crate::domain::RouteFile::Archive {
             archive: route.join("MainContent.ap"),
-            name: "TemplateRoutes/route.xml".to_owned(),
+            name: "Scenery/route.xml".to_owned(),
             stamp: None,
         };
         let target = inside.install_target(route);
-        assert_eq!(target, route.join("TemplateRoutes/route.xml"));
+        assert_eq!(target, route.join("Scenery/route.xml"));
     }
 
     /// Ссылки на составы лежат внутри iRailVehicleBlueprint: такие ассеты —

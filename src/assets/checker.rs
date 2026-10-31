@@ -234,7 +234,7 @@ where
         .iter()
         .filter_map(|file| file.route_name(route_path))
         .collect();
-    for member in collect_archive_members(route_path)? {
+    for member in collect_archive_members(route_path, ignore_scenarios)? {
         let name = member.route_name(route_path).unwrap_or_default();
         if outside
             .iter()
