@@ -185,11 +185,30 @@ pub fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Ou
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd
-        .spawn()
-        .map_err(|error| format!("не удалось запустить serz.exe: {error}"))?;
+    let mut child = cmd.spawn().map_err(SerzError::Io)?;
 
-    let timeout = Duration::from_secs(5);
+    // Вычитываем stdout и stderr в отдельных системных потоках, чтобы избежать
+    // переполнения буфера канала (pipe deadlock) при большом выводе serz.exe.
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut out) = stdout_handle {
+            let _ = out.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut err) = stderr_handle {
+            let _ = err.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let timeout = Duration::from_secs(15);
     let start = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -198,26 +217,27 @@ pub fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Ou
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err("serz.exe завис и был остановлен по таймауту".to_owned().into());
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
+                    return Err(SerzError::Process(
+                        "serz.exe превысил лимит времени выполнения".into(),
+                    ));
                 }
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(5));
             }
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("не удалось дождаться serz.exe: {error}").into());
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(SerzError::Io(error));
             }
         }
     };
 
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    if let Some(mut out) = child.stdout.take() {
-        let _ = out.read_to_end(&mut stdout);
-    }
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_end(&mut stderr);
-    }
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+
     Ok(std::process::Output {
         status,
         stdout,
