@@ -328,7 +328,10 @@ pub(crate) fn extract_asset_references(xml: &str) -> std::collections::HashSet<S
 }
 /// Прежняя реализация разбора на регулярных выражениях.
 /// /// Оставлена для сверки: ручной разбор обязан давать ровно тот же результат.
-pub(crate) fn route_tile_label(route_path: &Path, source_file: &crate::domain::RouteFile) -> String {
+pub(crate) fn route_tile_label(
+    route_path: &Path,
+    source_file: &crate::domain::RouteFile,
+) -> String {
     let relative = source_file
         .route_name(route_path)
         .unwrap_or_else(|| source_file.file_name());

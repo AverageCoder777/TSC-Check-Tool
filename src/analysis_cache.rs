@@ -7,7 +7,7 @@
 //! общую таблицу: на большом маршруте это уменьшает кэш в десятки раз.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -44,7 +44,7 @@ impl FileStamp {
         let size = metadata.len();
         let data = fs::read(path).ok()?;
         use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = hash_map::DefaultHasher::new();
         data.hash(&mut hasher);
         let hash = hasher.finish();
         Some(Self {
