@@ -161,10 +161,7 @@ impl InventoryController {
                     .join("Assets")
                     .join(path_text.replace('/', "\\"));
                 let target = if full.exists() {
-                    let _ = std::process::Command::new("explorer.exe")
-                        .arg("/select,")
-                        .arg(full.as_os_str())
-                        .spawn();
+                    let _ = crate::windows::open_in_explorer(&full);
                     return;
                 } else {
                     let mut cur = full.as_path();

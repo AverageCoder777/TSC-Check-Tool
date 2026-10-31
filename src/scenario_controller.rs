@@ -532,10 +532,7 @@ impl ScenarioController {
             );
             if let Some(path) = resolved {
                 if path.is_file() {
-                    let _ = std::process::Command::new("explorer.exe")
-                        .arg("/select,")
-                        .arg(path.as_os_str())
-                        .spawn();
+                    let _ = crate::windows::open_in_explorer(&path);
                 } else {
                     let mut cur = path.as_path();
                     while !cur.exists() {
@@ -588,10 +585,7 @@ impl ScenarioController {
             );
             if let Some(path) = resolved {
                 if path.is_file() {
-                    let _ = std::process::Command::new("explorer.exe")
-                        .arg("/select,")
-                        .arg(path.as_os_str())
-                        .spawn();
+                    let _ = crate::windows::open_in_explorer(&path);
                 } else {
                     let mut cur = path.as_path();
                     while !cur.exists() {

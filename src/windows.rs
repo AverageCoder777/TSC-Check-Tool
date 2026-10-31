@@ -41,13 +41,6 @@ pub(crate) fn open_in_explorer(target_path: &Path) -> Result<(), String> {
                 })
         }
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = target_path;
-        open::that(target_path)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
 }
 
 pub(crate) fn open_in_file_explorer(path: &Path) -> Result<(), String> {
