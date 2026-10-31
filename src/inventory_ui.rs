@@ -1,6 +1,7 @@
 //! Таблица инвентаря ассетов: список используемых объектов маршрута.\
 //! Действия, запрошенные строками таблицы инвентаря.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Столбец, по которому отсортирована таблица инвентаря.
@@ -47,4 +48,69 @@ pub(crate) fn existing_directory_upwards(path: &Path) -> Option<PathBuf> {
         current = candidate.parent();
     }
     None
+}
+
+pub fn build_inventory_rows(
+    state: &crate::app::AssetInventoryWindowState,
+    show_missing: bool,
+) -> (Vec<slint::ModelRc<slint::StandardListViewItem>>, Vec<bool>) {
+    let mut assets: Vec<&crate::domain::ReferencedAsset> = state.assets.iter().collect();
+    match state.sort.column {
+        InventorySortColumn::Path => {
+            if state.sort.descending {
+                assets.sort_by(|a, b| b.path.cmp(&a.path));
+            } else {
+                assets.sort_by(|a, b| a.path.cmp(&b.path));
+            }
+        }
+        InventorySortColumn::Usage => {
+            if state.sort.descending {
+                assets.sort_by_key(|a| std::cmp::Reverse(a.uses.len()));
+            } else {
+                assets.sort_by_key(|a| a.uses.len());
+            }
+        }
+    }
+    let search = state.search.to_lowercase();
+    let mut rows = Vec::new();
+    let mut safe_flags = Vec::new();
+    for a in assets {
+        if show_missing && !a.missing {
+            continue;
+        }
+        if !search.is_empty() {
+            let matches = a.path_search.contains(&search)
+                || a.uses.iter().any(|u| {
+                    u.tile_search.contains(&search) || u.source_file_search.contains(&search)
+                });
+            if !matches {
+                continue;
+            }
+        }
+        let mut by_tile: BTreeMap<String, usize> = BTreeMap::new();
+        for u in a.uses.iter() {
+            *by_tile.entry(u.tile.clone()).or_insert(0) += 1;
+        }
+        let tiles: String = by_tile
+            .iter()
+            .map(|(tile, count)| format!("{} ({})", tile.trim_start_matches("тайл "), count))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let path_text = a.path.clone();
+
+        let mut item0 = slint::StandardListViewItem::default();
+        item0.text = path_text.as_str().into();
+        let mut item1 = slint::StandardListViewItem::default();
+        item1.text = a.uses.len().to_string().as_str().into();
+        let mut item2 = slint::StandardListViewItem::default();
+        item2.text = tiles.as_str().into();
+        let row_items = vec![item0, item1, item2];
+        let row: slint::ModelRc<slint::StandardListViewItem> =
+            slint::ModelRc::new(slint::VecModel::from(row_items));
+        rows.push(row);
+        safe_flags.push(crate::assets::is_safe_for_global_replacement(
+            &a.path, &a.uses,
+        ));
+    }
+    (rows, safe_flags)
 }

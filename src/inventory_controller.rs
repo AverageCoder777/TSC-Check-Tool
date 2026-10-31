@@ -40,7 +40,7 @@ impl InventoryController {
                 if let Ok(app) = app.lock()
                     && let Ok(state) = app.asset_inventory_state.lock()
                 {
-                    let (rows, safe) = crate::build_inventory_rows(&state, show_missing);
+                    let (rows, safe) = crate::inventory_ui::build_inventory_rows(&state, show_missing);
                     inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                     inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
                 }
@@ -67,7 +67,7 @@ impl InventoryController {
                         }
                     }
                     if let Ok(state) = app.asset_inventory_state.lock() {
-                        let (rows, safe) = crate::build_inventory_rows(&state, show_missing);
+                        let (rows, safe) = crate::inventory_ui::build_inventory_rows(&state, show_missing);
                         inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                         inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
                     }
@@ -95,7 +95,7 @@ impl InventoryController {
                         }
                     }
                     if let Ok(state) = app.asset_inventory_state.lock() {
-                        let (rows, safe) = crate::build_inventory_rows(&state, show_missing);
+                        let (rows, safe) = crate::inventory_ui::build_inventory_rows(&state, show_missing);
                         inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                         inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
                     }
@@ -113,7 +113,7 @@ impl InventoryController {
                         state.search = text.to_string();
                     }
                     if let Ok(state) = app.asset_inventory_state.lock() {
-                        let (rows, safe) = crate::build_inventory_rows(&state, show_missing);
+                        let (rows, safe) = crate::inventory_ui::build_inventory_rows(&state, show_missing);
                         inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                         inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
                     }

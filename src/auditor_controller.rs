@@ -1,6 +1,7 @@
 use slint::ComponentHandle;
 use slint::Weak;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{AuditorState, FolderAuditorWindow};
 use std::path::{Path, PathBuf};
@@ -10,6 +11,7 @@ pub struct AuditorController {
     pub state: Arc<Mutex<AuditorState>>,
     pub weak: Weak<FolderAuditorWindow>,
     pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub audit_generation: Arc<AtomicU64>,
 }
 
 impl AuditorController {
@@ -17,10 +19,11 @@ impl AuditorController {
         let window = FolderAuditorWindow::new().unwrap();
         let weak = window.as_weak();
         let state = Arc::new(Mutex::new(AuditorState::default()));
-        Self { window, state, weak, app }
+        Self { window, state, weak, app, audit_generation: Arc::new(AtomicU64::new(0)) }
     }
 
     pub fn bind(&self, _ui_weak: Weak<crate::MainWindow>) {
+        let audit_generation = self.audit_generation.clone();
         let app = self.app.clone();
         let auditor_handle2 = self.weak.clone();
         let auditor_state_for_start = self.state.clone();
@@ -80,6 +83,8 @@ impl AuditorController {
                     .unwrap_or_else(|| path.clone())
             });
         let ap_cache = crate::auditor::ApArchiveCache::new();
+        let generation = audit_generation.clone();
+        let generation_id = generation.fetch_add(1, Ordering::SeqCst) + 1;
         let path_for_thread = path;
         let window_weak_thread = window_weak;
         let state_store = auditor_state_for_start.clone();
@@ -112,6 +117,9 @@ impl AuditorController {
                 "[Auditor] Audit done, broken: {}",
                 report.broken_references.len()
             );
+            if generation.load(Ordering::SeqCst) != generation_id {
+                return;
+            }
             if let Ok(mut state) = results_store.lock() {
                 state.all_items = report.broken_references.clone();
             }
@@ -124,10 +132,13 @@ impl AuditorController {
                 .map(|w| w.get_active_filter().to_string())
                 .unwrap_or_else(|| "all".to_string());
             let mut items: Vec<crate::auditor::BrokenResourceRef> = report.broken_references;
-            crate::filter_items(&mut items, &filter);
-            crate::sort_items(&mut items, col, asc);
+            crate::auditor::filter_items(&mut items, &filter);
+            crate::auditor::sort_items(&mut items, col, asc);
             if let Ok(mut state) = state_store.lock() {
                 state.display_items = items.clone();
+            }
+            if generation.load(Ordering::SeqCst) != generation_id {
+                return;
             }
             let ww = window_weak_thread;
             slint::invoke_from_event_loop(move || {
@@ -150,8 +161,8 @@ impl AuditorController {
         let all_items = state_store.lock().map(|g| g.all_items.clone()).unwrap_or_default();
         let (col, asc) = state_store.lock().map(|g| (g.sort_col, g.sort_asc)).unwrap_or((0, true));
         let mut items = all_items;
-        crate::filter_items(&mut items, filter.as_str());
-        crate::sort_items(&mut items, col, asc);
+        crate::auditor::filter_items(&mut items, filter.as_str());
+        crate::auditor::sort_items(&mut items, col, asc);
         if let Ok(mut state) = state_store.lock() {
             state.display_items = items.clone();
         }
@@ -221,8 +232,8 @@ impl AuditorController {
             .map(|w| w.get_active_filter().to_string())
             .unwrap_or_else(|| "all".to_string());
         let mut items = all_items_snapshot;
-        crate::filter_items(&mut items, &filter);
-        crate::sort_items(&mut items, col_now, asc_now);
+        crate::auditor::filter_items(&mut items, &filter);
+        crate::auditor::sort_items(&mut items, col_now, asc_now);
         if let Ok(mut state) = auditor_state_for_sort_closure.lock() {
             state.display_items = items.clone();
         }

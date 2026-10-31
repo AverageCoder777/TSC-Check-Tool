@@ -1,6 +1,7 @@
 use slint::ComponentHandle;
 use slint::Weak;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
 
 use crate::ScenarioWindow;
@@ -9,13 +10,14 @@ pub struct ScenarioController {
     pub window: ScenarioWindow,
     pub weak: Weak<ScenarioWindow>,
     pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub scenario_generation: Arc<AtomicU64>,
 }
 
 impl ScenarioController {
     pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
         let window = ScenarioWindow::new().unwrap();
         let weak = window.as_weak();
-        Self { window, weak, app }
+        Self { window, weak, app, scenario_generation: Arc::new(AtomicU64::new(0)) }
     }
 
     pub fn bind(&self, ui: &crate::MainWindow) {
@@ -24,8 +26,11 @@ impl ScenarioController {
         let scenario_handle2 = self.weak.clone();
         let ui_handle3 = ui.as_weak();
     let app_for_scenario = self.app.clone();
+    let scenario_generation = self.scenario_generation.clone();
     ui.on_scenario_selected(move |idx| {
+        let generation_id = scenario_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let app = app_for_scenario.clone();
+        let scenario_generation = scenario_generation.clone();
         let ui_handle = ui_handle3.clone();
         let scenario_handle = scenario_handle.clone();
         std::thread::spawn(move || {
@@ -127,6 +132,9 @@ impl ScenarioController {
                 &scenario.weather,
             );
 
+            if scenario_generation.load(Ordering::SeqCst) != generation_id {
+                return;
+            }
             // 3. Быстро сохраняем результат под замком.
             let (vehicle_files, consist_missing, consist_complete) = {
                 let mut app = match app.lock() {
@@ -222,6 +230,9 @@ impl ScenarioController {
 
             let ui_selected_scenario = idx as i32;
 
+            if scenario_generation.load(Ordering::SeqCst) != generation_id {
+                return;
+            }
             let result = slint::invoke_from_event_loop(move || {
                 let Some(ui) = ui_handle.upgrade() else {
                     eprintln!("scenario UI handle dropped before update");
@@ -459,7 +470,7 @@ impl ScenarioController {
                 String::new()
             };
             let image =
-                crate::load_vehicle_preview_image(&rw_path, &route_path, &vehicle, resolved.as_ref());
+                crate::assets::load_vehicle_preview_image(&rw_path, &route_path, &vehicle, resolved.as_ref());
             if let Some(sw) = scenario_handle_preview.upgrade() {
                 if let Some(idx) = path_text.find("Assets") {
                     sw.set_selected_vehicle_path(path_text[idx..].into());

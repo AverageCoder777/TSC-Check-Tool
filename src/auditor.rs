@@ -1092,6 +1092,42 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+pub fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
+    let f = filter.trim().to_lowercase();
+    let target_kind = match f.as_str() {
+        "" | "all" | "все" => None,
+        _ if f.contains("геометр") || f.contains("geometry") => Some(AssetResourceKind::Geometry),
+        _ if f.contains("текстур") || f.contains("texture") => Some(AssetResourceKind::Texture),
+        _ if f.contains("анимац") || f.contains("animation") => Some(AssetResourceKind::Animation),
+        _ if f.contains("скрипт") || f.contains("script") => Some(AssetResourceKind::Script),
+        _ if f.contains("звук") || f.contains("аудио") || f.contains("sound") || f.contains("audio") => {
+            Some(AssetResourceKind::Sound)
+        }
+        _ if f.contains("дочер") || f.contains("child") => Some(AssetResourceKind::ChildBlueprint),
+        _ => None,
+    };
+    let Some(target_kind) = target_kind else {
+        return;
+    };
+    items.retain(|b| b.kind == target_kind);
+}
+
+pub fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
+    items.sort_by(|a, b| {
+        let va = match col {
+            0 => (a.kind as usize).to_string(),
+            1 => a.expected_path.to_string_lossy().to_string(),
+            _ => a.parent_file.to_string_lossy().to_string(),
+        };
+        let vb = match col {
+            0 => (b.kind as usize).to_string(),
+            1 => b.expected_path.to_string_lossy().to_string(),
+            _ => b.parent_file.to_string_lossy().to_string(),
+        };
+        if asc { va.cmp(&vb) } else { vb.cmp(&va) }
+    });
+}
+
 #[cfg(test)]
 #[path = "tests/auditor.rs"]
 mod tests;

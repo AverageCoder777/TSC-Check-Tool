@@ -13,7 +13,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use tempfile::tempdir;
 use zip::ZipArchive;
@@ -63,150 +63,7 @@ fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     slint::Image::load_from_path(icon_path).unwrap_or_default()
 }
 
-fn load_vehicle_preview_image(
-    rw_path: &Path,
-    route_path: &Path,
-    vehicle: &scenario::ScenarioVehicle,
-    resolved: Option<&PathBuf>,
-) -> slint::Image {
-    let resolved = resolved.cloned().or_else(|| {
-        crate::blueprint::resolve_blueprint_file_cached_free(
-            rw_path,
-            route_path,
-            &vehicle.blueprint,
-            &vehicle.provider,
-            &vehicle.product,
-        )
-    });
-    let Some(path) = resolved else {
-        return slint::Image::default();
-    };
 
-    // Обычный файл на диске: картинка лежит рядом в LocoInformation/image.png.
-    if !path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
-    {
-        let image_path = path
-            .parent()
-            .unwrap_or(path.as_path())
-            .join("LocoInformation")
-            .join("image.png");
-        if image_path.is_file() {
-            if let Ok(data) = std::fs::read(&image_path)
-                && let Ok(image) = slint::Image::load_from_data(&data, Some("png"))
-            {
-                return image;
-            }
-            return slint::Image::load_from_path(&image_path).unwrap_or_default();
-        }
-        return slint::Image::default();
-    }
-
-    // Архив .ap: ищем запись блюпринта, затем соседнюю LocoInformation/image.png.
-    let Ok(file) = std::fs::File::open(&path) else {
-        return slint::Image::default();
-    };
-    let Ok(mut zip) = zip::ZipArchive::new(file) else {
-        return slint::Image::default();
-    };
-
-    let stem = Path::new(&vehicle.blueprint)
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| vehicle.blueprint.clone());
-    let mut base_dir = String::new();
-    let mut found = false;
-    // Один проход по архиву: ищем блюпринт и сразу строим карту имён записей.
-    let mut entry_index_by_name: HashMap<String, usize> = HashMap::with_capacity(zip.len());
-    for index in 0..zip.len() {
-        let Ok(entry) = zip.by_index(index) else {
-            continue;
-        };
-        let name = entry.name().unwrap_or_default().to_string();
-        entry_index_by_name.insert(name.to_lowercase(), index);
-        if !found {
-            let entry_stem = Path::new(&name)
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if entry_stem.eq_ignore_ascii_case(&stem) {
-                base_dir = name
-                    .rsplit_once('/')
-                    .or_else(|| name.rsplit_once('\\'))
-                    .map(|(dir, _)| dir.to_owned())
-                    .unwrap_or_default();
-                found = true;
-            }
-        }
-    }
-    if !found {
-        return slint::Image::default();
-    }
-
-    let image_name = if base_dir.is_empty() {
-        "LocoInformation/image.png".to_owned()
-    } else {
-        format!(
-            "{}/LocoInformation/image.png",
-            base_dir.trim_end_matches('/')
-        )
-    };
-
-    if let Some(index) = entry_index_by_name.get(&image_name.to_lowercase()) {
-        let Ok(mut entry) = zip.by_index(*index) else {
-            return slint::Image::default();
-        };
-        let mut data = Vec::new();
-        if std::io::Read::read_to_end(&mut entry, &mut data).is_ok()
-            && let Ok(image) = slint::Image::load_from_data(&data, Some("png"))
-        {
-            return image;
-        }
-    }
-    slint::Image::default()
-}
-
-pub(crate) fn filter_items(items: &mut Vec<auditor::BrokenResourceRef>, filter: &str) {
-    let f = filter.to_lowercase();
-    let f = match f.as_str() {
-        "geometry" => "геометрия".to_string(),
-        "texture" => "текстура".to_string(),
-        "script" => "скрипт".to_string(),
-        "sound" | "audio" => "звук".to_string(),
-        "child" | "children" => "дочер".to_string(),
-        other => other.to_string(),
-    };
-    if f.is_empty() || f == "all" || f == "все" {
-        return;
-    }
-    items.retain(|b| {
-        let kind = match b.kind {
-            auditor::AssetResourceKind::Geometry => "геометрия",
-            auditor::AssetResourceKind::Texture => "текстура",
-            auditor::AssetResourceKind::Animation => "анимация",
-            auditor::AssetResourceKind::Script => "скрипт",
-            auditor::AssetResourceKind::Sound => "звуки",
-            auditor::AssetResourceKind::ChildBlueprint => "дочерние",
-        };
-        if f.contains("геометр") {
-            return kind.contains("геометр");
-        }
-        if f.contains("текстур") {
-            return kind.contains("текстур");
-        }
-        if f.contains("скрипт") {
-            return kind.contains("скрипт");
-        }
-        if f.contains("звук") || f.contains("аудио") {
-            return kind.contains("звук");
-        }
-        if f.contains("дочер") || f.contains("child") {
-            return kind.contains("дочер");
-        }
-        kind.contains(&f)
-    });
-}
 
 pub(crate) fn map_broken_resources_to_ui(
     items: &[auditor::BrokenResourceRef],
@@ -227,102 +84,7 @@ pub(crate) fn map_broken_resources_to_ui(
     slint::ModelRc::new(slint::VecModel::from(rows))
 }
 
-pub(crate) fn sort_items(items: &mut [auditor::BrokenResourceRef], col: usize, asc: bool) {
-    items.sort_by(|a, b| {
-        let va = match col {
-            0 => match a.kind {
-                auditor::AssetResourceKind::Geometry => "Геометрия",
-                auditor::AssetResourceKind::Texture => "Текстура",
-                auditor::AssetResourceKind::Animation => "Анимация",
-                auditor::AssetResourceKind::Script => "Скрипт",
-                auditor::AssetResourceKind::Sound => "Звуки",
-                auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
-            }
-            .to_string(),
-            1 => a.expected_path.to_string_lossy().to_string(),
-            _ => a.parent_file.to_string_lossy().to_string(),
-        };
-        let vb = match col {
-            0 => match b.kind {
-                auditor::AssetResourceKind::Geometry => "Геометрия",
-                auditor::AssetResourceKind::Texture => "Текстура",
-                auditor::AssetResourceKind::Animation => "Анимация",
-                auditor::AssetResourceKind::Script => "Скрипт",
-                auditor::AssetResourceKind::Sound => "Звуки",
-                auditor::AssetResourceKind::ChildBlueprint => "Дочерние объекты",
-            }
-            .to_string(),
-            1 => b.expected_path.to_string_lossy().to_string(),
-            _ => b.parent_file.to_string_lossy().to_string(),
-        };
-        if asc { va.cmp(&vb) } else { vb.cmp(&va) }
-    });
-}
 
-fn build_inventory_rows(
-    state: &app::AssetInventoryWindowState,
-    show_missing: bool,
-) -> (Vec<slint::ModelRc<slint::StandardListViewItem>>, Vec<bool>) {
-    let mut assets: Vec<&domain::ReferencedAsset> = state.assets.iter().collect();
-    match state.sort.column {
-        inventory_ui::InventorySortColumn::Path => {
-            if state.sort.descending {
-                assets.sort_by(|a, b| b.path.cmp(&a.path));
-            } else {
-                assets.sort_by(|a, b| a.path.cmp(&b.path));
-            }
-        }
-        inventory_ui::InventorySortColumn::Usage => {
-            if state.sort.descending {
-                assets.sort_by_key(|a| Reverse(a.uses.len()));
-            } else {
-                assets.sort_by_key(|a| a.uses.len());
-            }
-        }
-    }
-    let search = state.search.to_lowercase();
-    let mut rows = Vec::new();
-    let mut safe_flags = Vec::new();
-    for a in assets {
-        if show_missing && !a.missing {
-            continue;
-        }
-        if !search.is_empty() {
-            let matches = a.path_search.contains(&search)
-                || a.uses.iter().any(|u| {
-                    u.tile_search.contains(&search) || u.source_file_search.contains(&search)
-                });
-            if !matches {
-                continue;
-            }
-        }
-        let mut by_tile: BTreeMap<String, usize> = BTreeMap::new();
-        for u in a.uses.iter() {
-            *by_tile.entry(u.tile.clone()).or_insert(0) += 1;
-        }
-        let tiles: String = by_tile
-            .iter()
-            .map(|(tile, count)| format!("{} ({})", tile.trim_start_matches("тайл "), count))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let path_text = a.path.clone();
-
-        let mut item0 = slint::StandardListViewItem::default();
-        item0.text = path_text.as_str().into();
-        let mut item1 = slint::StandardListViewItem::default();
-        item1.text = a.uses.len().to_string().as_str().into();
-        let mut item2 = slint::StandardListViewItem::default();
-        item2.text = tiles.as_str().into();
-        let row_items = vec![item0, item1, item2];
-        let row: slint::ModelRc<slint::StandardListViewItem> =
-            slint::ModelRc::new(slint::VecModel::from(row_items));
-        rows.push(row);
-        safe_flags.push(crate::assets::is_safe_for_global_replacement(
-            &a.path, &a.uses,
-        ));
-    }
-    (rows, safe_flags)
-}
 
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static MISSING_WEAK: OnceLock<slint::Weak<MissingAssetsWindow>> = OnceLock::new();
@@ -360,7 +122,7 @@ fn sync_ui(ui: &MainWindow) {
             if let Some(inv) = inv_weak.and_then(|w| w.upgrade()) {
                 let show_missing = inv.get_show_missing_only();
                 let (rows, safe) = if let Ok(state) = app.asset_inventory_state.lock() {
-                    build_inventory_rows(&state, show_missing)
+                    crate::inventory_ui::build_inventory_rows(&state, show_missing)
                 } else {
                     (Vec::new(), Vec::new())
                 };
@@ -1119,7 +881,7 @@ fn main() {
                     inv.set_show_missing_only(false);
                     inv.set_selected_asset(-1);
                     inv.set_search_query(state.search.clone().as_str().into());
-                    let (rows, safe) = build_inventory_rows(&state, false);
+                    let (rows, safe) = crate::inventory_ui::build_inventory_rows(&state, false);
                     inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                     inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
                     inv.set_search_query(state.search.clone().as_str().into());
@@ -1146,7 +908,10 @@ fn main() {
     let tex_state_for_toggle = tex_state.clone();
     let tex_state_for_export = tex_state.clone();
     let tex_state_for_replace = tex_state;
+    let preview_generation = Arc::new(AtomicU64::new(0));
     auditor.window.on_preview_texture(move |row| {
+        let generation_id = preview_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let preview_generation = preview_generation.clone();
         let items = auditor_state_for_preview
             .lock()
             .map(|g| g.display_items.clone())
@@ -1178,6 +943,9 @@ fn main() {
         let tex_state = tex_state_for_preview.clone();
         let viewer_weak = viewer_weak.clone();
         std::thread::spawn(move || {
+            if preview_generation.load(Ordering::SeqCst) != generation_id {
+                return;
+            }
             if let Ok(data) = std::fs::read(&path)
                 && let Ok((w, h, rgba)) = crate::texture::decode_tgpcdx_to_rgba(&data)
             {
@@ -1185,6 +953,9 @@ fn main() {
                     *st = Some((w, h, rgba.clone(), path.clone()));
                 }
                 let info = format!("{} x {} px  {}  {}", w, h, "TGPCDX", path.display());
+                if preview_generation.load(Ordering::SeqCst) != generation_id {
+                    return;
+                }
                 let vw = viewer_weak;
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(v) = vw.upgrade() {
