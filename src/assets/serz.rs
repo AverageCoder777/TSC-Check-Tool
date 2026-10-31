@@ -166,9 +166,9 @@ pub(crate) fn decode_xml_bytes(bytes: &[u8]) -> String {
 /// Запускает serz.exe с таймаутом, чтобы зависший дочерний процесс не
 /// блокировал пул потоков навсегда.
 pub fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Output, SerzError> {
+    use std::io::Read;
     use std::process::{Command, Stdio};
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     let parent = serz_path
         .parent()
@@ -185,29 +185,44 @@ pub fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Ou
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|error| format!("не удалось запустить serz.exe: {error}"))?;
-    let child = Arc::new(Mutex::new(Some(child)));
-    let waiter_child = child.clone();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let mut guard = waiter_child.lock().unwrap();
-        if let Some(child) = guard.take() {
-            let _ = tx.send(child.wait_with_output());
-        }
-    });
-    match rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(Ok(output)) => Ok(output),
-        Ok(Err(error)) => Err(SerzError::Process(format!("не удалось дождаться serz.exe: {error}"))),
-        Err(_) => {
-            if let Some(mut child) = child.lock().unwrap().take() {
+
+    let timeout = Duration::from_secs(5);
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("serz.exe завис и был остановлен по таймауту".to_owned().into());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                return Err(format!("не удалось дождаться serz.exe: {error}").into());
             }
-            Err("serz.exe завис и был остановлен по таймауту".to_owned().into())
         }
+    };
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_end(&mut stdout);
     }
+    if let Some(mut err) = child.stderr.take() {
+        let _ = err.read_to_end(&mut stderr);
+    }
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 pub(crate) fn convert_bin_to_xml(
