@@ -419,8 +419,9 @@ where
         })
         .collect();
 
-    let scanned = scan_product_ap_archives(&product_dirs, &pool)?;
+    let (scanned, archive_errors) = scan_product_ap_archives(&product_dirs, &pool)?;
     ap_cache.extend(scanned);
+    structure_issues.extend(archive_errors);
 
     report_progress("Проверка имён и строк ассетов на умляуты...");
     let inventory_seed: Vec<_> = asset_uses
@@ -450,7 +451,7 @@ where
     // папки, и её продукт подключают к маршруту, даже если прямых ссылок на
     // него в файлах маршрута нет.
 
-    let (missing_assets, asset_inventory) = resolve_missing_and_corrupted(asset_uses, &asset_names, &ap_cache, assets_path);
+    let (missing_assets, asset_inventory) = resolve_missing_and_corrupted(asset_uses, &asset_names, &ap_cache, assets_path, &mut structure_issues);
 
     Ok(crate::domain::CheckResult {
         missing_assets,
@@ -502,17 +503,18 @@ pub(crate) fn validate_route_structure(
 pub(crate) fn scan_product_ap_archives(
     product_dirs: &HashSet<PathBuf>,
     pool: &rayon::ThreadPool,
-) -> Result<ApCache, String> {
+) -> Result<(ApCache, Vec<String>), String> {
     let dirs: Vec<PathBuf> = product_dirs
         .iter()
         .map(|path| path.clone())
         .collect();
 
-    let results: Result<Vec<(PathBuf, HashSet<String>)>, String> =
+    let results: Result<Vec<(PathBuf, HashSet<String>, Vec<String>)>, String> =
         pool.install(|| {
             dirs.par_iter()
                 .map(|product_dir| {
                     let mut files = HashSet::new();
+                    let mut archive_errors = Vec::new();
                     match fs::read_dir(product_dir) {
                         Ok(entries) => {
                             for entry in entries {
@@ -526,11 +528,25 @@ pub(crate) fn scan_product_ap_archives(
                                 {
                                     continue;
                                 }
-                                let Ok(archive_file) = fs::File::open(&archive_path) else {
-                                    continue;
+                                let archive_file = match fs::File::open(&archive_path) {
+                                    Ok(file) => file,
+                                    Err(error) => {
+                                        archive_errors.push(format!(
+                                            "Не удалось открыть архив {}: {error}",
+                                            archive_path.display()
+                                        ));
+                                        continue;
+                                    }
                                 };
-                                let Ok(archive) = ZipArchive::new(archive_file) else {
-                                    continue;
+                                let archive = match ZipArchive::new(archive_file) {
+                                    Ok(archive) => archive,
+                                    Err(error) => {
+                                        archive_errors.push(format!(
+                                            "Не удалось прочитать архив {}: {error}",
+                                            archive_path.display()
+                                        ));
+                                        continue;
+                                    }
                                 };
                                 for name in archive.file_names().flatten() {
                                     files.insert(name.replace('/', "\\").trim().to_lowercase());
@@ -545,17 +561,21 @@ pub(crate) fn scan_product_ap_archives(
                             ));
                         }
                     }
-                    Ok((product_dir.clone(), files))
+                    Ok((product_dir.clone(), files, archive_errors))
                 })
                 .collect()
         });
 
     let results = results?;
     let mut ap_cache = HashMap::new();
-    for (product_dir, files) in results {
+    let mut archive_errors = Vec::new();
+    for (product_dir, files, errors) in results {
         ap_cache.insert(product_dir, files);
+        archive_errors.extend(errors);
     }
-    Ok(ap_cache)
+    archive_errors.sort();
+    archive_errors.dedup();
+    Ok((ap_cache, archive_errors))
 }
 
 pub(crate) fn resolve_missing_and_corrupted(
@@ -563,6 +583,7 @@ pub(crate) fn resolve_missing_and_corrupted(
     asset_names: &HashMap<String, String>,
     ap_cache: &ApCache,
     assets_path: &Path,
+    structure_issues: &mut Vec<String>,
 ) -> (Vec<crate::domain::MissingAsset>, Vec<crate::domain::ReferencedAsset>) {
     let mut asset_inventory = Vec::with_capacity(asset_uses.len());
     let mut missing_assets = Vec::new();
@@ -574,7 +595,13 @@ pub(crate) fn resolve_missing_and_corrupted(
             .get(&relative_asset)
             .cloned()
             .unwrap_or_else(|| relative_asset.clone());
-        let full_asset_path = resolve_asset_path(assets_path, &relative_asset).ok().flatten();
+        let full_asset_path = match resolve_asset_path(assets_path, &relative_asset) {
+            Ok(path) => path,
+            Err(error) => {
+                structure_issues.push(error);
+                None
+            }
+        };
         let parts: Vec<&str> = relative_asset.split('/').collect();
         let in_archive = if parts.len() >= 3 {
             let product_dir = assets_path.join(parts[0]).join(parts[1]);
