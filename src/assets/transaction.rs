@@ -25,8 +25,11 @@ impl Drop for FileTransaction {
         if self.committed {
             return;
         }
-        for (original, backup) in &self.records {
+        for (original, backup) in self.records.iter().rev() {
             if backup.exists() {
+                if original.exists() {
+                    let _ = fs::remove_file(original);
+                }
                 let _ = fs::rename(backup, original);
             }
         }
