@@ -158,6 +158,7 @@ impl SettingsController {
                     let _ = crate::settings::save_hide_quick_drive_free_roam(hide_scenarios);
                     let _ = crate::settings::save_language(&language);
                     crate::settings::apply_saved_language(&language);
+                    crate::schedule_ui_sync();
                 }
             }
         });

@@ -216,6 +216,7 @@ impl CheckerApp {
                 max_concurrent_serz,
             );
             let _ = tx.send(result);
+            crate::schedule_ui_sync();
         });
     }
 
@@ -318,6 +319,7 @@ impl CheckerApp {
                 report
             });
             let _ = tx.send((missing_path, result));
+            crate::schedule_ui_sync();
         });
     }
 
@@ -355,6 +357,7 @@ impl CheckerApp {
         }
         self.result = None;
         self.status = "Сканирование маршрутов...".to_owned();
+        crate::schedule_ui_sync();
         let ignored_route_ids = self.ignored_route_ids.clone();
         let max_threads = crate::settings::route_scan_max_threads(
             self.serz_process_limit,
@@ -368,6 +371,7 @@ impl CheckerApp {
                 max_threads,
             );
             let _ = tx.send(result);
+            crate::schedule_ui_sync();
         });
     }
 
@@ -400,6 +404,7 @@ impl CheckerApp {
             state.scanning_umlauts = false;
         }
         self.status = format!("Проверка маршрута «{}»...", route.name);
+        crate::schedule_ui_sync();
         thread::spawn(move || {
             let progress_tx = tx.clone();
             let result = crate::assets::check_route(
@@ -410,9 +415,11 @@ impl CheckerApp {
                 max_concurrent_serz,
                 |message| {
                     let _ = progress_tx.send(CheckMessage::Progress(message.to_owned()));
+                    crate::schedule_ui_sync();
                 },
             );
             let _ = tx.send(CheckMessage::Finished(result));
+            crate::schedule_ui_sync();
         });
     }
 

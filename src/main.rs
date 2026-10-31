@@ -13,6 +13,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use tempfile::tempdir;
 use zip::ZipArchive;
@@ -329,6 +330,167 @@ fn app_state() -> Arc<Mutex<app::CheckerApp>> {
     APP_STATE.get().cloned().expect("app state not initialized")
 }
 
+static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
+static MISSING_WEAK: OnceLock<slint::Weak<MissingAssetsWindow>> = OnceLock::new();
+static INV_SLOT: OnceLock<Arc<Mutex<Option<slint::Weak<AssetInventoryWindow>>>>> = OnceLock::new();
+static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn schedule_ui_sync() {
+    if UI_SYNC_PENDING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(weak) = UI_WEAK.get().cloned() {
+        let _ = slint::invoke_from_event_loop(move || {
+            UI_SYNC_PENDING.store(false, Ordering::SeqCst);
+            if let Some(ui) = weak.upgrade() {
+                sync_ui(&ui);
+            }
+        });
+    }
+}
+
+fn sync_ui(ui: &MainWindow) {
+    let inv_slot = INV_SLOT.get().cloned();
+    if let Ok(mut app) = app_state().lock() {
+        app.receive_background_results();
+        if app.inventory_refresh_pending {
+            let inv_weak = inv_slot
+                .as_ref()
+                .and_then(|slot| slot.lock().ok().and_then(|g| g.clone()));
+            if let Some(inv) = inv_weak.and_then(|w| w.upgrade()) {
+                let show_missing = inv.get_show_missing_only();
+                let (rows, safe) = if let Ok(state) = app.asset_inventory_state.lock() {
+                    build_inventory_rows(&state, show_missing)
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+                inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+                inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
+                app.inventory_refresh_pending = false;
+            }
+        }
+        if !app.is_checking()
+            && app.result.is_some()
+            && app.missing_assets_popup.is_some()
+            && !app.missing_assets_shown
+        {
+            let missing_assets = app
+                .result
+                .as_ref()
+                .map(|r| r.missing_assets.clone())
+                .unwrap_or_default();
+            let paths: Vec<slint::SharedString> = missing_assets
+                .iter()
+                .map(|m| m.path.clone().into())
+                .collect();
+            let counts: Vec<i32> = missing_assets.iter().map(|m| m.uses.len() as i32).collect();
+            let repairs: Vec<slint::SharedString> = missing_assets
+                .iter()
+                .map(|m| m.suggested_repair.clone().unwrap_or_default().into())
+                .collect();
+            let corrupted: Vec<bool> =
+                missing_assets.iter().map(|m| m.is_corrupted_link).collect();
+            let types: Vec<slint::SharedString> = missing_assets
+                .iter()
+                .map(|m| crate::assets::RouteAssetType::label(m.asset_type).into())
+                .collect();
+            let safe: Vec<bool> = missing_assets
+                .iter()
+                .map(|m| {
+                    !crate::assets::is_protected_network_asset(&crate::assets::RouteAssetItem {
+                        path: m.path.clone(),
+                        uses: m.uses.clone(),
+                    })
+                })
+                .collect();
+            if let Some(mw) = MISSING_WEAK.get().and_then(|w| w.upgrade()) {
+                mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
+                mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));
+                mw.set_missing_suggested_repairs(slint::ModelRc::new(slint::VecModel::from(
+                    repairs,
+                )));
+                mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(corrupted)));
+                mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
+                mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
+                mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::<
+                    slint::SharedString,
+                >::default()));
+                mw.set_active_tile_asset("".into());
+                let _ = mw.show();
+                app.missing_assets_shown = true;
+            }
+        }
+        let q = ui.get_search_query().to_string();
+        app.search_query = q.clone();
+        if app.route_thumbnails_enabled {
+            for route in &app.routes {
+                if let Some(path) = &route.icon_path {
+                    ROUTE_ICON_CACHE.with(|cache| {
+                        let mut cache = cache.borrow_mut();
+                        if !cache.contains_key(path) {
+                            cache.insert(path.clone(), load_route_icon_image(path));
+                        }
+                    });
+                }
+            }
+        }
+        let query = q.to_lowercase();
+        let items: Vec<RouteItem> = app
+            .routes
+            .iter()
+            .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
+            .map(|r| {
+                let icon = if app.route_thumbnails_enabled {
+                    r.icon_path
+                        .as_ref()
+                        .and_then(|p| ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned()))
+                        .unwrap_or_default()
+                } else {
+                    slint::Image::default()
+                };
+                RouteItem {
+                    name: r.name.clone().into(),
+                    icon_source: icon,
+                }
+            })
+            .collect();
+        ui.set_route_items(slint::ModelRc::new(slint::VecModel::from(items)));
+        let ignored: Vec<slint::SharedString> = app
+            .ignored_route_ids
+            .iter()
+            .map(|s| s.clone().into())
+            .collect();
+        ui.set_ignored_routes(slint::ModelRc::new(slint::VecModel::from(ignored)));
+        let incomplete: Vec<slint::SharedString> = app
+            .incomplete_folders
+            .iter()
+            .map(|f| f.id.clone().into())
+            .collect();
+        ui.set_incomplete_folders(slint::ModelRc::new(slint::VecModel::from(incomplete)));
+        if let Some(route) = app.selected_route.and_then(|i| app.routes.get(i)) {
+            ui.set_selected_route_name(route.name.clone().into());
+            ui.set_selected_route_id(route.id.clone().into());
+        } else {
+            ui.set_selected_route_name("".into());
+            ui.set_selected_route_id("".into());
+        }
+        ui.set_status(app.status.clone().into());
+        ui.set_check_log(app.check_log.clone().into());
+        ui.set_has_result(app.result.is_some());
+        ui.set_missing_assets_count(
+            app.result
+                .as_ref()
+                .map(|r| r.missing_assets.len() as i32)
+                .unwrap_or(0),
+        );
+        ui.set_is_checking(app.is_checking());
+        if app.is_checking() {
+            ui.set_show_log(true);
+        }
+        ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
+    }
+}
+
 fn handle_cli_args() {
     // Headless CLI / "Open With" support
     let cli_args: Vec<String> = std::env::args().collect();
@@ -469,6 +631,7 @@ fn main() {
     let app = Arc::new(Mutex::new(app::CheckerApp::default()));
     let _ = APP_STATE.set(app.clone());
     let ui = MainWindow::new().unwrap();
+    let _ = UI_WEAK.set(ui.as_weak());
     crate::settings::apply_saved_language(&crate::settings::load_language());
     let ui_handle = ui.as_weak();
     if let Ok(mut app) = app.lock() {
@@ -476,13 +639,9 @@ fn main() {
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
     let clipboard = Arc::new(Mutex::new(arboard::Clipboard::new().unwrap()));
-    let mut last_count: usize = 0;
-    let mut last_query = String::new();
-    let mut last_thumbnails_enabled: bool = false;
-    let mut last_status = String::new();
-    let mut last_check_log = String::new();
     let missing_win = MissingAssetsWindow::new().unwrap();
     let missing_handle = missing_win.as_weak();
+    let _ = MISSING_WEAK.set(missing_handle.clone());
     #[derive(Clone)]
     struct ApPickerState {
         archive_path: PathBuf,
@@ -855,206 +1014,9 @@ fn main() {
             }
         }
     });
-    let timer = slint::Timer::default();
-    let ui_handle_timer = ui_handle.clone();
     let inv_handle_timer_slot = Arc::new(Mutex::new(None::<slint::Weak<AssetInventoryWindow>>));
-    let inv_handle_timer_slot_clone = inv_handle_timer_slot.clone();
-    timer.start(
-        slint::TimerMode::Repeated,
-        std::time::Duration::from_millis(50),
-        move || {
-            let ui = match ui_handle_timer.upgrade() {
-                Some(ui) => ui,
-                None => return,
-            };
-            if let Ok(mut app) = app_state().lock() {
-                app.receive_background_results();
-                if app.inventory_refresh_pending {
-                    let inv_weak = inv_handle_timer_slot_clone
-                        .lock()
-                        .ok()
-                        .and_then(|g| g.clone());
-                    if let Some(inv) = inv_weak.and_then(|w| w.upgrade()) {
-                        let show_missing = inv.get_show_missing_only();
-                        let (rows, safe) = if let Ok(state) = app.asset_inventory_state.lock() {
-                            build_inventory_rows(&state, show_missing)
-                        } else {
-                            (Vec::new(), Vec::new())
-                        };
-                        inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
-                        inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-                        app.inventory_refresh_pending = false;
-                    }
-                }
-                // Show missing-assets popup after route check finishes
-                if !app.is_checking()
-                    && app.result.is_some()
-                    && app.missing_assets_popup.is_some()
-                    && !app.missing_assets_shown
-                {
-                    let missing_assets = app
-                        .result
-                        .as_ref()
-                        .map(|r| r.missing_assets.clone())
-                        .unwrap_or_default();
-                    let paths: Vec<slint::SharedString> = missing_assets
-                        .iter()
-                        .map(|m| m.path.clone().into())
-                        .collect();
-                    let counts: Vec<i32> =
-                        missing_assets.iter().map(|m| m.uses.len() as i32).collect();
-                    let repairs: Vec<slint::SharedString> = missing_assets
-                        .iter()
-                        .map(|m| m.suggested_repair.clone().unwrap_or_default().into())
-                        .collect();
-                    let corrupted: Vec<bool> =
-                        missing_assets.iter().map(|m| m.is_corrupted_link).collect();
-                    let types: Vec<slint::SharedString> = missing_assets
-                        .iter()
-                        .map(|m| crate::assets::RouteAssetType::label(m.asset_type).into())
-                        .collect();
-                    let safe: Vec<bool> = missing_assets
-                        .iter()
-                        .map(|m| {
-                            !crate::assets::is_protected_network_asset(
-                                &crate::assets::RouteAssetItem {
-                                    path: m.path.clone(),
-                                    uses: m.uses.clone(),
-                                },
-                            )
-                        })
-                        .collect();
-                    if let Some(mw) = missing_handle.upgrade() {
-                        mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
-                        mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));
-                        mw.set_missing_suggested_repairs(slint::ModelRc::new(
-                            slint::VecModel::from(repairs),
-                        ));
-                        mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(
-                            corrupted,
-                        )));
-                        mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(
-                            types,
-                        )));
-                        mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-                        mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::<
-                            slint::SharedString,
-                        >::default(
-                        )));
-                        mw.set_active_tile_asset("".into());
-                        let _ = mw.show();
-                        app.missing_assets_shown = true;
-                    }
-                }
-                // Sync asset editor text when document loaded
-                let q = ui.get_search_query().to_string();
-                app.search_query = q.clone();
-                if app.routes.len() == last_count
-                    && q == last_query
-                    && app.route_thumbnails_enabled == last_thumbnails_enabled
-                {
-                    if app.status != last_status {
-                        last_status = app.status.clone();
-                        ui.set_status(last_status.clone().into());
-                    }
-                    if app.check_log != last_check_log {
-                        last_check_log = app.check_log.clone();
-                        ui.set_check_log(last_check_log.clone().into());
-                    }
-                    ui.set_has_result(app.result.is_some());
-                    ui.set_missing_assets_count(
-                        app.result
-                            .as_ref()
-                            .map(|r| r.missing_assets.len() as i32)
-                            .unwrap_or(0),
-                    );
-                    ui.set_is_checking(app.is_checking());
-                    if app.is_checking() {
-                        ui.set_show_log(true);
-                    }
-                    ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
-                    ui.set_is_checking(app.is_checking());
-                    if app.is_checking() {
-                        ui.set_show_log(true);
-                    }
-                    return;
-                }
-                last_count = app.routes.len();
-                last_query = q.clone();
-                last_thumbnails_enabled = app.route_thumbnails_enabled;
-                // Загружаем иконки маршрутов один раз, затем переиспользуем потоковый кэш.
-                if app.route_thumbnails_enabled {
-                    for route in &app.routes {
-                        if let Some(path) = &route.icon_path {
-                            ROUTE_ICON_CACHE.with(|cache| {
-                                let mut cache = cache.borrow_mut();
-                                if !cache.contains_key(path) {
-                                    cache.insert(path.clone(), load_route_icon_image(path));
-                                }
-                            });
-                        }
-                    }
-                }
-                let query = q.to_lowercase();
-                let items: Vec<RouteItem> = app
-                    .routes
-                    .iter()
-                    .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
-                    .map(|r| {
-                        let icon = if app.route_thumbnails_enabled {
-                            r.icon_path
-                                .as_ref()
-                                .and_then(|p| {
-                                    ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned())
-                                })
-                                .unwrap_or_default()
-                        } else {
-                            slint::Image::default()
-                        };
-                        RouteItem {
-                            name: r.name.clone().into(),
-                            icon_source: icon,
-                        }
-                    })
-                    .collect();
-                ui.set_route_items(slint::ModelRc::new(slint::VecModel::from(items)));
-                let ignored: Vec<slint::SharedString> = app
-                    .ignored_route_ids
-                    .iter()
-                    .map(|s| s.clone().into())
-                    .collect();
-                ui.set_ignored_routes(slint::ModelRc::new(slint::VecModel::from(ignored)));
-                let incomplete: Vec<slint::SharedString> = app
-                    .incomplete_folders
-                    .iter()
-                    .map(|f| f.id.clone().into())
-                    .collect();
-                ui.set_incomplete_folders(slint::ModelRc::new(slint::VecModel::from(incomplete)));
-                if let Some(route) = app.selected_route.and_then(|i| app.routes.get(i)) {
-                    ui.set_selected_route_name(route.name.clone().into());
-                    ui.set_selected_route_id(route.id.clone().into());
-                } else {
-                    ui.set_selected_route_name("".into());
-                    ui.set_selected_route_id("".into());
-                }
-                if app.status != last_status {
-                    last_status = app.status.clone();
-                    ui.set_status(last_status.clone().into());
-                }
-                if app.check_log != last_check_log {
-                    last_check_log = app.check_log.clone();
-                    ui.set_check_log(last_check_log.clone().into());
-                }
-                ui.set_has_result(app.result.is_some());
-                ui.set_missing_assets_count(
-                    app.result
-                        .as_ref()
-                        .map(|r| r.missing_assets.len() as i32)
-                        .unwrap_or(0),
-                );
-            }
-        },
-    );
+    let _ = INV_SLOT.set(inv_handle_timer_slot.clone());
+
     let ui_handle2 = ui.as_weak();
     ui.on_route_selected(move |idx| {
         if let Some(ui) = ui_handle2.upgrade() {
@@ -1081,6 +1043,7 @@ fn main() {
                 app.selected_route = None;
             }
             app.refresh_scenarios();
+            crate::schedule_ui_sync();
             let hide = app.hide_quick_drive_free_roam;
             let scen: Vec<ScenarioItem> = app
                 .scenarios
@@ -1314,6 +1277,7 @@ fn main() {
             }
         }
     });
+    sync_ui(&ui);
     ui.run().unwrap();
 }
 
