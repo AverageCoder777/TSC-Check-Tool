@@ -1,10 +1,14 @@
 //! Serz conversion and asset-reference checks.
 
 use super::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::OnceLock;
 use walkdir::WalkDir;
 
-pub fn is_safe_for_global_replacement(relative_path: &str, uses: &[crate::domain::AssetUse]) -> bool {
+pub fn is_safe_for_global_replacement(
+    relative_path: &str,
+    uses: &[crate::domain::AssetUse],
+) -> bool {
     let item = RouteAssetItem {
         path: relative_path.to_owned(),
         uses: uses.to_vec(),
@@ -249,7 +253,9 @@ pub(crate) fn collect_route_files(
 ///
 /// Записи возвращаются как виртуальные файлы: архив не распаковывается целиком,
 /// игра читает его так, будто его нет.
-pub(crate) fn collect_archive_members(route_path: &Path) -> Result<Vec<crate::domain::RouteFile>, String> {
+pub(crate) fn collect_archive_members(
+    route_path: &Path,
+) -> Result<Vec<crate::domain::RouteFile>, String> {
     let mut members = Vec::new();
     let entries = fs::read_dir(route_path)
         .map_err(|error| format!("Не удалось прочитать папку маршрута: {error}"))?;
@@ -677,8 +683,14 @@ fn resolve_asset_path(assets_path: &Path, relative_asset: &str) -> Result<Option
     }
 
     let tiers = [
-        crate::translit::replace_broken_characters_combinations(relative_asset, &crate::translit::TRANSLITERATED_CHARACTERS),
-        crate::translit::replace_broken_characters_combinations(relative_asset, &crate::translit::UMLAUT_CHARACTERS),
+        crate::translit::replace_broken_characters_combinations(
+            relative_asset,
+            &crate::translit::TRANSLITERATED_CHARACTERS,
+        ),
+        crate::translit::replace_broken_characters_combinations(
+            relative_asset,
+            &crate::translit::UMLAUT_CHARACTERS,
+        ),
     ];
 
     // Windows считает «ä» и «Ä» одним и тем же именем файла, поэтому одинаковые
@@ -878,7 +890,7 @@ enum ReferenceBase {
 }
 
 fn geometry_reference_regex() -> &'static Regex {
-    static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(r#"(?is)>([^<>]*\.(?:GeoPcDx|TgPcDx))\s*</[^>]+>"#)
             .expect("Шаблон поиска ссылок на геометрию должен быть корректным")
@@ -886,7 +898,7 @@ fn geometry_reference_regex() -> &'static Regex {
 }
 
 fn variant_reference_regex() -> &'static Regex {
-    static REGEX: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(r#"(?is)>([^<>]*\[[0-9]{2,3}\][^<>]*)\s*</[^>]+>"#)
             .expect("Шаблон поиска ссылок с вариантом должен быть корректным")
@@ -993,7 +1005,10 @@ fn resolve_product_reference(
             // проверяются все сочетания.
             let mut replacements: Vec<&str> = crate::translit::TRANSLITERATED_CHARACTERS.to_vec();
             replacements.extend_from_slice(&crate::translit::UMLAUT_CHARACTERS);
-            names.extend(crate::translit::replace_broken_characters_combinations(&base, &replacements));
+            names.extend(crate::translit::replace_broken_characters_combinations(
+                &base,
+                &replacements,
+            ));
         }
     }
     let extensions = reference.disk_extensions();
@@ -1087,7 +1102,7 @@ pub(crate) struct UmlautChainEvidence {
     /// Обнаружения: что и где нашлось.
     pub(crate) evidence: Vec<String>,
     /// Символы, которые игра не умеет загружать.
-    pub(crate) unsupported: std::collections::BTreeSet<char>,
+    pub(crate) unsupported: BTreeSet<char>,
 }
 
 fn asset_chain_umlaut_evidence(
@@ -1115,7 +1130,7 @@ fn asset_chain_umlaut_evidence(
     let mut queue = vec![root_asset.to_path_buf()];
     let mut visited = HashSet::new();
     let mut evidence = Vec::new();
-    let mut unsupported = std::collections::BTreeSet::new();
+    let mut unsupported = BTreeSet::new();
 
     while let Some(asset_path) = queue.pop() {
         let canonical = match asset_path.canonicalize() {
@@ -1394,7 +1409,9 @@ fn analyze_route_file(
 /// Порядок первого появления сохраняется: по нему собирается список
 /// использований в инвентаре. Вместе с ассетом запоминается, что он из себя
 /// представляет: объект маршрута или файл состава.
-fn count_asset_uses(references: Vec<crate::reference::AssetReference>) -> Vec<(String, u32, crate::domain::AssetKind)> {
+fn count_asset_uses(
+    references: Vec<crate::reference::AssetReference>,
+) -> Vec<(String, u32, crate::domain::AssetKind)> {
     let mut order: Vec<String> = Vec::new();
     let mut counts: HashMap<String, u32> = HashMap::new();
     let mut kinds: HashMap<String, crate::domain::AssetKind> = HashMap::new();
@@ -1410,7 +1427,10 @@ fn count_asset_uses(references: Vec<crate::reference::AssetReference>) -> Vec<(S
         .into_iter()
         .map(|path| {
             let count = counts.get(&path).copied().unwrap_or_default();
-            let kind = kinds.get(&path).copied().unwrap_or(crate::domain::AssetKind::Other);
+            let kind = kinds
+                .get(&path)
+                .copied()
+                .unwrap_or(crate::domain::AssetKind::Other);
             (path, count, kind)
         })
         .collect()
@@ -2650,7 +2670,11 @@ pub(crate) fn repair_umlaut_asset_chain(
         for (range, value) in edits {
             rewritten.replace_range(range, &value);
         }
-        rewritten = crate::translit::transliterate_xml_umlauts_outside(&rewritten, &protected_references, fixes);
+        rewritten = crate::translit::transliterate_xml_umlauts_outside(
+            &rewritten,
+            &protected_references,
+            fixes,
+        );
         if rewritten != xml || target_file != canonical {
             validate_xml_document(&rewritten).map_err(|error| {
                 format!(
@@ -2731,13 +2755,19 @@ pub(crate) fn repair_umlaut_asset_chain(
                     .unwrap_or("");
                 if extension.eq_ignore_ascii_case("GeoPcDx") {
                     queue.push(dependency.clone());
-                } else if extension.eq_ignore_ascii_case("TgPcDx") && crate::translit::has_umlauts(&reference_text) {
+                } else if extension.eq_ignore_ascii_case("TgPcDx")
+                    && crate::translit::has_umlauts(&reference_text)
+                {
                     let target = transliterated_asset_path(&assets_root, &dependency, fixes)?;
                     renamed_tg_files.insert(dependency, target);
                 }
             }
             let target = transliterated_asset_path(&assets_root, &canonical, fixes)?;
-            let rewritten = crate::translit::transliterate_xml_umlauts_outside(&xml, &protected_references, fixes);
+            let rewritten = crate::translit::transliterate_xml_umlauts_outside(
+                &xml,
+                &protected_references,
+                fixes,
+            );
             if rewritten != xml || target != canonical {
                 validate_xml_document(&rewritten).map_err(|error| {
                     format!(
@@ -3325,8 +3355,8 @@ pub(crate) fn next_backup_path(source_path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        TEMP_WORK_DIRECTORY_PREFIX,
-        collect_route_files, leftover_temporary_work_directories, referenced_geometry_paths,
+        TEMP_WORK_DIRECTORY_PREFIX, collect_route_files, leftover_temporary_work_directories,
+        referenced_geometry_paths,
     };
     use std::path::Path;
     use std::path::PathBuf;
@@ -3451,7 +3481,9 @@ mod tests {
         let outside = route.join("TemplateRoutes/route.xml");
         std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
         std::fs::write(&outside, b"<root/>").unwrap();
-        let name = crate::domain::RouteFile::Path(outside).route_name(route).unwrap();
+        let name = crate::domain::RouteFile::Path(outside)
+            .route_name(route)
+            .unwrap();
         assert!(name.eq_ignore_ascii_case(&inside));
     }
 
@@ -3800,7 +3832,10 @@ mod tests {
         let route = Path::new(r"C:\Routes\RouteA");
         let source = route.join("Scenery").join("+000012-000034.bin");
         assert_eq!(
-            crate::reference::route_tile_label(route, &crate::domain::RouteFile::Path(source.clone())),
+            crate::reference::route_tile_label(
+                route,
+                &crate::domain::RouteFile::Path(source.clone())
+            ),
             "тайл X=+000012 Z=-000034"
         );
     }

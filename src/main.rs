@@ -5,11 +5,12 @@ use slint::Model;
 use rayon::prelude::*;
 use regex::Regex;
 use std::cmp::Reverse;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
@@ -18,11 +19,11 @@ use zip::ZipArchive;
 const DEFAULT_CONCURRENT_SERZ: usize = 8;
 
 mod analysis_cache;
-mod domain;
 mod app;
 mod assets;
 mod auditor;
 mod blueprint;
+mod domain;
 mod external_editor;
 mod inventory_ui;
 mod reference;
@@ -33,8 +34,7 @@ mod texture;
 mod translit;
 mod windows;
 
-
-fn load_route_icon_image(icon_path: &std::path::Path) -> slint::Image {
+fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     if let Ok(data) = std::fs::read(icon_path) {
         if data.starts_with(&[0x89, 0x50, 0x4E, 0x47])
             && let Ok(image) = slint::Image::load_from_data(&data, Some("png"))
@@ -50,10 +50,10 @@ fn load_route_icon_image(icon_path: &std::path::Path) -> slint::Image {
 }
 
 fn load_vehicle_preview_image(
-    rw_path: &std::path::Path,
-    route_path: &std::path::Path,
+    rw_path: &Path,
+    route_path: &Path,
     vehicle: &scenario::ScenarioVehicle,
-    resolved: Option<&std::path::PathBuf>,
+    resolved: Option<&PathBuf>,
 ) -> slint::Image {
     let resolved = resolved.cloned().or_else(|| {
         crate::blueprint::resolve_blueprint_file_cached_free(
@@ -97,7 +97,7 @@ fn load_vehicle_preview_image(
         return slint::Image::default();
     };
 
-    let stem = std::path::Path::new(&vehicle.blueprint)
+    let stem = Path::new(&vehicle.blueprint)
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| vehicle.blueprint.clone());
@@ -108,7 +108,7 @@ fn load_vehicle_preview_image(
             continue;
         };
         let name = entry.name().unwrap_or_default().to_string();
-        let entry_stem = std::path::Path::new(&name)
+        let entry_stem = Path::new(&name)
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
@@ -264,8 +264,7 @@ fn build_inventory_rows(
                 continue;
             }
         }
-        let mut by_tile: std::collections::BTreeMap<String, usize> =
-            std::collections::BTreeMap::new();
+        let mut by_tile: BTreeMap<String, usize> = BTreeMap::new();
         for u in a.uses.iter() {
             *by_tile.entry(u.tile.clone()).or_insert(0) += 1;
         }
@@ -293,10 +292,9 @@ fn build_inventory_rows(
     (rows, safe_flags)
 }
 
-static APP_STATE: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<app::CheckerApp>>> =
-    std::sync::OnceLock::new();
+static APP_STATE: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
 
-fn app_state() -> std::sync::Arc<std::sync::Mutex<app::CheckerApp>> {
+fn app_state() -> Arc<Mutex<app::CheckerApp>> {
     APP_STATE.get().cloned().expect("app state not initialized")
 }
 
@@ -320,12 +318,12 @@ fn handle_cli_args() {
         std::process::exit(0);
     }
     if let Some(target) = cli_args.get(1) {
-        let path = std::path::PathBuf::from(target);
+        let path = PathBuf::from(target);
         // view-texture CLI
         if target.eq_ignore_ascii_case("view-texture")
             && let Some(p) = cli_args.get(2)
         {
-            let path = std::path::PathBuf::from(p);
+            let path = PathBuf::from(p);
             if path.is_file() {
                 match std::fs::read(&path) {
                     Ok(data) => match crate::texture::decode_tgpcdx_to_rgba(&data) {
@@ -419,7 +417,7 @@ fn handle_cli_args() {
 fn main() {
     handle_cli_args();
     // Handle file association launch: TS-Checker opened with a .bin/.GeoPcDx file.
-    let app = std::sync::Arc::new(std::sync::Mutex::new(app::CheckerApp::default()));
+    let app = Arc::new(Mutex::new(app::CheckerApp::default()));
     let _ = APP_STATE.set(app.clone());
     let ui = MainWindow::new().unwrap();
     crate::settings::apply_saved_language(&crate::settings::load_language());
@@ -428,7 +426,7 @@ fn main() {
         app.start_route_scan();
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
-    let clipboard = std::sync::Arc::new(std::sync::Mutex::new(arboard::Clipboard::new().unwrap()));
+    let clipboard = Arc::new(Mutex::new(arboard::Clipboard::new().unwrap()));
     let mut last_count: usize = 0;
     let mut last_query = String::new();
     let mut last_thumbnails_enabled: bool = false;
@@ -445,7 +443,7 @@ fn main() {
     }
     let ap_picker_win = ApAssetPickerWindow::new().unwrap();
     let ap_picker_handle = ap_picker_win.as_weak();
-    let ap_picker_state = std::sync::Arc::new(std::sync::Mutex::new(None::<ApPickerState>));
+    let ap_picker_state = Arc::new(Mutex::new(None::<ApPickerState>));
     missing_win.on_copy_to_clipboard({
         let clipboard = clipboard.clone();
         move |text| {
@@ -494,7 +492,7 @@ fn main() {
                 if let Some(missing) = missing_assets.get(idx as usize).cloned()
                     && let Some(repair) = missing.suggested_repair.clone()
                 {
-                    let assets_path = std::path::PathBuf::from(app.rw_path.trim()).join("Assets");
+                    let assets_path = PathBuf::from(app.rw_path.trim()).join("Assets");
                     let replacement = assets_path.join(repair.replace('/', "\\"));
                     let replacement_relative = repair;
                     app.start_asset_replacement(
@@ -502,7 +500,7 @@ fn main() {
                         replacement,
                         false,
                         replacement_relative,
-                        std::collections::BTreeMap::new(),
+                        BTreeMap::new(),
                     );
                 }
             }
@@ -532,7 +530,7 @@ fn main() {
                     eprintln!("[Repair] No candidates resolved; fuzzy directory matching failed.");
                     return;
                 }
-                let assets_path = std::path::PathBuf::from(app.rw_path.trim()).join("Assets");
+                let assets_path = PathBuf::from(app.rw_path.trim()).join("Assets");
                 let queue: Vec<_> = repairable
                     .into_iter()
                     .filter_map(|missing| {
@@ -556,8 +554,8 @@ fn main() {
             let (asset, tiles) = if let Ok(app) = app.lock() {
                 if let Some(result) = app.result.as_ref() {
                     if let Some(missing) = result.missing_assets.get(idx as usize) {
-                        let mut counts: std::collections::BTreeMap<String, (domain::TileKind, usize)> =
-                            std::collections::BTreeMap::new();
+                        let mut counts: BTreeMap<String, (domain::TileKind, usize)> =
+                            BTreeMap::new();
                         for usage in &missing.uses {
                             let entry = counts
                                 .entry(usage.tile.clone())
@@ -680,7 +678,7 @@ fn main() {
             };
             let temp_dir = assets_path.join(&temp_rel_dir);
             let _ = std::fs::create_dir_all(&temp_dir);
-            let entry_file_name = std::path::Path::new(&entry)
+            let entry_file_name = Path::new(&entry)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "asset.bin".to_owned());
@@ -703,7 +701,7 @@ fn main() {
                     temp_file,
                     false,
                     replacement_relative,
-                    std::collections::BTreeMap::new(),
+                    BTreeMap::new(),
                 );
             }
             if let Some(pw) = handle.upgrade() {
@@ -802,7 +800,7 @@ fn main() {
                             replacement,
                             false,
                             replacement_relative,
-                            std::collections::BTreeMap::new(),
+                            BTreeMap::new(),
                         );
                 }
             }
@@ -810,9 +808,7 @@ fn main() {
     });
     let timer = slint::Timer::default();
     let ui_handle_timer = ui_handle.clone();
-    let inv_handle_timer_slot = std::sync::Arc::new(std::sync::Mutex::new(
-        None::<slint::Weak<AssetInventoryWindow>>,
-    ));
+    let inv_handle_timer_slot = Arc::new(Mutex::new(None::<slint::Weak<AssetInventoryWindow>>));
     let inv_handle_timer_slot_clone = inv_handle_timer_slot.clone();
     timer.start(
         slint::TimerMode::Repeated,
@@ -1124,7 +1120,7 @@ fn main() {
             let current = sw.get_locoswap_path().to_string();
             let mut dialog = rfd::FileDialog::new().set_title("Выберите LocoSwap.exe");
             if !current.is_empty() {
-                let p = std::path::PathBuf::from(&current);
+                let p = PathBuf::from(&current);
                 if let Some(parent) = p.parent() {
                     dialog = dialog.set_directory(parent);
                 }
@@ -1139,7 +1135,7 @@ fn main() {
             let current = sw.get_game_path().to_string();
             let mut dialog = rfd::FileDialog::new().set_title("Выберите папку с игрой RailWorks");
             if !current.is_empty() {
-                let p = std::path::PathBuf::from(&current);
+                let p = PathBuf::from(&current);
                 if p.is_dir() {
                     dialog = dialog.set_directory(&p);
                 } else if let Some(parent) = p.parent() {
@@ -1253,8 +1249,7 @@ fn main() {
             let needs_load = app.scenarios[scen_idx].consists.is_none();
             if needs_load {
                 let scenario_path = app.scenarios[scen_idx].path.clone();
-                let serz_path =
-                    crate::assets::preferred_serz_path(std::path::Path::new(app.rw_path.trim()));
+                let serz_path = crate::assets::preferred_serz_path(Path::new(app.rw_path.trim()));
                 let consists = crate::scenario::load_consists(&scenario_path, &serz_path);
                 app.scenarios[scen_idx].consists = Some(consists);
             }
@@ -1296,7 +1291,7 @@ fn main() {
                             let mut flags = Vec::with_capacity(c.vehicles.len());
                             for veh in &c.vehicles {
                                 let exists = crate::blueprint::vehicle_blueprint_exists(
-                                    std::path::Path::new(&rw_path),
+                                    Path::new(&rw_path),
                                     &veh.provider,
                                     &veh.product,
                                     &veh.blueprint,
@@ -1374,9 +1369,9 @@ fn main() {
             };
 
             let weather_name = crate::scenario::weather_display_name(
-                std::path::Path::new(rw_path.trim()),
-                std::path::Path::new(&route_path),
-                &crate::assets::preferred_serz_path(std::path::Path::new(rw_path.trim())),
+                Path::new(rw_path.trim()),
+                Path::new(&route_path),
+                &crate::assets::preferred_serz_path(Path::new(rw_path.trim())),
                 &scenario.weather,
             );
 
@@ -1531,9 +1526,9 @@ fn main() {
     scenario_win.on_open_locoswap(move || {
         if let Ok(app) = app_state().lock() {
             let path = app.locoswap_path.clone();
-            if !path.is_empty() && std::path::Path::new(&path).is_file() {
+            if !path.is_empty() && Path::new(&path).is_file() {
                 let mut cmd = std::process::Command::new(&path);
-                if let Some(parent) = std::path::Path::new(&path).parent() {
+                if let Some(parent) = Path::new(&path).parent() {
                     cmd.current_dir(parent);
                 }
                 if let Some(idx) = app.selected_scenario
@@ -1548,7 +1543,7 @@ fn main() {
     scenario_win.on_open_locoswap_consist(move |idx| {
         if let Ok(app) = app_state().lock() {
             let locoswap_path = app.locoswap_path.clone();
-            if locoswap_path.is_empty() || !std::path::Path::new(&locoswap_path).is_file() {
+            if locoswap_path.is_empty() || !Path::new(&locoswap_path).is_file() {
                 return;
             }
             let scen_idx = match app.selected_scenario {
@@ -1566,7 +1561,7 @@ fn main() {
                 .map(|consist| consist.index)
                 .unwrap_or(idx as usize);
             let mut cmd = std::process::Command::new(&locoswap_path);
-            if let Some(parent) = std::path::Path::new(&locoswap_path).parent() {
+            if let Some(parent) = Path::new(&locoswap_path).parent() {
                 cmd.current_dir(parent);
             }
             let _ = cmd
@@ -1582,7 +1577,7 @@ fn main() {
     scenario_win.on_vehicle_selected(move |idx| {
         if let Ok(mut app) = app_state().lock() {
             app.selected_vehicle = Some(idx as usize);
-            let rw_path = std::path::PathBuf::from(app.rw_path.trim());
+            let rw_path = PathBuf::from(app.rw_path.trim());
             let route_path = app
                 .selected_route
                 .and_then(|i| app.routes.get(i))
@@ -1689,8 +1684,8 @@ fn main() {
                 .map(|r| r.path.clone())
                 .unwrap_or_default();
             let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
-                std::path::Path::new(rw_path.trim()),
-                std::path::Path::new(&route_path),
+                Path::new(rw_path.trim()),
+                Path::new(&route_path),
                 &vehicle.blueprint,
                 &vehicle.provider,
                 &vehicle.product,
@@ -1744,8 +1739,8 @@ fn main() {
                 .map(|r| r.path.clone())
                 .unwrap_or_default();
             let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
-                std::path::Path::new(rw_path.trim()),
-                std::path::Path::new(&route_path),
+                Path::new(rw_path.trim()),
+                Path::new(&route_path),
                 &vehicle.blueprint,
                 &vehicle.provider,
                 &vehicle.product,
@@ -1892,7 +1887,7 @@ fn main() {
             if rw_path.is_empty() {
                 return;
             }
-            let full = std::path::PathBuf::from(rw_path.trim())
+            let full = PathBuf::from(rw_path.trim())
                 .join("Assets")
                 .join(path_text.replace('/', "\\"));
             // Open nearest existing folder; select file if present.
@@ -1940,12 +1935,12 @@ fn main() {
             if rw_path.is_empty() {
                 return;
             }
-            let full = std::path::PathBuf::from(rw_path.trim())
+            let full = PathBuf::from(rw_path.trim())
                 .join("Assets")
                 .join(path_text.replace('/', "\\"));
             if full.is_file() {
                 let serz_path = crate::assets::find_serz_path(&full)
-                    .unwrap_or_else(|| std::path::PathBuf::from("serz64.exe"));
+                    .unwrap_or_else(|| PathBuf::from("serz64.exe"));
                 let app_for_status = app_state().clone();
                 let _ = crate::external_editor::open_and_sync_with_vscode(
                     &full,
@@ -2004,7 +1999,7 @@ fn main() {
             return;
         }
 
-        let assets_dir = std::path::PathBuf::from(rw_path.trim()).join("Assets");
+        let assets_dir = PathBuf::from(rw_path.trim()).join("Assets");
         let mut dialog = rfd::FileDialog::new()
             .set_title("Заменить в маршруте...")
             .set_directory(&assets_dir);
@@ -2078,14 +2073,12 @@ fn main() {
     let auditor_win = FolderAuditorWindow::new().unwrap();
     let auditor_handle = auditor_win.as_weak();
     let auditor_handle2 = auditor_win.as_weak();
-    let all_audit_items: std::sync::Arc<std::sync::Mutex<Vec<auditor::BrokenResourceRef>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let current_display_items: std::sync::Arc<std::sync::Mutex<Vec<auditor::BrokenResourceRef>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let audit_sort_col: std::sync::Arc<std::sync::Mutex<usize>> =
-        std::sync::Arc::new(std::sync::Mutex::new(0));
-    let audit_sort_asc: std::sync::Arc<std::sync::Mutex<bool>> =
-        std::sync::Arc::new(std::sync::Mutex::new(true));
+    let all_audit_items: Arc<Mutex<Vec<auditor::BrokenResourceRef>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let current_display_items: Arc<Mutex<Vec<auditor::BrokenResourceRef>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let audit_sort_col: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let audit_sort_asc: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));
     let all_audit_items_for_start = all_audit_items.clone();
     let current_display_items_for_start = current_display_items.clone();
     let audit_sort_col_for_start = audit_sort_col.clone();
@@ -2109,7 +2102,7 @@ fn main() {
             let current = w.get_folder_path().to_string();
             let mut dialog = rfd::FileDialog::new().set_title("Выберите папку для аудита");
             if !current.is_empty() {
-                let p = std::path::PathBuf::from(&current);
+                let p = PathBuf::from(&current);
                 if p.is_dir() {
                     dialog = dialog.set_directory(&p);
                 }
@@ -2123,7 +2116,7 @@ fn main() {
     auditor_win.on_start_audit(move |folder_path| {
         println!("[Auditor] start-audit callback: {}", folder_path);
         let window_weak = auditor_weak_for_start.clone();
-        let path = std::path::PathBuf::from(folder_path.as_str());
+        let path = PathBuf::from(folder_path.as_str());
         if !path.exists() || !path.is_dir() {
             eprintln!("[Auditor] Invalid folder path: {:?}", path);
             return;
@@ -2137,7 +2130,7 @@ fn main() {
             .map(|a| a.serz_process_limit)
             .unwrap_or(8)
             .max(1);
-        let serz_path = crate::assets::preferred_serz_path(std::path::Path::new(&rw_path));
+        let serz_path = crate::assets::preferred_serz_path(Path::new(&rw_path));
         let assets_root = path
             .ancestors()
             .find(|p| {
@@ -2162,9 +2155,9 @@ fn main() {
         let results_store = all_store;
         std::thread::spawn(move || {
             println!("[Auditor] Starting audit for: {:?}", path_for_thread);
-            let progress_cb: std::sync::Arc<dyn Fn(usize, usize) + Send + Sync> = {
+            let progress_cb: Arc<dyn Fn(usize, usize) + Send + Sync> = {
                 let ww = window_weak_thread.clone();
-                std::sync::Arc::new(move |done, total| {
+                Arc::new(move |done, total| {
                     let ww = ww.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = ww.upgrade() {
@@ -2616,11 +2609,13 @@ mod tests {
         is_skipped_route_scan_directory, parse_route_name, preferred_serz_path, scan_routes,
         scan_routes_with_ignored, validate_serz_process,
     };
+    use std::collections::HashSet;
     use std::fs;
     use std::io::Write;
+    use std::path::PathBuf;
+
     #[cfg(windows)]
     use std::path::Path;
-    use std::path::PathBuf;
 
     #[test]
     fn only_skips_scenarios_when_requested_during_asset_check() {
@@ -3073,8 +3068,7 @@ mod tests {
             fs::write(path.join("content.bin"), []).unwrap();
         }
 
-        let scan_item =
-            super::scan_route_folder(&route, "route", &std::collections::HashSet::new()).unwrap();
+        let scan_item = super::scan_route_folder(&route, "route", &HashSet::new()).unwrap();
 
         match scan_item {
             super::RouteScanItem::Route(route) => assert_eq!(route.icon_path, Some(icon)),
@@ -3157,10 +3151,10 @@ mod tests {
     }
     #[test]
     fn repro_route_check_hang() {
-        let route = std::path::PathBuf::from(
+        let route = PathBuf::from(
             r"X:\SteamLibrary\steamapps\common\RailWorks\Content\Routes\8378d7b6-30ad-4c29-a5ac-16d3c2b26ff7",
         );
-        let rw = std::path::PathBuf::from(r"X:\SteamLibrary\steamapps\common\RailWorks");
+        let rw = PathBuf::from(r"X:\SteamLibrary\steamapps\common\RailWorks");
         let assets = rw.join("Assets");
         let mut serz = rw.join("serz64.exe");
         if !serz.is_file() {

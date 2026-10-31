@@ -7,7 +7,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-
 /// Вид состава: игрок, ИИ или статический (loose).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) enum ConsistKind {
@@ -708,7 +707,8 @@ mod tests {
         if !route.is_dir() || !serz.is_file() {
             return;
         }
-        let result = crate::assets::check_route(&route, &rw_path.join("Assets"), &serz, false, 1, |_| {});
+        let result =
+            crate::assets::check_route(&route, &rw_path.join("Assets"), &serz, false, 1, |_| {});
         match result {
             Ok(r) => {
                 println!(

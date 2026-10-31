@@ -1,7 +1,7 @@
 //! egui application state, windows, and user interactions.
 
 use super::*;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, Instant};
 
 enum CheckMessage {
@@ -53,8 +53,12 @@ pub(crate) struct CheckerApp {
     pub(crate) ignored_route_ids: HashSet<String>,
     route_scan: Option<Receiver<Result<crate::domain::RouteScanOutcome, String>>>,
     check: Option<Receiver<CheckMessage>>,
-    pub(crate) asset_replacement:
-        Option<Receiver<(String, Result<crate::domain::AssetReplacementReport, String>)>>,
+    pub(crate) asset_replacement: Option<
+        Receiver<(
+            String,
+            Result<crate::domain::AssetReplacementReport, String>,
+        )>,
+    >,
     pub(crate) asset_replacement_queue: Vec<(crate::domain::MissingAsset, PathBuf, String)>,
     asset_replacement_feedback: Option<Result<String, String>>,
     pub(crate) route_thumbnails_enabled: bool,
@@ -83,21 +87,24 @@ impl Default for CheckerApp {
             ),
             Err(error) => (HashSet::new(), error),
         };
-        let (route_thumbnails_enabled, settings_warning) = match crate::settings::load_route_thumbnail_setting() {
-            Ok(enabled) => (enabled, None),
-            Err(error) => (false, Some(error)),
-        };
-        let (serz_process_limit, serz_settings_warning) = match crate::settings::load_serz_process_limit() {
-            Ok(limit) => (limit, None),
-            Err(error) => (
-                DEFAULT_CONCURRENT_SERZ.min(crate::settings::maximum_serz_processes()),
-                Some(error),
-            ),
-        };
-        let (route_scan_on_hdd, route_scan_hdd_warning) = match crate::settings::load_route_scan_on_hdd() {
-            Ok(value) => (value, None),
-            Err(error) => (false, Some(error)),
-        };
+        let (route_thumbnails_enabled, settings_warning) =
+            match crate::settings::load_route_thumbnail_setting() {
+                Ok(enabled) => (enabled, None),
+                Err(error) => (false, Some(error)),
+            };
+        let (serz_process_limit, serz_settings_warning) =
+            match crate::settings::load_serz_process_limit() {
+                Ok(limit) => (limit, None),
+                Err(error) => (
+                    DEFAULT_CONCURRENT_SERZ.min(crate::settings::maximum_serz_processes()),
+                    Some(error),
+                ),
+            };
+        let (route_scan_on_hdd, route_scan_hdd_warning) =
+            match crate::settings::load_route_scan_on_hdd() {
+                Ok(value) => (value, None),
+                Err(error) => (false, Some(error)),
+            };
         let (hide_quick_drive_free_roam, hide_scenarios_warning) =
             match crate::settings::load_hide_quick_drive_free_roam() {
                 Ok(value) => (value, None),
@@ -202,8 +209,12 @@ impl CheckerApp {
         self.inventory_scan = Some(rx);
         self.status = "Проверка ассетов маршрута на умляуты...".to_owned();
         thread::spawn(move || {
-            let result =
-                crate::assets::scan_umlaut_assets(&inventory, &assets_path, &serz_path, max_concurrent_serz);
+            let result = crate::assets::scan_umlaut_assets(
+                &inventory,
+                &assets_path,
+                &serz_path,
+                max_concurrent_serz,
+            );
             let _ = tx.send(result);
         });
     }
@@ -297,8 +308,10 @@ impl CheckerApp {
                     .ok_or_else(|| {
                         "Windows APPDATA не определена; журнал замен не сохранён.".to_owned()
                     })
-                    .and_then(|path| crate::settings::append_asset_replacement_log(&path, &mut entry).map(|()| path))
-                {
+                    .and_then(|path| {
+                        crate::settings::append_asset_replacement_log(&path, &mut entry)
+                            .map(|()| path)
+                    }) {
                     Ok(path) => report.log_file = Some(path),
                     Err(error) => report.log_error = Some(error),
                 }
@@ -320,7 +333,7 @@ impl CheckerApp {
                 replacement,
                 false,
                 replacement_relative,
-                std::collections::BTreeMap::new(),
+                BTreeMap::new(),
             );
         }
     }
@@ -347,8 +360,12 @@ impl CheckerApp {
             self.route_scan_on_hdd,
         );
         thread::spawn(move || {
-            let result =
-                crate::routes::scan_routes_with_cache(&root, &ignored_route_ids, allow_cache, max_threads);
+            let result = crate::routes::scan_routes_with_cache(
+                &root,
+                &ignored_route_ids,
+                allow_cache,
+                max_threads,
+            );
             let _ = tx.send(result);
         });
     }

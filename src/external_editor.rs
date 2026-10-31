@@ -52,7 +52,7 @@ pub fn open_and_sync_with_vscode(
     let binary_path = binary_asset_path.to_path_buf();
     let serz = serz_path.to_path_buf();
     let xml_path = temp_xml_path;
-    let cb = std::sync::Arc::new(status_callback);
+    let cb = Arc::new(status_callback);
     let was_modified = Arc::new(AtomicBool::new(false));
     thread::spawn(move || {
         run_watcher(&xml_path, &binary_path, &serz, cb, was_modified);
@@ -256,7 +256,7 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
             &xml_w,
             &bin_w,
             &serz_w,
-            std::sync::Arc::new(|res| match res {
+            Arc::new(|res| match res {
                 Ok(s) => println!("{}", s),
                 Err(e) => eprintln!("{}", e),
             }),
@@ -303,7 +303,7 @@ fn run_watcher(
     xml_path: &Path,
     binary_path: &Path,
     serz_path: &Path,
-    cb: std::sync::Arc<dyn Fn(Result<String, String>) + Send + Sync>,
+    cb: Arc<dyn Fn(Result<String, String>) + Send + Sync>,
     was_modified: Arc<AtomicBool>,
 ) {
     use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};

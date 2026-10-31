@@ -3,7 +3,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetResourceKind {
@@ -976,7 +976,7 @@ pub fn audit_folder_with_progress(
     serz_path: &Path,
     max_concurrent: usize,
     ap_cache: &ApArchiveCache,
-    progress: Option<std::sync::Arc<dyn Fn(usize, usize) + Send + Sync>>,
+    progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> AuditReport {
     let mut files = Vec::new();
     if let Ok(entries) = walkdir::WalkDir::new(folder_path)
@@ -1021,7 +1021,7 @@ pub fn audit_folder_with_progress(
         .build()
         .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
 
-    let processed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let processed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let total_files = files.len();
     let progress_cb = progress.clone();
 
@@ -1252,7 +1252,7 @@ mod tests {
     #[test]
     fn ap_cache_lookup_is_case_insensitive() {
         let cache = ApArchiveCache::new();
-        let product_dir = std::path::PathBuf::from("Assets/Kuju/RailSimulator");
+        let product_dir = PathBuf::from("Assets/Kuju/RailSimulator");
         cache.inner.lock().unwrap().insert(
             product_dir.clone(),
             ["Textures\\Foo.TgPcDx".to_string()].into(),

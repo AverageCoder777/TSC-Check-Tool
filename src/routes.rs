@@ -83,26 +83,28 @@ pub(crate) fn scan_routes_with_cache(
     if allow_cache {
         if let Some(cache_path) = &cache_file {
             match fs::read(cache_path) {
-                Ok(contents) => match serde_json::from_slice::<crate::domain::RouteScanCache>(&contents) {
-                    Ok(cache)
-                        if cache.game_path == game_path
-                            && cache.icon_scan_version == 4
-                            && cache.folder_ids == folder_ids
-                            && cache.ignored_route_ids == ignored_ids =>
-                    {
-                        return Ok(crate::domain::RouteScanOutcome {
-                            result: cache.result,
-                            from_cache: true,
-                            notice: None,
-                        });
+                Ok(contents) => {
+                    match serde_json::from_slice::<crate::domain::RouteScanCache>(&contents) {
+                        Ok(cache)
+                            if cache.game_path == game_path
+                                && cache.icon_scan_version == 4
+                                && cache.folder_ids == folder_ids
+                                && cache.ignored_route_ids == ignored_ids =>
+                        {
+                            return Ok(crate::domain::RouteScanOutcome {
+                                result: cache.result,
+                                from_cache: true,
+                                notice: None,
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            notice = Some(format!(
+                                "Кэш маршрутов повреждён и будет обновлён: {error}."
+                            ));
+                        }
                     }
-                    Ok(_) => {}
-                    Err(error) => {
-                        notice = Some(format!(
-                            "Кэш маршрутов повреждён и будет обновлён: {error}."
-                        ));
-                    }
-                },
+                }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => {
                     notice = Some(format!(
