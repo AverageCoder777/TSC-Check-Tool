@@ -153,11 +153,41 @@ pub fn count_asset_uses(
 /// не нужна. При неудачном чтении файл считается подозрительным и проверяется
 /// обычным порядком.
 pub fn may_contain_asset_reference(file_path: &Path) -> bool {
-    let Ok(data) = fs::read(file_path) else {
+    use std::io::Read;
+    let Ok(file) = fs::File::open(file_path) else {
         return true;
     };
-    data.windows(crate::translit::BLUEPRINT_ID_MARKER.len())
-        .any(|window| window == crate::translit::BLUEPRINT_ID_MARKER.as_bytes())
+    let marker = crate::translit::BLUEPRINT_ID_MARKER.as_bytes();
+    if marker.is_empty() {
+        return true;
+    }
+    let overlap = marker.len().saturating_sub(1);
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
+    let mut buf = [0u8; 64 * 1024];
+    let mut tail: Vec<u8> = Vec::with_capacity(overlap);
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => return true,
+        };
+        let mut combined = Vec::with_capacity(tail.len() + n);
+        combined.extend_from_slice(&tail);
+        combined.extend_from_slice(&buf[..n]);
+        if combined
+            .windows(marker.len())
+            .any(|window| window == marker)
+        {
+            return true;
+        }
+        if combined.len() >= overlap {
+            tail.clear();
+            tail.extend_from_slice(&combined[combined.len() - overlap..]);
+        } else {
+            tail = combined;
+        }
+    }
+    false
 }
 
 pub(crate) fn check_route<F>(
