@@ -1,11 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 slint::include_modules!();
-use slint::Model;
-
 use rayon::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read};
@@ -22,6 +19,8 @@ const DEFAULT_CONCURRENT_SERZ: usize = 8;
 thread_local! {
     static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
     static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = RefCell::new(None);
+    static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = RefCell::new(None);
+    static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = RefCell::new(None);
 }
 
 pub(crate) fn clear_route_icon_cache() {
@@ -32,12 +31,14 @@ mod analysis_cache;
 mod app;
 mod assets;
 mod auditor;
+mod ap_picker_controller;
 mod auditor_controller;
 mod blueprint;
 mod domain;
 mod external_editor;
 mod inventory_controller;
 mod inventory_ui;
+mod missing_assets_controller;
 mod reference;
 mod routes;
 mod scenario;
@@ -83,7 +84,6 @@ pub(crate) fn map_broken_resources_to_ui(
 }
 
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
-static MISSING_WEAK: OnceLock<slint::Weak<MissingAssetsWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn schedule_ui_sync() {
@@ -114,50 +114,11 @@ fn sync_ui(ui: &MainWindow) {
             && app.missing_assets_popup.is_some()
             && !app.missing_assets_shown
         {
-            let missing_assets = app
-                .result
-                .as_ref()
-                .map(|r| r.missing_assets.clone())
-                .unwrap_or_default();
-            let paths: Vec<slint::SharedString> = missing_assets
-                .iter()
-                .map(|m| m.path.clone().into())
-                .collect();
-            let counts: Vec<i32> = missing_assets.iter().map(|m| m.uses.len() as i32).collect();
-            let repairs: Vec<slint::SharedString> = missing_assets
-                .iter()
-                .map(|m| m.suggested_repair.clone().unwrap_or_default().into())
-                .collect();
-            let corrupted: Vec<bool> = missing_assets.iter().map(|m| m.is_corrupted_link).collect();
-            let types: Vec<slint::SharedString> = missing_assets
-                .iter()
-                .map(|m| crate::assets::RouteAssetType::label(m.asset_type).into())
-                .collect();
-            let safe: Vec<bool> = missing_assets
-                .iter()
-                .map(|m| {
-                    !crate::assets::is_protected_network_asset(&crate::assets::RouteAssetItem {
-                        path: m.path.clone(),
-                        uses: m.uses.clone(),
-                    })
-                })
-                .collect();
-            if let Some(mw) = MISSING_WEAK.get().and_then(|w| w.upgrade()) {
-                mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
-                mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));
-                mw.set_missing_suggested_repairs(slint::ModelRc::new(slint::VecModel::from(
-                    repairs,
-                )));
-                mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(corrupted)));
-                mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
-                mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-                mw.set_active_tile_list(slint::ModelRc::new(
-                    slint::VecModel::<slint::SharedString>::default(),
-                ));
-                mw.set_active_tile_asset("".into());
-                let _ = mw.show();
-                app.missing_assets_shown = true;
-            }
+            MISSING_ASSETS_CONTROLLER.with(|cell| {
+                if let Some(c) = cell.borrow().as_ref() {
+                    c.sync_missing_popup(&mut app);
+                }
+            });
         }
         let q = ui.get_search_query().to_string();
         app.search_query = q.clone();
@@ -383,383 +344,25 @@ fn main() {
         app.start_route_scan();
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
-    let clipboard = Arc::new(Mutex::new(arboard::Clipboard::new().unwrap()));
-    let missing_win = MissingAssetsWindow::new().unwrap();
-    let missing_handle = missing_win.as_weak();
-    let _ = MISSING_WEAK.set(missing_handle.clone());
-    #[derive(Clone)]
-    struct ApPickerState {
-        archive_path: PathBuf,
-        missing: domain::MissingAsset,
-        rw_path: String,
-        entries: Vec<String>,
-    }
-    let ap_picker_win = ApAssetPickerWindow::new().unwrap();
-    let ap_picker_handle = ap_picker_win.as_weak();
-    let ap_picker_state = Arc::new(Mutex::new(None::<ApPickerState>));
-    missing_win.on_copy_to_clipboard({
-        let clipboard = clipboard.clone();
-        move |text| {
-            if let Ok(mut ctx) = clipboard.lock()
-                && let Err(e) = ctx.set_text(text.to_string())
-            {
-                eprintln!("Ошибка копирования в буфер: {:?}", e);
-            }
+    let missing_controller = missing_assets_controller::MissingAssetsController::new(app_for_controllers.clone());
+    MISSING_ASSETS_CONTROLLER.with(|cell| {
+        *cell.borrow_mut() = Some(missing_controller);
+    });
+    MISSING_ASSETS_CONTROLLER.with(|cell| {
+        if let Some(c) = cell.borrow().as_ref() {
+            c.bind();
         }
     });
-    missing_win.on_copy_all_to_clipboard({
-        let clipboard = clipboard;
-        let missing_handle2 = missing_handle.clone();
-        move || {
-            if let Some(mw) = missing_handle2.upgrade() {
-                let model = mw.get_missing_assets();
-                let mut paths = Vec::new();
-                for i in 0..model.row_count() {
-                    if let Some(value) = model.row_data(i) {
-                        paths.push(value.to_string());
-                    }
-                }
-                if let Ok(mut ctx) = clipboard.lock() {
-                    let _ = ctx.set_text(paths.join("\n"));
-                }
-            }
-        }
+    let ap_picker_controller = ap_picker_controller::ApPickerController::new(app_for_controllers.clone());
+    AP_PICKER_CONTROLLER.with(|cell| {
+        *cell.borrow_mut() = Some(ap_picker_controller);
     });
-    missing_win.on_close_missing({
-        let missing_handle3 = missing_handle.clone();
-        move || {
-            if let Some(mw) = missing_handle3.upgrade() {
-                let _ = mw.hide();
-            }
-        }
-    });
-    missing_win.on_repair_corrupted({
-        let app = app.clone();
-        move |idx| {
-            if let Ok(mut app) = app.lock() {
-                let missing_assets = app
-                    .result
-                    .as_ref()
-                    .map(|r| r.missing_assets.clone())
-                    .unwrap_or_default();
-                if let Some(missing) = missing_assets.get(idx as usize).cloned()
-                    && let Some(repair) = missing.suggested_repair.clone()
-                {
-                    let assets_path = PathBuf::from(app.rw_path.trim()).join("Assets");
-                    let replacement = assets_path.join(repair.replace('/', "\\"));
-                    let replacement_relative = repair;
-                    app.start_asset_replacement(
-                        missing,
-                        replacement,
-                        false,
-                        replacement_relative,
-                        BTreeMap::new(),
-                    );
-                }
-            }
-        }
-    });
-    missing_win.on_repair_all_corrupted({
-        let app = app.clone();
-        move || {
-            if let Ok(mut app) = app.lock() {
-                let missing_assets = app
-                    .result
-                    .as_ref()
-                    .map(|r| r.missing_assets.clone())
-                    .unwrap_or_default();
-                let repairable: Vec<_> = missing_assets
-                    .into_iter()
-                    .filter(|asset| {
-                        asset
-                            .suggested_repair
-                            .as_ref()
-                            .is_some_and(|repair| !repair.trim().is_empty())
-                    })
-                    .collect();
-                let repairable_count = repairable.len();
-                eprintln!("[Repair] Found {} repairable assets", repairable_count);
-                if repairable_count == 0 {
-                    eprintln!("[Repair] No candidates resolved; fuzzy directory matching failed.");
-                    return;
-                }
-                let assets_path = PathBuf::from(app.rw_path.trim()).join("Assets");
-                let queue: Vec<_> = repairable
-                    .into_iter()
-                    .filter_map(|missing| {
-                        let repair = missing.suggested_repair.clone()?;
-                        let replacement = assets_path.join(repair.replace('/', "\\"));
-                        Some((missing, replacement, repair))
-                    })
-                    .collect();
-                app.asset_replacement_queue = queue;
-                app.asset_replacement = None;
-                app.missing_assets_shown = false;
-                app.start_next_asset_replacement();
-            }
+    AP_PICKER_CONTROLLER.with(|cell| {
+        if let Some(c) = cell.borrow().as_ref() {
+            c.bind();
         }
     });
 
-    missing_win.on_inspect_tiles({
-        let app = app.clone();
-        let handle = missing_handle.clone();
-        move |idx| {
-            let (asset, tiles) = if let Ok(app) = app.lock() {
-                if let Some(result) = app.result.as_ref() {
-                    if let Some(missing) = result.missing_assets.get(idx as usize) {
-                        let mut counts: BTreeMap<String, (domain::TileKind, usize)> =
-                            BTreeMap::new();
-                        for usage in &missing.uses {
-                            let entry = counts
-                                .entry(usage.tile.clone())
-                                .or_insert((usage.tile_kind, 0));
-                            entry.1 += 1;
-                        }
-                        let tiles: Vec<slint::SharedString> = counts
-                            .into_iter()
-                            .map(|(tile, (kind, count))| {
-                                let badge = match kind {
-                                    domain::TileKind::Scenery => "[Сценери]",
-                                    domain::TileKind::Loft => "[Лофт]",
-                                    domain::TileKind::Road => "[Дорога]",
-                                    domain::TileKind::Track => "[Пути]",
-                                    domain::TileKind::TracksMaster
-                                    | domain::TileKind::LoftsMaster
-                                    | domain::TileKind::RoadsMaster => "[Сеть]",
-                                    domain::TileKind::RouteProps => "[Свойства]",
-                                    domain::TileKind::Other => "[Прочее]",
-                                };
-                                format!("{} {} ({})", badge, tile, count).into()
-                            })
-                            .collect();
-                        (missing.path.clone(), tiles)
-                    } else {
-                        (String::new(), Vec::new())
-                    }
-                } else {
-                    (String::new(), Vec::new())
-                }
-            } else {
-                (String::new(), Vec::new())
-            };
-            if let Some(mw) = handle.upgrade() {
-                mw.set_active_tile_asset(asset.into());
-                mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::from(tiles)));
-            }
-        }
-    });
-    ap_picker_win.on_search_changed({
-        let state = ap_picker_state.clone();
-        let handle = ap_picker_handle.clone();
-        move |query| {
-            let entries = state
-                .lock()
-                .ok()
-                .and_then(|s| s.as_ref().map(|s| s.entries.clone()))
-                .unwrap_or_default();
-            let q = query.to_lowercase();
-            let filtered: Vec<slint::SharedString> = entries
-                .iter()
-                .filter(|e| q.is_empty() || e.to_lowercase().contains(&q))
-                .map(|e| e.clone().into())
-                .collect();
-            if let Some(pw) = handle.upgrade() {
-                pw.set_filtered_entries(slint::ModelRc::new(slint::VecModel::from(filtered)));
-            }
-        }
-    });
-    ap_picker_win.on_select_entry({
-        let handle = ap_picker_handle.clone();
-        move |idx| {
-            if let Some(pw) = handle.upgrade() {
-                pw.set_selected_index(idx);
-            }
-        }
-    });
-    ap_picker_win.on_confirm_selection({
-        let state = ap_picker_state.clone();
-        let handle = ap_picker_handle.clone();
-        let app = app.clone();
-        move || {
-            let (archive_path, missing, rw_path, _selected_index, entry) = {
-                let guard = match state.lock() {
-                    Ok(g) => g,
-                    Err(_) => return,
-                };
-                let Some(s) = guard.as_ref() else { return };
-                let pw = match handle.upgrade() {
-                    Some(p) => p,
-                    None => return,
-                };
-                let idx = pw.get_selected_index() as usize;
-                let filtered = pw.get_filtered_entries();
-                let selected_entry = filtered
-                    .row_data(idx)
-                    .map(|v| v.to_string())
-                    .or_else(|| s.entries.get(idx).cloned());
-                let Some(entry) = selected_entry else { return };
-                (
-                    s.archive_path.clone(),
-                    s.missing.clone(),
-                    s.rw_path.clone(),
-                    idx,
-                    entry,
-                )
-            };
-            // derive provider/product from archive parent dirs
-            let assets_path = PathBuf::from(rw_path.trim()).join("Assets");
-            let archive_rel = archive_path.strip_prefix(&assets_path).ok();
-            let mut parts: Vec<String> = archive_rel
-                .map(|p| {
-                    p.components()
-                        .map(|c| c.as_os_str().to_string_lossy().to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
-            // remove archive file name
-            if !parts.is_empty() {
-                parts.pop();
-            }
-            let provider = parts.first().cloned().unwrap_or_default();
-            let product = parts.get(1).cloned().unwrap_or_default();
-            // build a synthetic replacement relative path Provider/Product/...xml? Engine expects .bin file; extract entry to temp file.
-            // For minimal integration, call start_asset_replacement with archive path? Instead, create temp file under assets.
-            let temp_rel_dir = if provider.is_empty() || product.is_empty() {
-                PathBuf::from("TempAp")
-            } else {
-                PathBuf::from(&provider).join(&product)
-            };
-            let temp_dir = assets_path.join(&temp_rel_dir);
-            let _ = std::fs::create_dir_all(&temp_dir);
-            let entry_file_name = Path::new(&entry)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "asset.bin".to_owned());
-            let temp_file = temp_dir.join(&entry_file_name);
-            // extract from archive
-            if let Ok(file) = std::fs::File::open(&archive_path)
-                && let Ok(mut zip) = zip::ZipArchive::new(file)
-                && let Ok(mut member) = zip.by_name(&entry)
-                && let Ok(mut out) = std::fs::File::create(&temp_file)
-            {
-                let _ = std::io::copy(&mut member, &mut out);
-            }
-            let replacement_relative = temp_file
-                .strip_prefix(&assets_path)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| entry.clone());
-            if let Ok(mut app) = app.lock() {
-                app.start_asset_replacement(
-                    missing,
-                    temp_file,
-                    false,
-                    replacement_relative,
-                    BTreeMap::new(),
-                );
-            }
-            if let Some(pw) = handle.upgrade() {
-                let _ = pw.hide();
-            }
-        }
-    });
-    ap_picker_win.on_cancel({
-        let handle = ap_picker_handle.clone();
-        move || {
-            if let Some(pw) = handle.upgrade() {
-                let _ = pw.hide();
-            }
-        }
-    });
-
-    let app = app_for_controllers.clone();
-    missing_win.on_replace_missing(move |idx| {
-        let (missing, rw_path) = {
-            if let Ok(app) = app.lock() {
-                if let Some(result) = app.result.as_ref() {
-                    if let Some(missing) = result.missing_assets.get(idx as usize) {
-                        (Some(missing.clone()), app.rw_path.clone())
-                    } else {
-                        (None, String::new())
-                    }
-                } else {
-                    (None, String::new())
-                }
-            } else {
-                (None, String::new())
-            }
-        };
-        if let Some(missing) = missing {
-            if crate::assets::is_protected_network_asset(&crate::assets::RouteAssetItem {
-                path: missing.path.clone(),
-                uses: missing.uses.clone(),
-            }) {
-                if let Ok(mut app) = app.lock() {
-                    app.status = "Замена путевых объектов в Tracks.bin заблокирована для предотвращения повреждения маршрута.".to_owned();
-                }
-                return;
-            }
-            let assets_path = PathBuf::from(rw_path.trim()).join("Assets");
-            let start_dir =
-                inventory_ui::existing_directory_upwards(&inventory_ui::asset_directory(&assets_path, &missing.path))
-                    .unwrap_or_else(|| assets_path.clone());
-            let selected = rfd::FileDialog::new()
-                .set_title("Выберите BIN/AP нового объекта")
-                .add_filter("RailWorks Assets (*.bin, *.ap)", &["bin", "ap"])
-                .add_filter("RailWorks Blueprint (*.bin)", &["bin"])
-                .add_filter("AP Archive (*.ap)", &["ap"])
-                .set_directory(&start_dir)
-                .pick_file();
-            if let Some(replacement) = selected {
-                let ext = replacement
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                if ext == "ap" {
-                    let entries = crate::blueprint::ap_archive_entries(&replacement);
-                    let archive_name = replacement
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    if let Ok(mut state) = ap_picker_state.lock() {
-                        *state = Some(ApPickerState {
-                            archive_path: replacement,
-                            missing,
-                            rw_path,
-                            entries: entries.clone(),
-                        });
-                    }
-                    if let Some(pw) = ap_picker_handle.upgrade() {
-                        pw.set_archive_name(archive_name.into());
-                        let all: Vec<slint::SharedString> =
-                            entries.iter().map(|e| e.clone().into()).collect();
-                        pw.set_entries(slint::ModelRc::new(slint::VecModel::from(all.clone())));
-                        pw.set_filtered_entries(slint::ModelRc::new(slint::VecModel::from(all)));
-                        pw.set_search_query("".into());
-                        pw.set_selected_index(-1);
-                        let _ = pw.show();
-                    }
-                } else if let Ok(mut app) = app.lock() {
-                        let replacement_relative = replacement
-                            .strip_prefix(&assets_path)
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_else(|_| {
-                                replacement
-                                    .file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_default()
-                            });
-                        app.start_asset_replacement(
-                            missing,
-                            replacement,
-                            false,
-                            replacement_relative,
-                            BTreeMap::new(),
-                        );
-                }
-            }
-        }
-    });
     let ui_handle2 = ui.as_weak();
     let app = app_for_controllers.clone();
     ui.on_route_selected(move |idx| {
