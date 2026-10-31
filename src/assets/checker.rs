@@ -10,11 +10,11 @@ pub struct FileAnalysis {
     error: Option<String>,
 }
 
-pub fn analyze_route_file(
+pub(crate) fn analyze_route_file(
     route_file: &crate::domain::RouteFile,
     index: usize,
     temp_dir: &Path,
-    serz_path: &Path,
+    serz_tool: &SerzTool,
 ) -> FileAnalysis {
     // Запись архива читается через временный файл: конвертеру Serz нужен
     // настоящий файл на диске.
@@ -57,7 +57,7 @@ pub fn analyze_route_file(
             };
         }
         let xml_path = temp_dir.join(format!("{index:08}.xml"));
-let conversion_result = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
+        let conversion_result = serz_tool.bin_to_xml(&file_path, &xml_path);
         if let Err(error) = conversion_result {
             let _ = fs::remove_file(&xml_path);
             return FileAnalysis {
@@ -291,6 +291,7 @@ where
 
     let temp_dir = tempdir()
         .map_err(|error| format!("Не удалось создать временную папку для Serz: {error}"))?;
+    let serz_tool = SerzTool::new(serz_path);
 
     // Архивы маршрута (.ap) не распаковываются целиком: записи materialize()
     // читаются из zip по требованию только для анализируемых .bin/.xml файлов.
@@ -341,7 +342,7 @@ where
                             error: None,
                         };
                     }
-                    analyze_route_file(route_file, start_index + offset, temp_dir.path(), serz_path)
+                    analyze_route_file(route_file, start_index + offset, temp_dir.path(), &serz_tool)
                 })
                 .collect()
         });
