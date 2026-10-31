@@ -3,6 +3,7 @@ use slint::Weak;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 
 use crate::ScenarioWindow;
 
@@ -469,7 +470,7 @@ impl ScenarioController {
                 String::new()
             };
             let image =
-                crate::assets::load_vehicle_preview_image(&rw_path, &route_path, &vehicle, resolved.as_ref());
+                load_vehicle_preview_image(&rw_path, &route_path, &vehicle, resolved.as_ref());
             if let Some(sw) = scenario_handle_preview.upgrade() {
                 if let Some(idx) = path_text.find("Assets") {
                     sw.set_selected_vehicle_path(path_text[idx..].into());
@@ -602,4 +603,108 @@ impl ScenarioController {
     });
 
     }
+}
+
+pub fn load_vehicle_preview_image(
+    rw_path: &Path,
+    route_path: &Path,
+    vehicle: &crate::scenario::ScenarioVehicle,
+    resolved: Option<&PathBuf>,
+) -> slint::Image {
+    let resolved = resolved.cloned().or_else(|| {
+        crate::blueprint::resolve_blueprint_file_cached_free(
+            rw_path,
+            route_path,
+            &vehicle.blueprint,
+            &vehicle.provider,
+            &vehicle.product,
+        )
+    });
+    let Some(path) = resolved else {
+        return slint::Image::default();
+    };
+
+    // Обычный файл на диске: картинка лежит рядом в LocoInformation/image.png.
+    if !path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
+    {
+        let image_path = path
+            .parent()
+            .unwrap_or(path.as_path())
+            .join("LocoInformation")
+            .join("image.png");
+        if image_path.is_file() {
+            if let Ok(data) = std::fs::read(&image_path)
+                && let Ok(image) = slint::Image::load_from_data(&data, Some("png"))
+            {
+                return image;
+            }
+            return slint::Image::load_from_path(&image_path).unwrap_or_default();
+        }
+        return slint::Image::default();
+    }
+
+    // Архив .ap: ищем запись блюпринта, затем соседнюю LocoInformation/image.png.
+    let Ok(file) = std::fs::File::open(&path) else {
+        return slint::Image::default();
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        return slint::Image::default();
+    };
+
+    let stem = Path::new(&vehicle.blueprint)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| vehicle.blueprint.clone());
+    let mut base_dir = String::new();
+    let mut found = false;
+    // Один проход по архиву: ищем блюпринт и сразу строим карту имён записей.
+    let mut entry_index_by_name: HashMap<String, usize> = HashMap::with_capacity(zip.len());
+    for index in 0..zip.len() {
+        let Ok(entry) = zip.by_index(index) else {
+            continue;
+        };
+        let name = entry.name().unwrap_or_default().to_string();
+        entry_index_by_name.insert(name.to_lowercase(), index);
+        if !found {
+            let entry_stem = Path::new(&name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if entry_stem.eq_ignore_ascii_case(&stem) {
+                base_dir = name
+                    .rsplit_once('/')
+                    .or_else(|| name.rsplit_once('\\'))
+                    .map(|(dir, _)| dir.to_owned())
+                    .unwrap_or_default();
+                found = true;
+            }
+        }
+    }
+    if !found {
+        return slint::Image::default();
+    }
+
+    let image_name = if base_dir.is_empty() {
+        "LocoInformation/image.png".to_owned()
+    } else {
+        format!(
+            "{}/LocoInformation/image.png",
+            base_dir.trim_end_matches('/')
+        )
+    };
+
+    if let Some(index) = entry_index_by_name.get(&image_name.to_lowercase()) {
+        let Ok(mut entry) = zip.by_index(*index) else {
+            return slint::Image::default();
+        };
+        let mut data = Vec::new();
+        if std::io::Read::read_to_end(&mut entry, &mut data).is_ok()
+            && let Ok(image) = slint::Image::load_from_data(&data, Some("png"))
+        {
+            return image;
+        }
+    }
+    slint::Image::default()
 }
