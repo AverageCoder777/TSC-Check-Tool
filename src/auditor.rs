@@ -1026,8 +1026,6 @@ pub fn audit_folder_with_progress(
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        let rel = f.strip_prefix(folder_path).unwrap_or(f);
-        let _ = rel;
 
         let is_orphan = match ext.as_str() {
             "geopcdx" | "tgpcdx" => true,
