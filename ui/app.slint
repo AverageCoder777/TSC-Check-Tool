@@ -38,6 +38,7 @@ export component MainWindow inherits Window {
     in property <bool> has-result: false;
 
     callback route-selected(int);
+    callback search-changed(string);
     callback start-check();
     callback reset-log();
     callback open-route-folder();
@@ -59,6 +60,10 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 1;
                     placeholder-text: @tr("Поиск маршрутов");
                     text <=> search-query;
+                    edited(text) => {
+                        root.search-query = text;
+                        root.search-changed(text);
+                    }
                 }
                  Button {
                      text: "⚙";

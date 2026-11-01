@@ -148,15 +148,25 @@ fn sync_ui(ui: &MainWindow) {
                             if !cache.contains_key(path) {
                                 cache.insert(path.clone(), load_route_icon_image(path));
                             }
-                        });
+    });
                     }
                 }
             }
+
             let query = q.to_lowercase();
-            let items: Vec<RouteItem> = app
+            let filtered_routes: Vec<&domain::Route> = app
                 .routes
                 .iter()
                 .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
+                .collect();
+            let filtered_selected_idx = app.selected_route.and_then(|sel_idx| {
+                let sel_path = &app.routes.get(sel_idx)?.path;
+                filtered_routes.iter().position(|r| &r.path == sel_path)
+            })
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+            let items: Vec<RouteItem> = filtered_routes
+                .iter()
                 .map(|r| {
                     let icon = if app.route_thumbnails_enabled {
                         r.icon_path
@@ -175,6 +185,7 @@ fn sync_ui(ui: &MainWindow) {
                 })
                 .collect();
             ui.set_route_items(slint::ModelRc::new(slint::VecModel::from(items)));
+            ui.set_selected_route(filtered_selected_idx);
             let ignored: Vec<slint::SharedString> = app
                 .ignored_route_ids
                 .iter()
@@ -404,6 +415,14 @@ fn main() {
                     ui.set_selected_route_id("".into());
                 }
             }
+        }
+    });
+
+    let app = app_for_controllers.clone();
+    ui.on_search_changed(move |query| {
+        if let Ok(mut app) = app.lock() {
+            app.search_query = query.to_string();
+            crate::schedule_ui_sync();
         }
     });
 
