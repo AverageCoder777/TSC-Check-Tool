@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub fn clean_rw_path(input: &str) -> PathBuf {
-    PathBuf::from(input.trim().trim_matches('"').trim_matches('\'').trim())
+    let cleaned = input.trim().trim_matches('"').trim_matches('\'').trim();
+    strip_unc_prefix(&PathBuf::from(cleaned))
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -23,7 +24,7 @@ pub fn normalize_path(path: &Path) -> PathBuf {
             _ => out.push(comp),
         }
     }
-    out.iter().collect()
+    strip_unc_prefix(&out.iter().collect::<PathBuf>())
 }
 
 pub fn strip_unc_prefix(path: &Path) -> PathBuf {
