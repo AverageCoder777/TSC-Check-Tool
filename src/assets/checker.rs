@@ -272,20 +272,9 @@ where
             .map(|name| name.eq_ignore_ascii_case("Networks/Tracks.bin"))
             .unwrap_or(false)
     };
-    route_files.sort_by_key(|a| is_tracks_bin(a));
-    let normal_files: Vec<crate::domain::RouteFile> = route_files
-        .iter()
-        .filter(|file| !is_tracks_bin(file))
-        .cloned()
-        .collect();
-    let heavy_files: Vec<crate::domain::RouteFile> = route_files
-        .iter()
-        .filter(|file| is_tracks_bin(file))
-        .cloned()
-        .collect();
-    // LPT: тяжёлые файлы (Tracks.bin) ставим первыми, чтобы пул не простаивал.
-    let mut all_files = heavy_files;
-    all_files.extend(normal_files.iter().cloned());
+    // Тяжелые файлы (Tracks.bin) ставим в начало, чтобы задействовать пул потоков сразу
+    route_files.sort_by_key(|a| !is_tracks_bin(a));
+    let all_files = route_files;
 
     let temp_dir = tempdir()
         .map_err(|error| format!("Не удалось создать временную папку для Serz: {error}"))?;
@@ -311,7 +300,7 @@ where
         .build()
         .map_err(|error| format!("Не удалось создать пул проверки файлов: {error}"))?;
 
-    let mut analyses = Vec::with_capacity(route_files.len());
+    let mut analyses = Vec::with_capacity(all_files.len());
     // Кэш разбора лежит в папке маршрута: неизменившиеся файлы берутся из
     // него, а заново разбираются только те, что изменились или появились.
     let mut cache = crate::analysis_cache::AnalysisCache::load(route_path);
@@ -400,7 +389,7 @@ where
     conversion_errors.sort();
 
     // Удаляем из кэша файлы, которых в маршруте больше нет, и сохраняем кэш.
-    let current_files: HashMap<String, ()> = route_files
+    let current_files: HashMap<String, ()> = all_files
         .iter()
         .filter_map(|path| path.route_name(route_path))
         .map(|name| (name, ()))
