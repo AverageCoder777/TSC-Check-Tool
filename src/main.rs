@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 slint::include_modules!();
+
 use rayon::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
@@ -28,10 +29,10 @@ pub(crate) fn clear_route_icon_cache() {
 }
 
 mod analysis_cache;
+mod ap_picker_controller;
 mod app;
 mod assets;
 mod auditor;
-mod ap_picker_controller;
 mod auditor_controller;
 mod blueprint;
 mod domain;
@@ -45,8 +46,8 @@ mod scenario;
 mod scenario_controller;
 mod settings;
 mod settings_controller;
-mod texture_controller;
 mod texture;
+mod texture_controller;
 mod translit;
 mod windows;
 
@@ -152,7 +153,9 @@ fn sync_ui(ui: &MainWindow) {
                     let icon = if app.route_thumbnails_enabled {
                         r.icon_path
                             .as_ref()
-                            .and_then(|p| ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned()))
+                            .and_then(|p| {
+                                ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned())
+                            })
                             .unwrap_or_default()
                     } else {
                         slint::Image::default()
@@ -211,8 +214,40 @@ fn sync_ui(ui: &MainWindow) {
     });
 }
 
+fn open_texture_viewer(path: &Path) {
+    if !path.is_file() {
+        return;
+    }
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => {
+            crate::external_editor::show_native_error("Ошибка", &e.to_string());
+            std::process::exit(1);
+        }
+    };
+    match crate::texture::decode_tgpcdx_to_rgba(&data) {
+        Ok((w, h, rgba)) => {
+            let viewer = TextureViewerWindow::new().unwrap();
+            viewer.set_texture_image(crate::texture::rgba_to_slint_image(w, h, &rgba));
+            viewer.set_texture_orig_width(w as i32);
+            viewer.set_texture_orig_height(h as i32);
+            viewer.set_zoom_factor(if w > 640 || h > 480 {
+                (640.0 / w as f32).min(480.0 / h as f32)
+            } else {
+                1.0
+            });
+            viewer.set_info_text(format!("{} x {} px  TGPCDX  {}", w, h, path.display()).into());
+            let _ = viewer.run();
+            std::process::exit(0);
+        }
+        Err(e) => {
+            crate::external_editor::show_native_error("Ошибка", &e);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn handle_cli_args() {
-    // Headless CLI / "Open With" support
     let cli_args: Vec<String> = std::env::args().collect();
     if cli_args.iter().any(|a| a == "--register-shell") {
         if let Ok(exe) = std::env::current_exe() {
@@ -230,82 +265,23 @@ fn handle_cli_args() {
         }
         std::process::exit(0);
     }
+
     if let Some(target) = cli_args.get(1) {
-        let path = PathBuf::from(target);
-        // view-texture CLI
         if target.eq_ignore_ascii_case("view-texture")
             && let Some(p) = cli_args.get(2)
         {
-            let path = PathBuf::from(p);
-            if path.is_file() {
-                match std::fs::read(&path) {
-                    Ok(data) => match crate::texture::decode_tgpcdx_to_rgba(&data) {
-                        Ok((w, h, rgba)) => {
-                            let viewer = TextureViewerWindow::new().unwrap();
-                            viewer.set_texture_image(crate::texture::rgba_to_slint_image(
-                                w, h, &rgba,
-                            ));
-                            viewer.set_texture_orig_width(w as i32);
-                            viewer.set_texture_orig_height(h as i32);
-                            viewer.set_zoom_factor(if w > 640 || h > 480 {
-                                (640.0 / w as f32).min(480.0 / h as f32)
-                            } else {
-                                1.0
-                            });
-                            viewer.set_info_text(
-                                format!("{} x {} px  {}  {}", w, h, "TGPCDX", path.display())
-                                    .into(),
-                            );
-                            let _ = viewer.run();
-                            std::process::exit(0);
-                        }
-                        Err(e) => {
-                            crate::external_editor::show_native_error("Ошибка", &e);
-                            std::process::exit(1);
-                        }
-                    },
-                    Err(e) => {
-                        crate::external_editor::show_native_error("Ошибка", &e.to_string());
-                        std::process::exit(1);
-                    }
-                }
-            }
+            open_texture_viewer(Path::new(p));
         }
-        // File association: open .TgPcDx directly in texture viewer
+
+        let path = PathBuf::from(target);
+
         if path.is_file()
             && path
                 .extension()
                 .map(|e| e.eq_ignore_ascii_case("tgpcdx"))
                 .unwrap_or(false)
         {
-            match std::fs::read(&path) {
-                Ok(data) => match crate::texture::decode_tgpcdx_to_rgba(&data) {
-                    Ok((w, h, rgba)) => {
-                        let viewer = TextureViewerWindow::new().unwrap();
-                        viewer.set_texture_image(crate::texture::rgba_to_slint_image(w, h, &rgba));
-                        viewer.set_texture_orig_width(w as i32);
-                        viewer.set_texture_orig_height(h as i32);
-                        viewer.set_zoom_factor(if w > 640 || h > 480 {
-                            (640.0 / w as f32).min(480.0 / h as f32)
-                        } else {
-                            1.0
-                        });
-                        viewer.set_info_text(
-                            format!("{} x {} px  {}  {}", w, h, "TGPCDX", path.display()).into(),
-                        );
-                        let _ = viewer.run();
-                        std::process::exit(0);
-                    }
-                    Err(e) => {
-                        crate::external_editor::show_native_error("Ошибка", &e);
-                        std::process::exit(1);
-                    }
-                },
-                Err(e) => {
-                    crate::external_editor::show_native_error("Ошибка", &e.to_string());
-                    std::process::exit(1);
-                }
-            }
+            open_texture_viewer(&path);
         }
 
         let is_asset = path.is_file()
@@ -354,27 +330,24 @@ fn main() {
     let _ = UI_WEAK.set(ui.as_weak());
     crate::settings::apply_saved_language(&crate::settings::load_language());
     let ui_handle = ui.as_weak();
+
     if let Ok(mut app) = app.lock() {
         app.start_route_scan();
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
-    let missing_controller = missing_assets_controller::MissingAssetsController::new(app_for_controllers.clone());
+
+    let missing_controller =
+        missing_assets_controller::MissingAssetsController::new(app_for_controllers.clone());
+    missing_controller.bind();
     MISSING_ASSETS_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(missing_controller);
     });
-    MISSING_ASSETS_CONTROLLER.with(|cell| {
-        if let Some(c) = cell.borrow().as_ref() {
-            c.bind();
-        }
-    });
-    let ap_picker_controller = ap_picker_controller::ApPickerController::new(app_for_controllers.clone());
+
+    let ap_picker_controller =
+        ap_picker_controller::ApPickerController::new(app_for_controllers.clone());
+    ap_picker_controller.bind();
     AP_PICKER_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(ap_picker_controller);
-    });
-    AP_PICKER_CONTROLLER.with(|cell| {
-        if let Some(c) = cell.borrow().as_ref() {
-            c.bind();
-        }
     });
 
     let ui_handle2 = ui.as_weak();
@@ -394,10 +367,7 @@ fn main() {
                 app.selected_route = Some(
                     app.routes
                         .iter()
-                        .position(|r| {
-                            r.name == filtered[idx as usize].name
-                                && r.path == filtered[idx as usize].path
-                        })
+                        .position(|r| r.path == filtered[idx as usize].path)
                         .unwrap_or(idx as usize),
                 );
             } else {
@@ -428,6 +398,7 @@ fn main() {
             }
         }
     });
+
     let ui_handle_start_check = ui_handle.clone();
     let app = app_for_controllers.clone();
     ui.on_start_check(move || {
@@ -438,6 +409,7 @@ fn main() {
             app.start_check();
         }
     });
+
     let ui_handle_reset = ui_handle;
     let app = app_for_controllers.clone();
     ui.on_reset_log(move || {
@@ -447,17 +419,14 @@ fn main() {
             ui.set_check_log(app.check_log.clone().into());
         }
     });
+
     let inventory = inventory_controller::InventoryController::new(app_for_controllers.clone());
+    inventory.bind();
+    let inventory_weak_for_show = inventory.weak.clone();
     INVENTORY_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(inventory);
     });
-    let inventory_weak_for_show =
-        INVENTORY_CONTROLLER.with(|cell| cell.borrow().as_ref().unwrap().weak.clone());
-    INVENTORY_CONTROLLER.with(|cell| {
-        if let Some(inv) = cell.borrow().as_ref() {
-            inv.bind();
-        }
-    });
+
     let settings = settings_controller::SettingsController::new(app_for_controllers.clone());
     settings.bind();
 
@@ -473,6 +442,7 @@ fn main() {
             let _ = windows::open_in_file_explorer(&route.path);
         }
     });
+
     let app = app_for_controllers.clone();
     ui.on_show_inventory(move || {
         if let Ok(mut app) = app.lock() {
@@ -485,12 +455,12 @@ fn main() {
                     let (rows, safe) = crate::inventory_ui::build_inventory_rows(&state, false);
                     inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                     inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-                    inv.set_search_query(state.search.clone().as_str().into());
                 }
-                inv.show().unwrap();
+                let _ = inv.show();
             }
         }
     });
+
     let settings_weak = settings.weak.clone();
     ui.on_open_settings(move || {
         if let Some(w) = settings_weak.upgrade() {
@@ -507,7 +477,6 @@ fn main() {
     });
     auditor.bind(ui.as_weak());
 
-    // Texture viewer integration
     let texture_controller = texture_controller::TextureController::new(auditor.state.clone());
     texture_controller.bind(&auditor);
 
