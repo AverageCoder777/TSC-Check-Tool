@@ -90,6 +90,11 @@ static_tag_regex!(re_hc_material, "cHcExplicitStateMaterial");
 static_tag_regex!(re_dx_material, "cEffectMaterialDx");
 static_tag_regex!(re_shader_name, "ShaderName");
 static_tag_regex!(re_visible, "Visible");
+static_tag_regex!(re_cross_section_id, "CrossSectionID");
+static_tag_regex!(re_middle_section, "MiddleSection");
+static_tag_regex!(re_start_section, "StartSection");
+static_tag_regex!(re_end_section, "EndSection");
+static_tag_regex!(re_cross_section, "CrossSection");
 
 fn tag_text_cached(xml: &str, re: &Regex) -> Option<String> {
     re.captures(xml)
@@ -141,6 +146,32 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             if !raw.is_empty() && !is_numeric_token(&raw) {
                 out.push((AssetResourceKind::Geometry, raw));
             }
+        }
+    }
+
+    // Извлечение сечений (cross-section / loft) -> .xsec
+    for re in [
+        re_cross_section_id(),
+        re_middle_section(),
+        re_start_section(),
+        re_end_section(),
+        re_cross_section(),
+    ] {
+        for value in re.captures_iter(xml).filter_map(|c| c.get(1)) {
+            let raw = unescape_xml_entities(strip_tags(value.as_str()).trim());
+            let raw = raw.lines().next().unwrap_or("").trim().to_string();
+            if raw.is_empty() || is_numeric_token(&raw) {
+                continue;
+            }
+            let lower = raw.to_lowercase();
+            let raw = if lower.ends_with(".xsec") {
+                raw
+            } else if lower.contains('.') {
+                raw
+            } else {
+                format!("{raw}.xsec")
+            };
+            out.push((AssetResourceKind::Geometry, raw));
         }
     }
 
@@ -375,6 +406,21 @@ pub fn extract_geo_texture_references(xml: &str) -> Vec<String> {
     out
 }
 
+#[allow(dead_code)]
+pub fn extract_xsec_texture_references(xml: &str) -> Vec<String> {
+    extract_geo_texture_references(xml)
+}
+
+#[allow(dead_code)]
+pub fn extract_xsec_references(xml: &str) -> Vec<String> {
+    extract_geo_texture_references(xml)
+}
+
+#[allow(dead_code)]
+pub fn extract_xsec_textures(xml: &str) -> Vec<String> {
+    extract_geo_texture_references(xml)
+}
+
 pub fn normalize_texture_reference(raw: &str) -> String {
     let stripped = strip_shader_prefix(raw);
     let lower = stripped.to_lowercase();
@@ -432,6 +478,10 @@ fn ensure_extension(raw: &str, kind: AssetResourceKind) -> String {
 
 fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
     let cleaned = strip_shader_prefix(raw).replace('/', "\\");
+    let lower_cleaned = cleaned.to_lowercase();
+    if lower_cleaned.ends_with(".xsec") {
+        return vec![ensure_extension(&cleaned, kind)];
+    }
     match kind {
         AssetResourceKind::Script => {
             let lower = cleaned.to_lowercase();
@@ -778,7 +828,7 @@ fn audit_one_file(
                 }
             }
         }
-    } else if ext == "geopcdx" {
+    } else if ext == "geopcdx" || ext == "xsec" {
         for raw in extract_geo_texture_references(&xml) {
             let cands = candidate_paths(
                 &raw,
@@ -860,7 +910,7 @@ pub fn audit_folder_with_progress(
                     .and_then(|e| e.to_str())
                     .unwrap_or("")
                     .to_lowercase();
-                if ext == "bin" || ext == "geopcdx" {
+                if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
                     files.push(path.to_path_buf());
                 } else if ext == "tgpcdx" {
                     texture_files.push(path.to_path_buf());
@@ -897,7 +947,7 @@ pub fn audit_folder_with_progress(
                         .and_then(|e| e.to_str())
                         .unwrap_or("")
                         .to_lowercase();
-                    if (ext == "bin" || ext == "geopcdx")
+                    if (ext == "bin" || ext == "geopcdx" || ext == "xsec")
                         && !path.starts_with(folder_path)
                     {
                         all_product_files.push(path.to_path_buf());
@@ -1028,7 +1078,7 @@ pub fn audit_folder_with_progress(
             .to_lowercase();
 
         let is_orphan = match ext.as_str() {
-            "geopcdx" | "tgpcdx" => true,
+            "geopcdx" | "tgpcdx" | "xsec" => true,
             _ => false,
         };
         if is_orphan {
@@ -1070,7 +1120,7 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, textures_out: &mut Vec<Path
                     .and_then(|e| e.to_str())
                     .unwrap_or("")
                     .to_lowercase();
-                if ext == "bin" || ext == "geopcdx" {
+                if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
                     out.push(path);
                 } else if ext == "tgpcdx" {
                     textures_out.push(path);
