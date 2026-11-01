@@ -69,7 +69,7 @@ fn compute_file_hash(path: &Path, size: u64) -> Option<u64> {
 
     let mut file = File::open(path).ok()?;
     let mut hasher = hash_map::DefaultHasher::new();
-    
+
     // Длина массива хэшируется первой для идентичности со стандартным [u8]::hash
     size.hash(&mut hasher);
 
