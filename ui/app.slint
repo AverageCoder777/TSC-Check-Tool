@@ -61,7 +61,6 @@ export component MainWindow inherits Window {
                     placeholder-text: @tr("Поиск маршрутов");
                     text <=> search-query;
                     edited(text) => {
-                        root.search-query = text;
                         root.search-changed(text);
                     }
                 }

@@ -132,7 +132,7 @@ fn sync_ui(ui: &MainWindow) {
             });
         }
         let q = ui.get_search_query().to_string();
-        let search_changed = app.search_query != q;
+        let search_changed = app.synced_search_query != q;
         app.search_query = q.clone();
         let routes_dirty = search_changed
             || app.synced_routes_revision != app.routes_revision
@@ -153,7 +153,7 @@ fn sync_ui(ui: &MainWindow) {
                 }
             }
 
-            let query = q.to_lowercase();
+            let query = q.trim().to_lowercase();
             let filtered_routes: Vec<&domain::Route> = app
                 .routes
                 .iter()
@@ -376,19 +376,16 @@ fn main() {
             ui.set_selected_route(idx);
         }
         if let Ok(mut app) = app.lock() {
-            let q = app.search_query.to_lowercase();
+            let q = app.search_query.trim().to_lowercase();
             let filtered: Vec<&domain::Route> = app
                 .routes
                 .iter()
                 .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
                 .collect();
+
             if idx >= 0 && ((idx as usize) < filtered.len()) {
-                app.selected_route = Some(
-                    app.routes
-                        .iter()
-                        .position(|r| r.path == filtered[idx as usize].path)
-                        .unwrap_or(idx as usize),
-                );
+                let target_path = &filtered[idx as usize].path;
+                app.selected_route = app.routes.iter().position(|r| &r.path == target_path);
             } else {
                 app.selected_route = None;
             }
