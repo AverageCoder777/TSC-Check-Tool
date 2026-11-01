@@ -320,10 +320,21 @@ pub(crate) fn convert_xml_to_bin(
     xml_path: &Path,
     target_asset_path: &Path,
 ) -> Result<(), SerzError> {
-    let staging_output = xml_path
+    let staging_dir = xml_path
         .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("staging_output.bin");
+        .unwrap_or_else(|| Path::new("."));
+    let staging_output = tempfile::Builder::new()
+        .prefix("staging_output_")
+        .suffix(".bin")
+        .tempfile_in(staging_dir)
+        .map_err(|error| {
+            format!(
+                "не удалось создать временный BIN в {}: {error}",
+                staging_dir.display()
+            )
+        })?
+        .into_temp_path();
+    let staging_output = staging_output.to_path_buf();
     let _ = fs::remove_file(&staging_output);
 
     let mut args = vec![legacy_windows_path(xml_path).display().to_string()];
