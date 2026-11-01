@@ -65,9 +65,9 @@ pub fn build_inventory_rows(
         }
         InventorySortColumn::Usage => {
             if state.sort.descending {
-                assets.sort_by_key(|a| std::cmp::Reverse(a.uses.len()));
+                assets.sort_by_key(|a| std::cmp::Reverse(a.uses.iter().map(|u| u.count as usize).sum::<usize>()));
             } else {
-                assets.sort_by_key(|a| a.uses.len());
+                assets.sort_by_key(|a| a.uses.iter().map(|u| u.count as usize).sum::<usize>());
             }
         }
     }
@@ -75,6 +75,7 @@ pub fn build_inventory_rows(
     let mut rows = Vec::new();
     let mut safe_flags = Vec::new();
     for a in assets {
+        let usage_count: usize = a.uses.iter().map(|u| u.count as usize).sum();
         if show_missing && !a.missing {
             continue;
         }
@@ -89,7 +90,7 @@ pub fn build_inventory_rows(
         }
         let mut by_tile: BTreeMap<String, usize> = BTreeMap::new();
         for u in a.uses.iter() {
-            *by_tile.entry(u.tile.clone()).or_insert(0) += 1;
+            *by_tile.entry(u.tile.clone()).or_insert(0) += u.count as usize;
         }
         let tiles: String = by_tile
             .iter()
@@ -101,7 +102,7 @@ pub fn build_inventory_rows(
         let mut item0 = slint::StandardListViewItem::default();
         item0.text = path_text.as_str().into();
         let mut item1 = slint::StandardListViewItem::default();
-        item1.text = a.uses.len().to_string().as_str().into();
+        item1.text = usage_count.to_string().as_str().into();
         let mut item2 = slint::StandardListViewItem::default();
         item2.text = tiles.as_str().into();
         let row_items = vec![item0, item1, item2];

@@ -40,7 +40,7 @@
             .iter()
             .find(|asset| asset.path == "First/ProductA/Scenery/one.bin")
             .expect("ассет должен попасть в инвентарь");
-        assert_eq!(first_asset.uses.len(), 2);
+        assert_eq!(first_asset.uses.iter().map(|u| u.count).sum::<u32>(), 2);
 
         // Файлы не менялись — всё берётся из кэша.
         let check = super::check_route(&route, &assets, &serz, true, 2, |_| {}).unwrap();
@@ -50,7 +50,7 @@
             .iter()
             .find(|asset| asset.path == "First/ProductA/Scenery/one.bin")
             .expect("ассет должен попасть в инвентарь");
-        assert_eq!(first_asset.uses.len(), 2);
+        assert_eq!(first_asset.uses.iter().map(|u| u.count).sum::<u32>(), 2);
 
         // Один файл изменился: пересобирается только он.
         std::fs::write(
@@ -223,6 +223,7 @@
             }
             .tile_kind(),
             kind: crate::domain::AssetKind::Scenery,
+            count: 1,
             tile_search: "тайл X=+000000 Z=+000000".to_lowercase(),
             source_file_search: "Scenery/Grass.xml".to_lowercase(),
         }];

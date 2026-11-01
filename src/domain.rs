@@ -74,6 +74,8 @@ pub(crate) struct AssetUse {
     pub(crate) tile_kind: TileKind,
     /// Что за объект: объект маршрута, файл состава или что-то другое.
     pub(crate) kind: AssetKind,
+    /// Сколько раз объект встретился в этом файле/тайле.
+    pub(crate) count: u32,
     pub(crate) tile_search: String,
     pub(crate) source_file_search: String,
 }

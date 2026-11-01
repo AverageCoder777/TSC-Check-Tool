@@ -357,6 +357,8 @@ where
             }
         }
         let tile = crate::reference::route_tile_label(route_path, &analysis.file);
+        let tile_search = tile.to_lowercase();
+        let source_file_search = analysis.file.display().to_lowercase();
         for (asset, count, kind) in analysis.uses {
             // Игра читает пути без учёта регистра, поэтому ссылки, отличающиеся
             // регистром, относятся к одному ассету.
@@ -365,16 +367,15 @@ where
                 .entry(key.clone())
                 .or_insert_with(|| asset.clone());
             let uses = asset_uses.entry(key).or_default();
-            for _ in 0..count {
-                uses.push(crate::domain::AssetUse {
-                    source_file: analysis.file.clone(),
-                    tile: tile.clone(),
-                    tile_kind: analysis.file.tile_kind(),
-                    kind,
-                    tile_search: tile.to_lowercase(),
-                    source_file_search: analysis.file.display().to_lowercase(),
-                });
-            }
+            uses.push(crate::domain::AssetUse {
+                source_file: analysis.file.clone(),
+                tile: tile.clone(),
+                tile_kind: analysis.file.tile_kind(),
+                kind,
+                count,
+                tile_search: tile_search.clone(),
+                source_file_search: source_file_search.clone(),
+            });
         }
         if let Some(error) = analysis.error {
             conversion_errors.push(format!(
