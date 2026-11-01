@@ -203,10 +203,7 @@ pub fn may_contain_asset_reference(file_path: &Path) -> bool {
         };
 
         let active_len = tail_len + n;
-        if buf[..active_len]
-            .windows(marker.len())
-            .any(|window| window == marker)
-        {
+        if memchr::memmem::find(&buf[..active_len], marker).is_some() {
             return true;
         }
 

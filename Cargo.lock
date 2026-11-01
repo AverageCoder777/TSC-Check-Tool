@@ -10,6 +10,7 @@ dependencies = [
  "bytemuck",
  "ddsfile",
  "encoding_rs",
+ "memchr",
  "notify",
  "open",
  "rayon",
