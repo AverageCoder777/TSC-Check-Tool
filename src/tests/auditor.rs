@@ -195,3 +195,10 @@
         let refs = extract_geo_texture_references(xml);
         assert_eq!(refs, vec![r"textures\wall.TgPcDx".to_string()]);
     }
+    #[test]
+    fn tmp_strip_check() {
+        let raw = r"virtualTracks\foo\Audio\Markers\[00]Lautsprecher30m";
+        let stripped = crate::fs_utils::strip_shader_prefix(raw);
+        println!("STRIPPED={}", stripped);
+        assert_eq!(stripped, r"virtualTracks\foo\Audio\Markers\Lautsprecher30m");
+    }
