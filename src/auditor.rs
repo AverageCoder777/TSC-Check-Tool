@@ -832,6 +832,7 @@ pub fn audit_folder_with_progress(
     progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> AuditReport {
     let mut files = Vec::new();
+    let mut texture_files = Vec::new();
     if let Ok(entries) = walkdir::WalkDir::new(folder_path)
         .into_iter()
         .filter_entry(|e| {
@@ -861,11 +862,13 @@ pub fn audit_folder_with_progress(
                     .to_lowercase();
                 if ext == "bin" || ext == "geopcdx" {
                     files.push(path.to_path_buf());
+                } else if ext == "tgpcdx" {
+                    texture_files.push(path.to_path_buf());
                 }
             }
         }
     } else {
-        collect_files(folder_path, &mut files);
+        collect_files(folder_path, &mut files, &mut texture_files);
     }
 
     let threads = max_concurrent.max(1);
@@ -937,7 +940,7 @@ pub fn audit_folder_with_progress(
 
     // Orphan detection
     let mut orphans: Vec<PathBuf> = Vec::new();
-    for f in &files {
+    for f in files.iter().chain(texture_files.iter()) {
         let nf = std::path::PathBuf::from(
             crate::fs_utils::normalize_path(f)
                 .to_string_lossy()
@@ -985,7 +988,7 @@ pub fn audit_folder_with_progress(
     }
 }
 
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, textures_out: &mut Vec<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -997,7 +1000,7 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
                 continue;
             }
             if path.is_dir() {
-                collect_files(&path, out);
+                collect_files(&path, out, textures_out);
             } else if path.is_file() {
                 let ext = path
                     .extension()
@@ -1006,6 +1009,8 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
                     .to_lowercase();
                 if ext == "bin" || ext == "geopcdx" {
                     out.push(path);
+                } else if ext == "tgpcdx" {
+                    textures_out.push(path);
                 }
             }
         }
