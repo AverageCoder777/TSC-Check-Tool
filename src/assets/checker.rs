@@ -16,6 +16,7 @@ pub(crate) fn analyze_route_file(
     temp_dir: &Path,
     serz_tool: &SerzTool,
 ) -> FileAnalysis {
+    let is_archive = matches!(route_file, crate::domain::RouteFile::Archive { .. });
     // Запись архива читается через временный файл: конвертеру Serz нужен
     // настоящий файл на диске.
     let file_path = match route_file.materialize(temp_dir) {
@@ -38,6 +39,9 @@ pub(crate) fn analyze_route_file(
             .unwrap_or(0)
             < 256
         {
+            if is_archive {
+                let _ = fs::remove_file(&file_path);
+            }
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
@@ -49,6 +53,9 @@ pub(crate) fn analyze_route_file(
         // `BlueprintID` заведомо не содержит ссылок на ассеты. Такие файлы не
         // конвертируются: на больших маршрутах это основная часть работы.
         if !may_contain_asset_reference(&file_path) {
+            if is_archive {
+                let _ = fs::remove_file(&file_path);
+            }
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
@@ -60,6 +67,9 @@ pub(crate) fn analyze_route_file(
         let conversion_result = serz_tool.bin_to_xml(&file_path, &xml_path);
         if let Err(error) = conversion_result {
             let _ = fs::remove_file(&xml_path);
+            if is_archive {
+                let _ = fs::remove_file(&file_path);
+            }
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
@@ -74,6 +84,9 @@ pub(crate) fn analyze_route_file(
             }
             Err(error) => {
                 let _ = fs::remove_file(&xml_path);
+                if is_archive {
+                    let _ = fs::remove_file(&file_path);
+                }
                 return FileAnalysis {
                     from_cache: false,
                     file: route_file.clone(),
@@ -86,9 +99,12 @@ pub(crate) fn analyze_route_file(
             }
         }
     } else {
-        match fs::read(&file_path) {
+         match fs::read(&file_path) {
             Ok(data) => data,
             Err(error) => {
+                if is_archive {
+                    let _ = fs::remove_file(&file_path);
+                }
                 return FileAnalysis {
                     from_cache: false,
                     file: route_file.clone(),
@@ -102,6 +118,9 @@ pub(crate) fn analyze_route_file(
         }
     };
 
+    if is_archive {
+        let _ = fs::remove_file(&file_path);
+    }
     let xml_text = decode_xml_bytes(&xml_data);
 
     let references = crate::reference::extract_asset_references_with_locations(&xml_text);
