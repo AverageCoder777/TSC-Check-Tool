@@ -211,23 +211,15 @@ pub fn find_entry_in_directory(
     }
     let entries = fs::read_dir(directory).ok()?;
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() != want_directory {
+        // Проверяем тип без дополнительных системных вызовов к диску
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir != want_directory {
             continue;
         }
-        let Some(file_name) = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-        else {
-            continue;
-        };
-        if file_name.eq_ignore_ascii_case(wanted) {
-            return Some(path);
-        }
-        // Похожие буквы («Е» кириллическая вместо латинской) считаем совпадением,
-        // а вот любые другие различия — нет: это другой файл.
-        if names_match(wanted, &file_name) {
-            return Some(path);
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+        if name_str.eq_ignore_ascii_case(wanted) || names_match(wanted, &name_str) {
+            return Some(entry.path());
         }
     }
     None
