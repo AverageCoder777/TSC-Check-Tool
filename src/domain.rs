@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-#[derive(Clone, Serialize, Deserialize)]
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Route {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -13,7 +14,7 @@ pub(crate) struct Route {
     pub(crate) icon_path: Option<PathBuf>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct IncompleteRouteFolder {
     pub(crate) id: String,
     pub(crate) path: PathBuf,
@@ -26,17 +27,19 @@ pub(crate) struct IncompleteRouteFolder {
     pub(crate) suggested_name: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct RouteScanResult {
     pub(crate) routes: Vec<Route>,
     pub(crate) incomplete_folders: Vec<IncompleteRouteFolder>,
 }
 
+#[derive(Debug)]
 pub(crate) enum RouteScanItem {
     Route(Route),
     Incomplete(IncompleteRouteFolder),
 }
 
+#[derive(Debug)]
 pub(crate) struct CheckResult {
     pub(crate) missing_assets: Vec<MissingAsset>,
     pub(crate) asset_inventory: Vec<ReferencedAsset>,
@@ -45,7 +48,7 @@ pub(crate) struct CheckResult {
     pub(crate) structure_issues: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct MissingAsset {
     pub(crate) path: String,
     pub(crate) uses: Vec<AssetUse>,
@@ -54,7 +57,7 @@ pub(crate) struct MissingAsset {
     pub(crate) asset_type: crate::assets::RouteAssetType,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ReferencedAsset {
     pub(crate) path: String,
     pub(crate) uses: Vec<AssetUse>,
@@ -62,12 +65,12 @@ pub(crate) struct ReferencedAsset {
     pub(crate) path_search: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct UmlautAsset {
     pub(crate) path: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct AssetUse {
     pub(crate) source_file: RouteFile,
     pub(crate) tile: String,
@@ -84,7 +87,7 @@ pub(crate) struct AssetUse {
 ///
 /// Игра читает архив .ap так, будто его нет: записи лежат рядом с файлами
 /// маршрута. Поэтому архив читается прямо из zip, без распаковки целиком.
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(crate) enum RouteFile {
     /// Файл лежит на диске.
     Path(PathBuf),
@@ -101,7 +104,6 @@ thread_local! {
     static ZIP_ARCHIVE_CACHE: RefCell<HashMap<PathBuf, zip::ZipArchive<fs::File>>> =
         RefCell::new(HashMap::new());
 }
-
 impl RouteFile {
     /// Имя файла маршрута относительно его папки.
     pub(crate) fn route_name(&self, route_path: &Path) -> Option<String> {
@@ -110,20 +112,28 @@ impl RouteFile {
                 let relative = path.strip_prefix(route_path).ok()?;
                 Some(relative.to_string_lossy().replace('\\', "/"))
             }
-            RouteFile::Archive { name, .. } => Some(name.replace('\\', "/")),
+            RouteFile::Archive { name, .. } => {
+                let clean = name.trim_start_matches(|c| c == '/' || c == '\\');
+                Some(clean.replace('\\', "/"))
+            }
         }
     }
 
     /// Имя файла без папок: по нему определяется тайл.
     pub(crate) fn file_name(&self) -> String {
+        self.file_name_str().to_owned()
+    }
+
+    /// Срез имени файла без аллокаций.
+    pub(crate) fn file_name_str(&self) -> &str {
         match self {
             RouteFile::Path(path) => path
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
+                .and_then(|name| name.to_str())
                 .unwrap_or_default(),
             RouteFile::Archive { name, .. } => Path::new(name)
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
+                .and_then(|name| name.to_str())
                 .unwrap_or_default(),
         }
     }
@@ -136,31 +146,50 @@ impl RouteFile {
     pub(crate) fn install_target(&self, route_path: &Path) -> PathBuf {
         match self {
             RouteFile::Path(path) => path.clone(),
-            RouteFile::Archive { name, .. } => route_path.join(name.replace('\\', "/")),
+            RouteFile::Archive { name, .. } => {
+                let clean = name.trim_start_matches(|c| c == '/' || c == '\\');
+                route_path.join(clean.replace('\\', "/"))
+            }
         }
     }
 
-    /// Готовит файл на диске: запись архива распаковывается во временный файл.
+    /// Готовит файл на диске: запись архива распаковывается во временный файл
+    /// потоково через std::io::copy без выделения гигабайтных буферов в RAM.
     pub(crate) fn materialize(&self, temp_dir: &Path) -> Result<PathBuf, String> {
-        let RouteFile::Archive { archive, name, .. } = self else {
-            let RouteFile::Path(path) = self else {
-                unreachable!()
-            };
-            return Ok(path.clone());
+        let (archive, name) = match self {
+            RouteFile::Path(path) => return Ok(path.clone()),
+            RouteFile::Archive { archive, name, .. } => (archive, name),
         };
-        let relative = Path::new(name);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
+
+        // Защита от сброса temp_dir до корня диска на Windows
+        let clean_name = name.trim_start_matches(|c| c == '/' || c == '\\');
+        let relative = Path::new(clean_name);
+        if relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+            )
+        }) {
             return Err(format!("Недопустимый путь внутри архива: {name}"));
         }
+
         let target = temp_dir.join(relative);
         if target.is_file() {
             return Ok(target);
         }
-        let data = ZIP_ARCHIVE_CACHE.with(|cache| -> Result<Vec<u8>, String> {
+
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("Не удалось создать папку {}: {error}", parent.display())
+            })?;
+        }
+
+        let mut output =
+            BufWriter::new(fs::File::create(&target).map_err(|error| {
+                format!("Не удалось создать файл {}: {error}", target.display())
+            })?);
+
+        ZIP_ARCHIVE_CACHE.with(|cache| -> Result<(), String> {
             let mut cache = cache.borrow_mut();
             if !cache.contains_key(archive) {
                 let file = fs::File::open(archive).map_err(|error| {
@@ -172,46 +201,37 @@ impl RouteFile {
                 cache.insert(archive.to_path_buf(), zip);
             }
             let zip = cache.get_mut(archive).unwrap();
+
+            let alt1 = name.replace('/', "\\");
+            let alt2 = name.replace('\\', "/");
+            let entry_idx = zip
+                .index_for_name(name)
+                .or_else(|| zip.index_for_name(&alt1))
+                .or_else(|| zip.index_for_name(&alt2))
+                .ok_or_else(|| format!("Не удалось найти {name} в архиве {}", archive.display()))?;
+
             let mut member = zip
-                .by_name(name)
+                .by_index(entry_idx)
                 .map_err(|error| format!("Не удалось прочитать {name} из архива: {error}"))?;
-            let member_size = member.size();
-            let mut reader = BufReader::new(&mut member);
-            let mut data = Vec::with_capacity(member_size as usize);
-            reader
-                .read_to_end(&mut data)
+
+            std::io::copy(&mut member, &mut output)
                 .map_err(|error| format!("Не удалось распаковать {name}: {error}"))?;
-            Ok(data)
+
+            Ok(())
         })?;
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("Не удалось создать папку {}: {error}", parent.display())
-            })?;
-        }
-        let mut output =
-            BufWriter::new(fs::File::create(&target).map_err(|error| {
-                format!("Не удалось создать файл {}: {error}", target.display())
-            })?);
-        output
-            .write_all(&data)
-            .map_err(|error| format!("Не удалось распаковать {name}: {error}"))?;
+
         output
             .flush()
             .map_err(|error| format!("Не удалось записать {name}: {error}"))?;
+
         Ok(target)
     }
 
-    /// Расширение файла.
-    pub(crate) fn extension(&self) -> Option<String> {
+    /// Расширение файла без аллокации строки в куче.
+    pub(crate) fn extension(&self) -> Option<&str> {
         match self {
-            RouteFile::Path(path) => path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| extension.to_owned()),
-            RouteFile::Archive { name, .. } => Path::new(name)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| extension.to_owned()),
+            RouteFile::Path(path) => path.extension()?.to_str(),
+            RouteFile::Archive { name, .. } => Path::new(name).extension()?.to_str(),
         }
     }
 
@@ -234,7 +254,7 @@ impl RouteFile {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AssetKind {
     Loft,
     Scenery,
@@ -270,7 +290,7 @@ impl AssetKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum TileKind {
     Scenery,
     Loft,
@@ -285,7 +305,12 @@ pub(crate) enum TileKind {
 
 impl RouteFile {
     pub(crate) fn tile_kind(&self) -> TileKind {
-        let path = self.display().to_lowercase();
+        let name_str = match self {
+            RouteFile::Path(path) => path.to_string_lossy(),
+            RouteFile::Archive { name, .. } => std::borrow::Cow::Borrowed(name.as_str()),
+        };
+        let path = name_str.to_ascii_lowercase();
+
         if path.ends_with("tracks.bin") {
             TileKind::TracksMaster
         } else if path.ends_with("lofts.bin") {
@@ -294,10 +319,7 @@ impl RouteFile {
             TileKind::RoadsMaster
         } else if path.ends_with("routeproperties.xml") {
             TileKind::RouteProps
-        } else if path.contains("track tiles")
-            || path.contains("track tiles\\")
-            || path.contains("track tiles/")
-        {
+        } else if path.contains("track tiles") {
             TileKind::Track
         } else if path.contains("road tiles") {
             TileKind::Road

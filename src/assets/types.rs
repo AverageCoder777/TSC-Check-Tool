@@ -5,7 +5,7 @@ pub struct RouteAssetItem {
     pub uses: Vec<crate::domain::AssetUse>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteAssetType {
     Scenery,
     Loft,
