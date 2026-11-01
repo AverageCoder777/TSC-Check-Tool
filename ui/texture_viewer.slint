@@ -2,10 +2,16 @@ import { VerticalBox, Button } from "std-widgets.slint";
 
 export component TextureViewerWindow inherits Window {
     title: @tr("Просмотр текстур");
+    preferred-width: 950px;
+    preferred-height: 750px;
+    min-width: 600px;
+    min-height: 480px;
     in-out property <image> texture-image;
     in-out property <int> texture-orig-width: 0;
     in-out property <int> texture-orig-height: 0;
     in-out property <float> zoom-factor: 1.0;
+    in-out property <length> pan_x: 0px;
+    in-out property <length> pan_y: 0px;
     in-out property <string> info-text: "";
     in-out property <bool> show-alpha: true;
 
@@ -18,20 +24,59 @@ export component TextureViewerWindow inherits Window {
         Rectangle {
             horizontal-stretch: 1;
             vertical-stretch: 1;
-            TouchArea {
-                scroll-event(event) => {
-                    if (event.delta-y > 0) {
-                        root.zoom_factor = Math.min(8.0, root.zoom_factor * 1.15);
-                    } else if (event.delta-y < 0) {
-                        root.zoom_factor = Math.max(0.1, root.zoom_factor / 1.15);
-                    }
-                    accept
-                }
-            }
+            clip: true;
+            background: #1e1e1e;
+            property <length> viewport-width: self.width;
+            property <length> viewport-height: self.height;
+
             Image {
                 source: texture-image;
-                width: texture-orig-width * zoom-factor * 1px;
-                height: texture-orig-height * zoom-factor * 1px;
+                x: (parent.width - self.width) / 2 + root.pan_x;
+                y: (parent.height - self.height) / 2 + root.pan_y;
+                width: root.texture-orig-width * root.zoom-factor * 1px;
+                height: root.texture-orig-height * root.zoom-factor * 1px;
+            }
+
+            TouchArea {
+                property <length> drag_start_x;
+                property <length> drag_start_y;
+                property <float> old_zoom;
+                property <float> new_zoom;
+
+                width: 100%;
+                height: 100%;
+                mouse-cursor: self.pressed ? grabbing : grab;
+
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        drag_start_x = self.mouse-x;
+                        drag_start_y = self.mouse-y;
+                    }
+                }
+
+                moved => {
+                    if (self.pressed) {
+                        root.pan_x += self.mouse-x - drag_start_x;
+                        root.pan_y += self.mouse-y - drag_start_y;
+                        drag_start_x = self.mouse-x;
+                        drag_start_y = self.mouse-y;
+                    }
+                }
+
+                scroll-event(event) => {
+                    old_zoom = root.zoom_factor;
+                    if (event.delta-y > 0) {
+                        new_zoom = Math.min(10.0, old_zoom * 1.15);
+                    } else if (event.delta-y < 0) {
+                        new_zoom = Math.max(0.05, old_zoom / 1.15);
+                    } else {
+                        new_zoom = old_zoom;
+                    }
+                    root.pan_x = (self.mouse-x - self.width / 2) * (1.0 - new_zoom / old_zoom) + (new_zoom / old_zoom) * root.pan_x;
+                    root.pan_y = (self.mouse-y - self.height / 2) * (1.0 - new_zoom / old_zoom) + (new_zoom / old_zoom) * root.pan_y;
+                    root.zoom_factor = new_zoom;
+                    accept
+                }
             }
         }
         Button { text: @tr("Переключить альфа-канал"); clicked => { toggle-alpha(); } }

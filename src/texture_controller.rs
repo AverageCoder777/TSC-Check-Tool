@@ -98,6 +98,8 @@ impl TextureController {
                             } else {
                                 1.0
                             });
+                            v.set_pan_x(0.0);
+                            v.set_pan_y(0.0);
                             v.set_info_text(info.into());
                             let _ = v.show();
                         }
@@ -184,6 +186,8 @@ impl TextureController {
                             } else {
                                 1.0
                             });
+                            v.set_pan_x(0.0);
+                            v.set_pan_y(0.0);
                             v.set_info_text(info.into());
                         }
                     });
