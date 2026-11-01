@@ -145,8 +145,10 @@ impl AuditorController {
                     }
 
                     let mut items = report.broken_references;
+                    let graph = report.dependency_graph;
                     let (col, asc) = if let Ok(mut s) = thread_state.lock() {
                         s.all_items = items.clone();
+                        s.dependency_graph = graph;
                         (s.sort_col, s.sort_asc)
                     } else {
                         (0, true)
@@ -206,7 +208,69 @@ impl AuditorController {
             });
         }
 
-        // Открыть исходный файл в проводнике
+        // Обновление панели зависимостей при выборе строки
+        {
+            let state = self.state.clone();
+            let handle = self.weak.clone();
+            self.window.on_row_selected(move |row| {
+                if row < 0 {
+                    if let Some(w) = handle.upgrade() {
+                        w.set_incoming_text("".into());
+                        w.set_outgoing_text("".into());
+                    }
+                    return;
+                }
+                let (incoming, outgoing) = state.lock().ok().map(|s| {
+                    let item = s.display_items.get(row as usize);
+                    let path = item.map(|i| {
+                        let p = if i.kind == crate::auditor::AssetResourceKind::Unused {
+                            &i.expected_path
+                        } else {
+                            &i.parent_file
+                        };
+                        let np = crate::fs_utils::normalize_path(p);
+                        std::path::PathBuf::from(np.to_string_lossy().to_lowercase())
+                    });
+                    let incoming = path.as_ref().and_then(|p| s.dependency_graph.incoming.get(p));
+                    let outgoing = path.as_ref().and_then(|p| s.dependency_graph.outgoing.get(p));
+                    let fmt = |set: Option<&std::collections::HashSet<std::path::PathBuf>>, empty: &str| {
+                        match set {
+                            Some(s) if !s.is_empty() => {
+                                if s.len() > 3 {
+                                    let names: Vec<String> = s
+                                        .iter()
+                                        .take(3)
+                                        .map(|p| {
+                                            p.file_name()
+                                                .map(|n| n.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| p.display().to_string())
+                                        })
+                                        .collect();
+                                    format!("{} файлов: {}", s.len(), names.join(", "))
+                                } else {
+                                    s.iter()
+                                        .map(|p| {
+                                            p.file_name()
+                                                .map(|n| n.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| p.display().to_string())
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("; ")
+                                }
+                            }
+                            _ => empty.to_string(),
+                        }
+                    };
+                    let incoming_str = fmt(incoming, "Не используется ни одним файлом в папке");
+                    let outgoing_str = fmt(outgoing, "Нет зависимостей");
+                    (incoming_str, outgoing_str)
+                }).unwrap_or_else(|| ("Не используется ни одним файлом в папке".to_string(), "Нет зависимостей".to_string()));
+                if let Some(w) = handle.upgrade() {
+                    w.set_incoming_text(incoming.into());
+                    w.set_outgoing_text(outgoing.into());
+                }
+            });
+        }
         {
             let state = self.state.clone();
             self.window.on_open_source_file(move |row| {

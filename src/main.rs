@@ -327,6 +327,7 @@ pub(crate) struct AuditorState {
     display_items: Vec<auditor::BrokenResourceRef>,
     sort_col: usize,
     sort_asc: bool,
+    dependency_graph: auditor::DependencyGraph,
 }
 
 impl Default for AuditorState {
@@ -336,6 +337,7 @@ impl Default for AuditorState {
             display_items: Vec::new(),
             sort_col: 0,
             sort_asc: true,
+            dependency_graph: auditor::DependencyGraph::default(),
         }
     }
 }

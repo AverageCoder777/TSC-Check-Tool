@@ -1243,7 +1243,8 @@ export component FolderAuditorWindow inherits Window {
     in property <string> audit-status: "";
     in property <string> editor-status: "";
     in property <[ [StandardListViewItem] ]> broken-rows;
-
+    in property <string> incoming-text: "";
+    in property <string> outgoing-text: "";
     callback pick-folder();
     callback start-audit(string);
     callback open-source-file(int);
@@ -1252,6 +1253,7 @@ export component FolderAuditorWindow inherits Window {
     callback preview-texture(int);
     callback filter-changed(string);
     callback sort-column(int);
+    callback row-selected(int);
 
     VerticalBox {
         HorizontalBox {
@@ -1304,6 +1306,10 @@ export component FolderAuditorWindow inherits Window {
                 TouchArea { clicked => { root.active-filter = "child"; root.filter-changed("child"); } }
                 Text { text: @tr("Дочерние объекты"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
             }
+            Rectangle { background: root.active-filter == "orphans" ? #059669 : #333333; border-radius: 4px; min-width: 120px; height: 28px;
+                TouchArea { clicked => { root.active-filter = "orphans"; root.filter-changed("orphans"); } }
+                Text { text: @tr("Неиспользуемые"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+            }
         }
         StandardTableView {
             columns: [
@@ -1314,10 +1320,13 @@ export component FolderAuditorWindow inherits Window {
             rows: broken-rows;
             current-row-changed(row) => {
                 root.selected-row = row;
+                root.row-selected(row);
             }
             sort-ascending(col) => { root.sort-column(col); }
             sort-descending(col) => { root.sort-column(col); }
         }
+        Text { text: @tr("Входящие ссылки: {}", incoming-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
+        Text { text: @tr("Исходящие ссылки: {}", outgoing-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
         HorizontalBox {
             Button {
                 text: @tr("Открыть папку файла-источника");

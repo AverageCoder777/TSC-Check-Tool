@@ -13,6 +13,7 @@ pub enum AssetResourceKind {
     Script,
     Sound,
     ChildBlueprint,
+    Unused,
 }
 
 impl AssetResourceKind {
@@ -24,6 +25,7 @@ impl AssetResourceKind {
             Self::Script => "Скрипт",
             Self::Sound => "Звуки",
             Self::ChildBlueprint => "Дочерние объекты",
+            Self::Unused => "Неиспользуемые",
         }
     }
 }
@@ -36,9 +38,23 @@ pub struct BrokenResourceRef {
     pub count: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DependencyGraph {
+    pub outgoing: HashMap<PathBuf, HashSet<PathBuf>>,
+    pub incoming: HashMap<PathBuf, HashSet<PathBuf>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileAuditOutcome {
+    pub parent: PathBuf,
+    pub broken: Vec<BrokenResourceRef>,
+    pub outgoing: Vec<PathBuf>,
+}
+
 #[derive(Debug, Default)]
 pub struct AuditReport {
     pub broken_references: Vec<BrokenResourceRef>,
+    pub dependency_graph: DependencyGraph,
 }
 
 
@@ -708,17 +724,24 @@ fn audit_one_file(
     assets_root: &Path,
     serz_path: &Path,
     ap_cache: &ApArchiveCache,
-) -> Vec<BrokenResourceRef> {
+) -> FileAuditOutcome {
     let xml = match crate::assets::read_serz_xml(serz_path, file) {
         Ok(x) => x,
         Err(_) => match fs::read(file) {
             Ok(bytes) if bytes.starts_with(b"<?xm") => String::from_utf8_lossy(&bytes).to_string(),
-            _ => return Vec::new(),
+            _ => {
+                return FileAuditOutcome {
+                    parent: file.to_path_buf(),
+                    broken: Vec::new(),
+                    outgoing: Vec::new(),
+                }
+            }
         },
     };
 
     let mut out: Vec<BrokenResourceRef> = Vec::new();
     let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
+    let mut outgoing: Vec<PathBuf> = Vec::new();
     let parent = file.parent().unwrap_or(folder);
     let product_root = product_root_for(file, assets_root);
     let parent_file = file.to_path_buf();
@@ -738,6 +761,8 @@ fn audit_one_file(
                 .unwrap_or_else(|| assets_root.join(&raw));
             let exists = loose_exists(&cands)
                 || ap_exists(&raw, parent, &product_root, assets_root, ap_cache, kind);
+            let target = cands.iter().find(|p| loose_path_exists(p)).unwrap_or(&expected);
+            outgoing.push(crate::fs_utils::normalize_path(target));
             if !exists {
                 let key = (kind, expected.clone(), parent_file.clone());
                 if let Some(&idx) = seen.get(&key) {
@@ -772,6 +797,8 @@ fn audit_one_file(
                     ap_cache,
                     AssetResourceKind::Texture,
                 );
+            let target = cands.iter().find(|p| loose_path_exists(p)).unwrap_or(&expected);
+            outgoing.push(crate::fs_utils::normalize_path(target));
             if !exists {
                 let key = (AssetResourceKind::Texture, expected.clone(), parent_file.clone());
                 if let Some(&idx) = seen.get(&key) {
@@ -789,7 +816,11 @@ fn audit_one_file(
         }
     }
 
-    out
+    FileAuditOutcome {
+        parent: parent_file,
+        broken: out,
+        outgoing,
+    }
 }
 
 pub fn audit_folder_with_progress(
@@ -847,10 +878,10 @@ pub fn audit_folder_with_progress(
     let total_files = files.len();
     let progress_cb = progress.clone();
 
-    let broken: Vec<BrokenResourceRef> = pool.install(|| {
+    let results: Vec<FileAuditOutcome> = pool.install(|| {
         files
             .par_iter()
-            .flat_map_iter(|f| {
+            .map(|f| {
                 let r = audit_one_file(f, folder_path, assets_root, serz_path, ap_cache);
                 let done = processed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if let Some(cb) = &progress_cb
@@ -864,10 +895,37 @@ pub fn audit_folder_with_progress(
             .collect()
     });
 
-    // Aggregate duplicate references across results.
-    let mut deduped: Vec<BrokenResourceRef> = Vec::with_capacity(broken.len());
+    // Aggregate broken references
+    let mut broken_all: Vec<BrokenResourceRef> = Vec::new();
+    for r in &results {
+        broken_all.extend(r.broken.clone());
+    }
+
+    // Aggregate dependency graph
+    let mut outgoing_map: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+    let mut incoming_map: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+    for r in &results {
+        let parent_norm = std::path::PathBuf::from(
+            crate::fs_utils::normalize_path(&r.parent)
+                .to_string_lossy()
+                .to_lowercase(),
+        );
+        let set = outgoing_map.entry(parent_norm.clone()).or_default();
+        for t in &r.outgoing {
+            let tn = std::path::PathBuf::from(
+                crate::fs_utils::normalize_path(t)
+                    .to_string_lossy()
+                    .to_lowercase(),
+            );
+            set.insert(tn.clone());
+            incoming_map.entry(tn).or_default().insert(parent_norm.clone());
+        }
+    }
+
+    // Dedup broken references
+    let mut deduped: Vec<BrokenResourceRef> = Vec::with_capacity(broken_all.len());
     let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
-    for b in broken {
+    for b in broken_all {
         let key = (b.kind, b.expected_path.clone(), b.parent_file.clone());
         if let Some(&idx) = seen.get(&key) {
             deduped[idx].count += b.count;
@@ -877,8 +935,53 @@ pub fn audit_folder_with_progress(
         }
     }
 
+    // Orphan detection
+    let mut orphans: Vec<PathBuf> = Vec::new();
+    for f in &files {
+        let nf = std::path::PathBuf::from(
+            crate::fs_utils::normalize_path(f)
+                .to_string_lossy()
+                .to_lowercase(),
+        );
+        let has_incoming = incoming_map.get(&nf).map_or(false, |s| !s.is_empty());
+        if has_incoming {
+            continue;
+        }
+        let ext = f
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let rel = f.strip_prefix(folder_path).unwrap_or(f);
+        let in_secondary = rel.components().any(|c| {
+            let s = c.as_os_str().to_string_lossy().to_lowercase();
+            matches!(
+                s.as_str(),
+                "material" | "materials" | "components" | "cabs" | "cab" | "passengers" | "lights"
+            )
+        });
+        let is_orphan = match ext.as_str() {
+            "geopcdx" | "tgpcdx" => true,
+            "bin" => in_secondary,
+            _ => false,
+        };
+        if is_orphan {
+            orphans.push(nf);
+            deduped.push(BrokenResourceRef {
+                parent_file: f.clone(),
+                expected_path: f.clone(),
+                kind: AssetResourceKind::Unused,
+                count: 1,
+            });
+        }
+    }
+
     AuditReport {
         broken_references: deduped,
+        dependency_graph: DependencyGraph {
+            outgoing: outgoing_map,
+            incoming: incoming_map,
+        },
     }
 }
 
@@ -921,6 +1024,9 @@ pub fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
             Some(AssetResourceKind::Sound)
         }
         _ if f.contains("дочер") || f.contains("child") => Some(AssetResourceKind::ChildBlueprint),
+        _ if f.contains("неиспольз") || f.contains("orphan") || f.contains("unused") || f.contains("dead") => {
+            Some(AssetResourceKind::Unused)
+        }
         _ => None,
     };
     let Some(target_kind) = target_kind else {
