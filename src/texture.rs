@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 //! TgPcDx texture decoding, DDS export/import.
 
+use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -73,7 +74,6 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
         return Err("no image blocks".into());
     }
 
-    // parse first block dims/format
     let first = blocks[0];
     let fmt_str = extract_tag(first, "Format", "cDeltaString").unwrap_or_default();
     let d3d_fmt = tgpcdx_format_to_d3d(&fmt_str);
@@ -95,18 +95,10 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
     })
     .map_err(|e| e.to_string())?;
 
-    // fill data
     let mut offset = 0usize;
     for block in &blocks {
         let blob = extract_blob(block).ok_or("no blob")?;
         let bytes = hex_decode(&blob);
-        let _bw: u32 = extract_tag(block, "Width", "sUInt16")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(width);
-        let _bh: u32 = extract_tag(block, "Height", "sUInt16")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(height);
-        // compute size not strictly needed; copy bytes
         let sz = bytes.len();
         if offset + sz <= dds.data.len() {
             dds.data[offset..offset + sz].copy_from_slice(&bytes);
@@ -136,7 +128,6 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
     }
 
     let fmt_str = dds_format_to_tgpcdx(&dds);
-    // split mip data
     let all = dds.get_data(0).map_err(|e| e.to_string())?;
     let format = dds.get_format().ok_or("unsupported format")?;
     let mut mips: Vec<(u32, u32, Vec<u8>)> = Vec::new();
@@ -155,51 +146,37 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
         mh = (mh / 2).max(1);
     }
 
-    // build XML
-    let mut s = String::new();
+    // Быстрое построение XML без промежуточных коллекций строк
+    let mut s = String::with_capacity(all.len() * 3 + 4096);
     s.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
     s.push_str("<cHcTextureGroup xmlns:d=\"http://www.kuju.com/TnT/2003/Delta\" d:version=\"1.0\" d:id=\"1\">\n");
     s.push_str("\t<Texture>\n");
     s.push_str("\t\t<cHcTexture d:id=\"2\">\n");
-    s.push_str(&format!(
-        "\t\t\t<Width d:type=\"sUInt32\">{}</Width>\n",
-        width
-    ));
-    s.push_str(&format!(
-        "\t\t\t<Height d:type=\"sUInt32\">{}</Height>\n",
-        height
-    ));
+    let _ = writeln!(s, "\t\t\t<Width d:type=\"sUInt32\">{width}</Width>");
+    let _ = writeln!(s, "\t\t\t<Height d:type=\"sUInt32\">{height}</Height>");
     s.push_str("\t\t\t<Name d:type=\"cDeltaString\">texture</Name>\n");
     s.push_str("\t\t\t<Data>\n");
     s.push_str("\t\t\t\t<cHcTextureData d:id=\"3\">\n");
     s.push_str("\t\t\t\t\t<Mip>\n");
+
     for (w, h, bytes) in &mips {
         s.push_str("\t\t\t\t\t\t<cHcImageDx d:id=\"4\">\n");
-        s.push_str(&format!(
-            "\t\t\t\t\t\t\t<Format d:type=\"cDeltaString\">{}</Format>\n",
-            fmt_str
-        ));
+        let _ = writeln!(s, "\t\t\t\t\t\t\t<Format d:type=\"cDeltaString\">{fmt_str}</Format>");
         s.push_str("\t\t\t\t\t\t\t<IsSwizzled d:type=\"bool\">0</IsSwizzled>\n");
-        s.push_str(&format!(
-            "\t\t\t\t\t\t\t<Width d:type=\"sUInt16\">{}</Width>\n",
-            w
-        ));
-        s.push_str(&format!(
-            "\t\t\t\t\t\t\t<Height d:type=\"sUInt16\">{}</Height>\n",
-            h
-        ));
-        let mut chunks = Vec::new();
-        for c in bytes.chunks(8) {
-            chunks.push(c.iter().map(|b| format!("{:02X}", b)).collect::<String>());
+        let _ = writeln!(s, "\t\t\t\t\t\t\t<Width d:type=\"sUInt16\">{w}</Width>");
+        let _ = writeln!(s, "\t\t\t\t\t\t\t<Height d:type=\"sUInt16\">{h}</Height>");
+        let _ = write!(s, "\t\t\t\t\t\t\t<d:blob d:size=\"{}\">", bytes.len());
+
+        for (i, byte) in bytes.iter().enumerate() {
+            let _ = write!(s, "{:02X}", byte);
+            if (i + 1) % 8 == 0 && i + 1 < bytes.len() {
+                s.push(' ');
+            }
         }
-        s.push_str(&format!(
-            "\t\t\t\t\t\t\t<d:blob d:size=\"{}\">",
-            bytes.len()
-        ));
-        s.push_str(&chunks.join(" "));
         s.push_str("</d:blob>\n");
         s.push_str("\t\t\t\t\t\t</cHcImageDx>\n");
     }
+
     s.push_str("\t\t\t\t\t</Mip>\n");
     s.push_str("\t\t\t\t</cHcTextureData>\n");
     s.push_str("\t\t\t</Data>\n");
@@ -207,10 +184,10 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
     s.push_str("\t</Texture>\n");
     s.push_str("</cHcTextureGroup>\n");
 
-    // write XML to temp, convert via serz
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let xml_path = dir.path().join("texture.xml");
     fs::write(&xml_path, s).map_err(|e| e.to_string())?;
+
     let serz = find_serz()?;
     let status = Command::new(&serz)
         .arg(&xml_path)
@@ -224,7 +201,7 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
     if bytes.is_empty() {
         return Err("empty output".into());
     }
-    // atomic staging to final output
+
     let tmp = output.with_extension("tmp");
     fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
@@ -236,13 +213,18 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
     Ok(())
 }
 
-// ---------- helpers ----------
-
 fn find_serz() -> Result<PathBuf, String> {
+    let saved_game_path = crate::settings::load_last_game_path();
+    let rw = PathBuf::from(saved_game_path.trim().trim_matches('"').trim_matches('\''));
+    let serz_preferred = crate::assets::preferred_serz_path(&rw);
+    if serz_preferred.is_file() {
+        return Ok(serz_preferred);
+    }
+
     let candidates = [
-        "X:\\SteamLibrary\\steamapps\\common\\RailWorks\\serz.exe",
         "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RailWorks\\serz.exe",
         "C:\\Program Files\\Steam\\steamapps\\common\\RailWorks\\serz.exe",
+        "D:\\SteamLibrary\\steamapps\\common\\RailWorks\\serz.exe",
     ];
     for c in candidates {
         let p = PathBuf::from(c);
@@ -251,16 +233,6 @@ fn find_serz() -> Result<PathBuf, String> {
         }
     }
     if let Ok(out) = Command::new("where").arg("serz.exe").output()
-        && out.status.success()
-    {
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            let p = PathBuf::from(line.trim());
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-    if let Ok(out) = Command::new("where").arg("serz64.exe").output()
         && out.status.success()
     {
         for line in String::from_utf8_lossy(&out.stdout).lines() {
@@ -291,7 +263,6 @@ fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
 }
 
 fn first_image_block(xml: &str) -> Option<&str> {
-    // find first <cHcImageDx ...>...</cHcImageDx>
     let start = xml.find("<cHcImageDx")?;
     let end_marker = "</cHcImageDx>";
     let end = xml[start..].find(end_marker)? + start + end_marker.len();
@@ -326,7 +297,6 @@ fn extract_blob(block: &str) -> Option<String> {
     let marker = "<d:blob d:size=\"";
     let start = block.find(marker)?;
     let rest = &block[start..];
-    // find > after size
     let gt = rest.find('>')?;
     let content_start = start + gt + 1;
     let end_marker = "</d:blob>";
@@ -334,16 +304,22 @@ fn extract_blob(block: &str) -> Option<String> {
     Some(block[content_start..end].to_string())
 }
 
+/// Потоковое прямое декодирование Hex без промежуточных строк и подстрок.
 fn hex_decode(s: &str) -> Vec<u8> {
-    let cleaned: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    let mut out = Vec::with_capacity(cleaned.len() / 2);
-    let bytes = cleaned.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if let Ok(b) = u8::from_str_radix(&cleaned[i..i + 2], 16) {
-            out.push(b);
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let mut hi: Option<u8> = None;
+    for &b in s.as_bytes() {
+        let val = match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            b'A'..=b'F' => b - b'A' + 10,
+            _ => continue,
+        };
+        if let Some(h) = hi.take() {
+            out.push((h << 4) | val);
+        } else {
+            hi = Some(val);
         }
-        i += 2;
     }
     out
 }
@@ -363,7 +339,7 @@ fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
             return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".into();
         }
         if s.contains("DXT3") {
-            return "HC_IMAGE_FORMAT_COMPRESSED".into(); // best effort
+            return "HC_IMAGE_FORMAT_COMPRESSED".into();
         }
     }
     if let Some(d3d) = dds.get_d3d_format() {
@@ -378,10 +354,7 @@ fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
         if s.contains("BC3") {
             return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".into();
         }
-        if s.contains("BC2") {
-            return "HC_IMAGE_FORMAT_COMPRESSED".into();
-        }
-        if s.contains("BC1") {
+        if s.contains("BC2") | s.contains("BC1") {
             return "HC_IMAGE_FORMAT_COMPRESSED".into();
         }
     }
