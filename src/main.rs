@@ -76,7 +76,11 @@ pub(crate) fn map_broken_resources_to_ui(
     let rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = items
         .iter()
         .map(|b| {
-            let kind = b.kind.label();
+            let kind = if b.count > 1 {
+                format!("{} (×{})", b.kind.label(), b.count)
+            } else {
+                b.kind.label().to_string()
+            };
             let mut item0 = slint::StandardListViewItem::default();
             item0.text = kind.into();
             let mut item1 = slint::StandardListViewItem::default();

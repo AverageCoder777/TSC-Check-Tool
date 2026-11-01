@@ -1,11 +1,11 @@
 use rayon::prelude::*;
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AssetResourceKind {
     Geometry,
     Texture,
@@ -28,11 +28,12 @@ impl AssetResourceKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BrokenResourceRef {
     pub parent_file: PathBuf,
     pub expected_path: PathBuf,
     pub kind: AssetResourceKind,
+    pub count: usize,
 }
 
 #[derive(Debug, Default)]
@@ -712,17 +713,19 @@ fn audit_one_file(
     serz_path: &Path,
     ap_cache: &ApArchiveCache,
 ) -> Vec<BrokenResourceRef> {
-    let mut out = Vec::new();
     let xml = match crate::assets::read_serz_xml(serz_path, file) {
         Ok(x) => x,
         Err(_) => match fs::read(file) {
             Ok(bytes) if bytes.starts_with(b"<?xm") => String::from_utf8_lossy(&bytes).to_string(),
-            _ => return out,
+            _ => return Vec::new(),
         },
     };
 
+    let mut out: Vec<BrokenResourceRef> = Vec::new();
+    let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
     let parent = file.parent().unwrap_or(folder);
     let product_root = product_root_for(file, assets_root);
+    let parent_file = file.to_path_buf();
 
     let ext = file
         .extension()
@@ -740,11 +743,18 @@ fn audit_one_file(
             let exists = loose_exists(&cands)
                 || ap_exists(&raw, parent, &product_root, assets_root, ap_cache, kind);
             if !exists {
-                out.push(BrokenResourceRef {
-                    parent_file: file.to_path_buf(),
-                    expected_path: expected,
-                    kind,
-                });
+                let key = (kind, expected.clone(), parent_file.clone());
+                if let Some(&idx) = seen.get(&key) {
+                    out[idx].count += 1;
+                } else {
+                    seen.insert(key, out.len());
+                    out.push(BrokenResourceRef {
+                        parent_file: parent_file.clone(),
+                        expected_path: expected,
+                        kind,
+                        count: 1,
+                    });
+                }
             }
         }
     } else if ext == "geopcdx" {
@@ -767,11 +777,18 @@ fn audit_one_file(
                     AssetResourceKind::Texture,
                 );
             if !exists {
-                out.push(BrokenResourceRef {
-                    parent_file: file.to_path_buf(),
-                    expected_path: expected,
-                    kind: AssetResourceKind::Texture,
-                });
+                let key = (AssetResourceKind::Texture, expected.clone(), parent_file.clone());
+                if let Some(&idx) = seen.get(&key) {
+                    out[idx].count += 1;
+                } else {
+                    seen.insert(key, out.len());
+                    out.push(BrokenResourceRef {
+                        parent_file: parent_file.clone(),
+                        expected_path: expected,
+                        kind: AssetResourceKind::Texture,
+                        count: 1,
+                    });
+                }
             }
         }
     }
@@ -851,8 +868,21 @@ pub fn audit_folder_with_progress(
             .collect()
     });
 
+    // Aggregate duplicate references across results.
+    let mut deduped: Vec<BrokenResourceRef> = Vec::with_capacity(broken.len());
+    let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
+    for b in broken {
+        let key = (b.kind, b.expected_path.clone(), b.parent_file.clone());
+        if let Some(&idx) = seen.get(&key) {
+            deduped[idx].count += b.count;
+        } else {
+            seen.insert(key, deduped.len());
+            deduped.push(b);
+        }
+    }
+
     AuditReport {
-        broken_references: broken,
+        broken_references: deduped,
     }
 }
 
