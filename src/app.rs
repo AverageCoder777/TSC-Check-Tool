@@ -186,7 +186,14 @@ impl Default for CheckerApp {
     }
 }
 
+pub(crate) fn clean_rw_path(rw_path: &str) -> PathBuf {
+    PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\''))
+}
+
 impl CheckerApp {
+    pub(crate) fn clean_rw_path(&self) -> PathBuf {
+        clean_rw_path(&self.rw_path)
+    }
     pub(crate) fn open_asset_inventory(&mut self) {
         let Some(result) = self.result.as_ref() else {
             return;
@@ -214,8 +221,8 @@ impl CheckerApp {
             return;
         }
         let inventory = result.asset_inventory.clone();
-        let assets_path = PathBuf::from(self.rw_path.trim()).join("Assets");
-        let serz_path = crate::assets::preferred_serz_path(Path::new(self.rw_path.trim()));
+        let assets_path = self.clean_rw_path().join("Assets");
+        let serz_path = crate::assets::preferred_serz_path(&self.clean_rw_path());
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
         self.inventory_scan = Some(rx);
@@ -250,7 +257,7 @@ impl CheckerApp {
         else {
             return;
         };
-        let rw_path = PathBuf::from(self.rw_path.trim());
+        let rw_path = self.clean_rw_path();
         let assets_path = rw_path.join("Assets");
         let serz_path = crate::assets::preferred_serz_path(&rw_path);
         let (tx, rx) = mpsc::channel();
@@ -367,7 +374,7 @@ impl CheckerApp {
         if self.route_scan.is_some() {
             return;
         }
-        let root = PathBuf::from(self.rw_path.trim());
+        let root = self.clean_rw_path();
         let (tx, rx) = mpsc::channel();
         self.route_scan = Some(rx);
         self.routes.clear();
@@ -408,7 +415,7 @@ impl CheckerApp {
         else {
             return;
         };
-        let rw_path = PathBuf::from(self.rw_path.trim());
+        let rw_path = self.clean_rw_path();
         let assets_path = rw_path.join("Assets");
         let serz_path = crate::assets::preferred_serz_path(&rw_path);
         let ignore_scenarios = self.ignore_scenarios;
@@ -460,7 +467,7 @@ impl CheckerApp {
         }
         self.scenarios = crate::scenario::read_route_scenarios(
             &route.path,
-            &crate::assets::preferred_serz_path(Path::new(self.rw_path.trim())),
+            &crate::assets::preferred_serz_path(&self.clean_rw_path()),
         );
         self.scenarios_route = Some(route.id.clone());
         self.selected_scenario = None;

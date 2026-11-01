@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{AuditorState, FolderAuditorWindow};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct AuditorController {
     pub window: FolderAuditorWindow,
@@ -56,14 +56,14 @@ impl AuditorController {
         }
         let rw_path = crate::app_state()
             .lock()
-            .map(|a| a.rw_path.clone())
+            .map(|a| a.clean_rw_path())
             .unwrap_or_default();
         let max_threads = crate::app_state()
             .lock()
             .map(|a| a.serz_process_limit)
             .unwrap_or(8)
             .max(1);
-        let serz_path = crate::assets::preferred_serz_path(Path::new(&rw_path));
+        let serz_path = crate::assets::preferred_serz_path(&rw_path);
         let assets_root = path
             .ancestors()
             .find(|p| {
@@ -276,11 +276,11 @@ impl AuditorController {
         };
         let rw_path = crate::app_state()
             .lock()
-            .map(|a| a.rw_path.clone())
+            .map(|a| a.clean_rw_path())
             .unwrap_or_default();
         let serz_path = crate::assets::find_serz_path(&asset_path)
             .or_else(|| {
-                let p = crate::assets::preferred_serz_path(Path::new(&rw_path));
+                let p = crate::assets::preferred_serz_path(&rw_path);
                 if p.is_file() { Some(p) } else { None }
             })
             .unwrap_or_else(|| PathBuf::from("serz.exe"));

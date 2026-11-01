@@ -74,7 +74,7 @@ impl ScenarioController {
                 if needs_load {
                     let scenario_path = app.scenarios[scen_idx].path.clone();
                     let serz_path =
-                        crate::assets::preferred_serz_path(std::path::Path::new(app.rw_path.trim()));
+                        crate::assets::preferred_serz_path(&app.clean_rw_path());
                     let consists = crate::scenario::load_consists(&scenario_path, &serz_path);
                     app.scenarios[scen_idx].consists = Some(consists);
                 }
@@ -124,9 +124,9 @@ impl ScenarioController {
                 (None, None)
             };
 
-            let serz_path = crate::assets::preferred_serz_path(std::path::Path::new(rw_path.trim()));
+            let serz_path = crate::assets::preferred_serz_path(&crate::app::clean_rw_path(&rw_path));
             let weather_name = crate::scenario::weather_display_name(
-                std::path::Path::new(rw_path.trim()),
+                &crate::app::clean_rw_path(&rw_path),
                 std::path::Path::new(&route_path),
                 &serz_path,
                 &scenario.weather,
@@ -416,7 +416,7 @@ impl ScenarioController {
         self.window.on_vehicle_selected(move |idx| {
         if let Ok(mut app) = app.lock() {
             app.selected_vehicle = Some(idx as usize);
-            let rw_path = PathBuf::from(app.rw_path.trim());
+            let rw_path = app.clean_rw_path();
             let route_path = app
                 .selected_route
                 .and_then(|i| app.routes.get(i))
@@ -524,7 +524,7 @@ impl ScenarioController {
                 .map(|r| r.path.clone())
                 .unwrap_or_default();
             let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
-                Path::new(rw_path.trim()),
+                &crate::app::clean_rw_path(&rw_path),
                 Path::new(&route_path),
                 &vehicle.blueprint,
                 &vehicle.provider,
@@ -577,7 +577,7 @@ impl ScenarioController {
                 .map(|r| r.path.clone())
                 .unwrap_or_default();
             let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
-                Path::new(rw_path.trim()),
+                &crate::app::clean_rw_path(&rw_path),
                 Path::new(&route_path),
                 &vehicle.blueprint,
                 &vehicle.provider,

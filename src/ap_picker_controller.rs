@@ -123,7 +123,7 @@ impl ApPickerController {
 
                 std::thread::spawn(move || {
                     let assets_path =
-                        PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\''))
+                        crate::app::clean_rw_path(&rw_path)
                             .join("Assets");
                     let target_file_path =
                         resolve_extraction_path(&assets_path, &archive_path, &entry);

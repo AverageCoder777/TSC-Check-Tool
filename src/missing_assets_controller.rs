@@ -2,7 +2,6 @@ use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::MissingAssetsWindow;
@@ -90,7 +89,7 @@ impl MissingAssetsController {
                     if let Some(missing) = missing
                         && let Some(repair) = missing.suggested_repair.clone()
                     {
-                        let assets_path = PathBuf::from(app.rw_path.trim()).join("Assets");
+                        let assets_path = app.clean_rw_path().join("Assets");
                         let replacement = assets_path.join(repair.replace('/', "\\"));
                         let replacement_relative = repair;
                         app.start_asset_replacement(
@@ -109,7 +108,7 @@ impl MissingAssetsController {
             let app = self.app.clone();
             self.window.on_repair_all_corrupted(move || {
                 if let Ok(mut app) = app.lock() {
-                    let assets_path = PathBuf::from(app.rw_path.trim()).join("Assets");
+                    let assets_path = app.clean_rw_path().join("Assets");
                     let queue: VecDeque<_> = match app.result.as_ref() {
                         Some(res) => res
                             .missing_assets
@@ -211,7 +210,7 @@ impl MissingAssetsController {
                     }
                     return;
                 }
-                let assets_path = PathBuf::from(rw_path.trim()).join("Assets");
+                let assets_path = crate::app::clean_rw_path(&rw_path).join("Assets");
                 let start_dir = crate::inventory_ui::existing_directory_upwards(
                     &crate::inventory_ui::asset_directory(&assets_path, &missing.path),
                 )

@@ -156,7 +156,7 @@ impl InventoryController {
                 if rw_path.is_empty() {
                     return;
                 }
-                let full = PathBuf::from(rw_path.trim())
+                let full = crate::app::clean_rw_path(&rw_path)
                     .join("Assets")
                     .join(path_text.replace('/', "\\"));
                 let target = if full.exists() {
@@ -201,7 +201,7 @@ impl InventoryController {
                 if rw_path.is_empty() {
                     return;
                 }
-                let full = PathBuf::from(rw_path.trim())
+                let full = crate::app::clean_rw_path(&rw_path)
                     .join("Assets")
                     .join(path_text.replace('/', "\\"));
                 if full.is_file() {
@@ -246,7 +246,7 @@ impl InventoryController {
             } else {
                 return;
             };
-            if rw_path.trim().is_empty() {
+            if crate::app::clean_rw_path(&rw_path).as_os_str().is_empty() {
                 return;
             }
             let asset = if let Ok(app) = app.lock() {
@@ -268,7 +268,7 @@ impl InventoryController {
                 return;
             }
 
-            let assets_dir = PathBuf::from(rw_path.trim()).join("Assets");
+            let assets_dir = crate::app::clean_rw_path(&rw_path).join("Assets");
             let mut dialog = rfd::FileDialog::new()
                 .set_title("Заменить в маршруте...")
                 .set_directory(&assets_dir);
