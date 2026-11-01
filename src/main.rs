@@ -30,6 +30,10 @@ pub(crate) fn clear_route_icon_cache() {
 
 mod analysis_cache;
 mod ap_picker_controller;
+mod archive;
+mod diagnostics;
+mod fs_utils;
+mod xml_scan;
 mod app;
 mod assets;
 mod auditor;
@@ -486,6 +490,12 @@ fn main() {
 
 #[cfg(test)]
 pub(crate) use assets::*;
+#[cfg(test)]
+pub(crate) use archive::*;
+#[cfg(test)]
+pub(crate) use fs_utils::*;
+#[cfg(test)]
+pub(crate) use xml_scan::*;
 #[cfg(test)]
 pub(crate) use domain::*;
 #[cfg(test)]

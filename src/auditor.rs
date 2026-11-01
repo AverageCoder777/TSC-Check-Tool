@@ -1,9 +1,9 @@
 use rayon::prelude::*;
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetResourceKind {
@@ -45,113 +45,8 @@ fn normalize_ap_path(value: &str) -> String {
     value.replace('/', "\\").trim().to_lowercase()
 }
 
-#[derive(Default)]
-pub struct ApArchiveCache {
-    pub inner: Mutex<HashMap<PathBuf, HashSet<String>>>,
-}
-
-impl ApArchiveCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn ensure_indexed(&self, product_dir: &Path) {
-        let norm_dir = normalize_path(product_dir);
-        {
-            let guard = match self.inner.lock() {
-                Ok(guard) => guard,
-                Err(_) => return,
-            };
-            if guard.contains_key(&norm_dir) {
-                return;
-            }
-        }
-
-        let mut files = HashSet::new();
-        if let Ok(entries) = fs::read_dir(product_dir) {
-            for entry in entries.flatten() {
-                let archive_path = entry.path();
-                if !archive_path.is_file() {
-                    continue;
-                }
-                if !archive_path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
-                {
-                    continue;
-                }
-                let archive_file = match fs::File::open(&archive_path) {
-                    Ok(file) => file,
-                    Err(_) => continue,
-                };
-                let mut archive = match zip::ZipArchive::new(archive_file) {
-                    Ok(archive) => archive,
-                    Err(_) => continue,
-                };
-                for index in 0..archive.len() {
-                    let entry = match archive.by_index(index) {
-                        Ok(entry) => entry,
-                        Err(_) => continue,
-                    };
-                    if entry.is_dir() {
-                        continue;
-                    }
-                    let raw_name = match entry.name() {
-                        Ok(name) => name,
-                        Err(_) => continue,
-                    };
-                    let name = raw_name.replace('/', "\\").trim().to_lowercase();
-                    if name.is_empty() {
-                        continue;
-                    }
-
-                    files.insert(name.clone());
-                    files.insert(strip_shader_prefix(&name));
-
-                    let parts: Vec<&str> =
-                        name.split('\\').filter(|part| !part.is_empty()).collect();
-                    if parts.len() >= 3 {
-                        let p2 = parts[2..].join("\\");
-                        let p1 = parts[1..].join("\\");
-                        files.insert(p2.clone());
-                        files.insert(strip_shader_prefix(&p2));
-                        files.insert(p1.clone());
-                        files.insert(strip_shader_prefix(&p1));
-                    } else if parts.len() == 2 {
-                        let p1 = parts[1..].join("\\");
-                        files.insert(p1.clone());
-                        files.insert(strip_shader_prefix(&p1));
-                    }
-                }
-            }
-        }
-
-        if let Ok(mut guard) = self.inner.lock() {
-            guard.entry(norm_dir).or_insert(files);
-        }
-    }
-
-    pub fn lookup(&self, product_dir: &Path, relative: &str) -> bool {
-        self.ensure_indexed(product_dir);
-        let guard = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(_) => return false,
-        };
-
-        let norm_dir = normalize_path(product_dir);
-        let Some(set) = guard.get(&norm_dir) else {
-            return false;
-        };
-
-        let target = normalize_ap_path(relative);
-        let target_stripped = normalize_ap_path(&strip_shader_prefix(relative));
-
-        set.contains(&target)
-            || set.contains(&target_stripped)
-            || set.contains(target.trim_start_matches('\\'))
-            || set.contains(target_stripped.trim_start_matches('\\'))
-    }
-}
+pub use crate::archive::ApArchiveCache;
+pub use crate::fs_utils::normalize_path;
 
 // Статические прекомпилированные регулярные выражения
 macro_rules! static_tag_regex {
@@ -220,14 +115,7 @@ fn is_blacklisted_sound_tag(tag: &str) -> bool {
 }
 
 pub fn unescape_xml_entities(s: &str) -> String {
-    if !s.contains('&') {
-        return s.to_string();
-    }
-    s.replace("&apos;", "'")
-        .replace("&quot;", "\"")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    crate::xml_scan::unescape_xml_entities(s)
 }
 
 pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResourceKind, String)> {
@@ -358,16 +246,7 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
     out
 }
 
-pub fn strip_shader_prefix(raw: &str) -> String {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"^\[[0-9a-zA-Z_\-]+\]").unwrap());
-    if let Some(idx) = raw.rfind(['\\', '/']) {
-        let (head, tail) = raw.split_at(idx + 1);
-        format!("{head}{}", re.replace(tail, ""))
-    } else {
-        re.replace(raw, "").to_string()
-    }
-}
+pub use crate::fs_utils::strip_shader_prefix;
 
 #[inline]
 fn is_valid_texture_path(raw: &str) -> bool {
@@ -493,23 +372,6 @@ pub fn normalize_texture_reference(raw: &str) -> String {
     }
 }
 
-pub fn normalize_path(path: &Path) -> PathBuf {
-    let mut out = Vec::new();
-    for comp in path.components() {
-        match comp {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if let Some(std::path::Component::Normal(_)) = out.last() {
-                    out.pop();
-                } else {
-                    out.push(comp);
-                }
-            }
-            _ => out.push(comp),
-        }
-    }
-    out.iter().collect()
-}
 
 fn product_root_for(file: &Path, assets_root: &Path) -> PathBuf {
     if let Ok(rel) = file.strip_prefix(assets_root) {

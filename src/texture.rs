@@ -214,13 +214,10 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
 }
 
 fn find_serz() -> Result<PathBuf, String> {
-    let saved_game_path = crate::settings::load_last_game_path();
-    let rw = PathBuf::from(saved_game_path.trim().trim_matches('"').trim_matches('\''));
-    let serz_preferred = crate::assets::preferred_serz_path(&rw);
-    if serz_preferred.is_file() {
-        return Ok(serz_preferred);
+    let rw = crate::fs_utils::clean_rw_path(&crate::settings::load_last_game_path());
+    if let Some(path) = crate::assets::find_serz_path(&rw) {
+        return Ok(path);
     }
-
     let candidates = [
         "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RailWorks\\serz.exe",
         "C:\\Program Files\\Steam\\steamapps\\common\\RailWorks\\serz.exe",

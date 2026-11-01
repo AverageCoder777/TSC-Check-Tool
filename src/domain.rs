@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,48 +182,10 @@ impl RouteFile {
                 format!("Не удалось создать папку {}: {error}", parent.display())
             })?;
         }
-
-        let mut output =
-            BufWriter::new(fs::File::create(&target).map_err(|error| {
-                format!("Не удалось создать файл {}: {error}", target.display())
-            })?);
-
-        ZIP_ARCHIVE_CACHE.with(|cache| -> Result<(), String> {
-            let mut cache = cache.borrow_mut();
-            if !cache.contains_key(archive) {
-                let file = fs::File::open(archive).map_err(|error| {
-                    format!("Не удалось открыть архив {}: {error}", archive.display())
-                })?;
-                let zip = zip::ZipArchive::new(file).map_err(|error| {
-                    format!("Не удалось прочитать архив {}: {error}", archive.display())
-                })?;
-                cache.insert(archive.to_path_buf(), zip);
-            }
-            let zip = cache.get_mut(archive).unwrap();
-
-            let alt1 = name.replace('/', "\\");
-            let alt2 = name.replace('\\', "/");
-            let entry_idx = zip
-                .index_for_name(name)
-                .or_else(|| zip.index_for_name(&alt1))
-                .or_else(|| zip.index_for_name(&alt2))
-                .ok_or_else(|| format!("Не удалось найти {name} в архиве {}", archive.display()))?;
-
-            let mut member = zip
-                .by_index(entry_idx)
-                .map_err(|error| format!("Не удалось прочитать {name} из архива: {error}"))?;
-
-            std::io::copy(&mut member, &mut output)
-                .map_err(|error| format!("Не удалось распаковать {name}: {error}"))?;
-
-            Ok(())
-        })?;
-
-        output
-            .flush()
-            .map_err(|error| format!("Не удалось записать {name}: {error}"))?;
+        crate::archive::extract_archive_member(archive, name, &target)?;
 
         Ok(target)
+
     }
 
     /// Расширение файла без аллокации строки в куче.

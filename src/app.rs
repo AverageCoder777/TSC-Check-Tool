@@ -187,7 +187,7 @@ impl Default for CheckerApp {
 }
 
 pub(crate) fn clean_rw_path(rw_path: &str) -> PathBuf {
-    PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\''))
+    crate::fs_utils::clean_rw_path(rw_path)
 }
 
 impl CheckerApp {
