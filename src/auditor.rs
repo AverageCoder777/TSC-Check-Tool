@@ -76,6 +76,8 @@ macro_rules! static_tag_regex {
 static_tag_regex!(re_geometry_id, "GeometryID");
 static_tag_regex!(re_shadow_geometry_id, "ShadowGeometryID");
 static_tag_regex!(re_collision_geometry_id, "CollisionGeometryID");
+static_tag_regex!(re_inner_geometry_id, "InnerGeometryID");
+static_tag_regex!(re_outer_geometry_id, "OuterGeometryID");
 static_tag_regex!(re_script_component, "ScriptComponent");
 static_tag_regex!(re_path, "Path");
 static_tag_regex!(re_blueprint_lib, "iBlueprintLibrary-cAbsoluteBlueprintID");
@@ -156,7 +158,13 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
     let mut out = Vec::new();
 
     // Извлечение геометрий
-    for re in [re_geometry_id(), re_shadow_geometry_id(), re_collision_geometry_id()] {
+    for re in [
+        re_geometry_id(),
+        re_shadow_geometry_id(),
+        re_collision_geometry_id(),
+        re_inner_geometry_id(),
+        re_outer_geometry_id(),
+    ] {
         for value in re.captures_iter(xml).filter_map(|c| c.get(1)) {
             let raw = unescape_xml_entities(value.as_str().trim());
             if !raw.is_empty() && !is_numeric_token(&raw) {
