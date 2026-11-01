@@ -175,9 +175,11 @@ pub(crate) fn validate_xml_document(xml: &str) -> Result<(), String> {
 
 
 pub fn first_blueprint_tag(xml: &str) -> Option<String> {
-    let regex = Regex::new(r"<(c[A-Za-z0-9]+Blueprint)").ok()?;
-    regex
-        .captures(xml)
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    let re = REGEX.get_or_init(|| {
+        Regex::new(r"<(c[A-Za-z0-9]+Blueprint)").expect("regex must be valid")
+    });
+    re.captures(xml)
         .and_then(|captures| captures.get(1))
         .map(|value| value.as_str().to_owned())
 }
