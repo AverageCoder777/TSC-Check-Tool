@@ -132,6 +132,22 @@ fn is_blacklisted_sound_tag(tag: &str) -> bool {
     ) || lower.contains("editorrenderdata")
 }
 
+pub fn strip_lod_and_shader_prefix(raw: &str) -> String {
+    if let Some(pos) = raw.rfind(['\\', '/']) {
+        let (dir, file) = raw.split_at(pos + 1);
+        if file.starts_with('[') {
+            if let Some(end) = file.find(']') {
+                return format!("{}{}", dir, &file[end + 1..]);
+            }
+        }
+    } else if raw.starts_with('[') {
+        if let Some(end) = raw.find(']') {
+            return raw[end + 1..].to_string();
+        }
+    }
+    raw.to_string()
+}
+
 pub fn unescape_xml_entities(s: &str) -> String {
     crate::xml_scan::unescape_xml_entities(s)
 }
@@ -477,82 +493,96 @@ fn ensure_extension(raw: &str, kind: AssetResourceKind) -> String {
 }
 
 fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
-    let cleaned = strip_shader_prefix(raw).replace('/', "\\");
-    let lower_cleaned = cleaned.to_lowercase();
-    if lower_cleaned.ends_with(".xsec") {
-        return vec![ensure_extension(&cleaned, kind)];
+    let raw_norm = raw.replace('/', "\\");
+    let stripped = strip_lod_and_shader_prefix(&raw_norm);
+
+    let mut bases = vec![stripped.clone()];
+    if stripped != raw_norm {
+        bases.push(raw_norm.clone());
     }
-    match kind {
-        AssetResourceKind::Script => {
-            let lower = cleaned.to_lowercase();
-            let stripped =
-                if lower.ends_with(".lua") || lower.ends_with(".out") || lower.ends_with(".outz") {
+
+    let mut out = Vec::new();
+    for base in bases {
+        let cleaned = base.replace('/', "\\");
+        match kind {
+            AssetResourceKind::Script => {
+                let lower = cleaned.to_lowercase();
+                let stripped = if lower.ends_with(".lua")
+                    || lower.ends_with(".out")
+                    || lower.ends_with(".outz")
+                {
                     match cleaned.rfind('.') {
                         Some(i) => cleaned[..i].to_string(),
                         None => cleaned.clone(),
                     }
                 } else {
-                    cleaned
+                    cleaned.clone()
                 };
-            vec![format!("{stripped}.out"), format!("{stripped}.lua")]
-        }
-        AssetResourceKind::Texture => {
-            let with_ext = ensure_extension(&cleaned, kind);
-            let mut v = vec![with_ext.clone()];
-            if !with_ext.to_lowercase().starts_with("textures\\") {
-                v.push(format!("textures\\{with_ext}"));
+                out.push(format!("{stripped}.out"));
+                out.push(format!("{stripped}.lua"));
             }
-            v
-        }
-        AssetResourceKind::Animation => {
-            let lower = cleaned.to_lowercase();
-            let stripped = if lower.ends_with(".ia") || lower.ends_with(".ban") {
-                match cleaned.rfind('.') {
-                    Some(i) => cleaned[..i].to_string(),
-                    None => cleaned.clone(),
+            AssetResourceKind::Texture => {
+                let with_ext = ensure_extension(&cleaned, kind);
+                let mut v = vec![with_ext.clone()];
+                if !with_ext.to_lowercase().starts_with("textures\\") {
+                    v.push(format!("textures\\{with_ext}"));
                 }
-            } else {
-                cleaned.clone()
-            };
-            vec![
-                format!("{stripped}.ban"),
-                format!("{stripped}.ia"),
-                cleaned,
-            ]
-        }
-        AssetResourceKind::ChildBlueprint => {
-            let lower = cleaned.to_lowercase();
-            if lower.ends_with(".bin")
-                || lower.ends_with(".xml")
-                || lower.ends_with(".geopcdx")
-                || lower.ends_with(".tgpcdx")
-            {
-                vec![cleaned]
-            } else {
-                vec![format!("{cleaned}.bin"), format!("{cleaned}.xml")]
+                out.extend(v);
+            }
+            AssetResourceKind::Animation => {
+                let lower = cleaned.to_lowercase();
+                let stripped = if lower.ends_with(".ia") || lower.ends_with(".ban") {
+                    match cleaned.rfind('.') {
+                        Some(i) => cleaned[..i].to_string(),
+                        None => cleaned.clone(),
+                    }
+                } else {
+                    cleaned.clone()
+                };
+                out.push(format!("{stripped}.ban"));
+                out.push(format!("{stripped}.ia"));
+                out.push(cleaned.clone());
+            }
+            AssetResourceKind::ChildBlueprint => {
+                let lower = cleaned.to_lowercase();
+                if lower.ends_with(".bin")
+                    || lower.ends_with(".xml")
+                    || lower.ends_with(".geopcdx")
+                    || lower.ends_with(".tgpcdx")
+                    || lower.ends_with(".xsec")
+                {
+                    out.push(cleaned.clone());
+                } else {
+                    out.push(format!("{cleaned}.bin"));
+                    out.push(format!("{cleaned}.xml"));
+                }
+            }
+            AssetResourceKind::Sound => {
+                let lower = cleaned.to_lowercase();
+                if lower.ends_with(".proxybin")
+                    || lower.ends_with(".proxyxml")
+                    || lower.ends_with(".bin")
+                    || lower.ends_with(".xml")
+                    || lower.ends_with(".dav")
+                {
+                    out.push(cleaned.clone());
+                } else {
+                    out.push(format!("{cleaned}.proxybin"));
+                    out.push(format!("{cleaned}.proxyxml"));
+                    out.push(format!("{cleaned}.bin"));
+                    out.push(format!("{cleaned}.xml"));
+                    out.push(format!("{cleaned}.dav"));
+                }
+            }
+            _ => {
+                out.push(ensure_extension(&cleaned, kind));
             }
         }
-        AssetResourceKind::Sound => {
-            let lower = cleaned.to_lowercase();
-            if lower.ends_with(".proxybin")
-                || lower.ends_with(".proxyxml")
-                || lower.ends_with(".bin")
-                || lower.ends_with(".xml")
-                || lower.ends_with(".dav")
-            {
-                vec![cleaned]
-            } else {
-                vec![
-                    format!("{cleaned}.proxybin"),
-                    format!("{cleaned}.proxyxml"),
-                    format!("{cleaned}.bin"),
-                    format!("{cleaned}.xml"),
-                    format!("{cleaned}.dav"),
-                ]
-            }
-        }
-        _ => vec![ensure_extension(&cleaned, kind)],
     }
+
+    let mut seen = HashSet::new();
+    out.retain(|s| seen.insert(s.clone()));
+    out
 }
 
 fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) -> bool {
