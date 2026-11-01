@@ -40,6 +40,7 @@ pub struct AuditReport {
     pub broken_references: Vec<BrokenResourceRef>,
 }
 
+#[inline]
 fn normalize_ap_path(value: &str) -> String {
     value.replace('/', "\\").trim().to_lowercase()
 }
@@ -55,12 +56,13 @@ impl ApArchiveCache {
     }
 
     pub fn ensure_indexed(&self, product_dir: &Path) {
+        let norm_dir = normalize_path(product_dir);
         {
             let guard = match self.inner.lock() {
                 Ok(guard) => guard,
                 Err(_) => return,
             };
-            if guard.contains_key(product_dir) {
+            if guard.contains_key(&norm_dir) {
                 return;
             }
         }
@@ -74,7 +76,7 @@ impl ApArchiveCache {
                 }
                 if !archive_path
                     .extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("ap"))
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
                 {
                     continue;
                 }
@@ -95,28 +97,37 @@ impl ApArchiveCache {
                         continue;
                     }
                     let raw_name = match entry.name() {
-                        Ok(name) => name.to_string(),
+                        Ok(name) => name,
                         Err(_) => continue,
                     };
                     let name = raw_name.replace('/', "\\").trim().to_lowercase();
                     if name.is_empty() {
                         continue;
                     }
+
                     files.insert(name.clone());
+                    files.insert(strip_shader_prefix(&name));
+
                     let parts: Vec<&str> =
                         name.split('\\').filter(|part| !part.is_empty()).collect();
                     if parts.len() >= 3 {
-                        files.insert(parts[2..].join("\\"));
-                        files.insert(parts[1..].join("\\"));
+                        let p2 = parts[2..].join("\\");
+                        let p1 = parts[1..].join("\\");
+                        files.insert(p2.clone());
+                        files.insert(strip_shader_prefix(&p2));
+                        files.insert(p1.clone());
+                        files.insert(strip_shader_prefix(&p1));
                     } else if parts.len() == 2 {
-                        files.insert(parts[1..].join("\\"));
+                        let p1 = parts[1..].join("\\");
+                        files.insert(p1.clone());
+                        files.insert(strip_shader_prefix(&p1));
                     }
                 }
             }
         }
 
         if let Ok(mut guard) = self.inner.lock() {
-            guard.entry(product_dir.to_path_buf()).or_insert(files);
+            guard.entry(norm_dir).or_insert(files);
         }
     }
 
@@ -126,45 +137,57 @@ impl ApArchiveCache {
             Ok(guard) => guard,
             Err(_) => return false,
         };
-        let target = normalize_ap_path(relative);
 
-        for (key, set) in guard.iter() {
-            if !key
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&product_dir.to_string_lossy())
-            {
-                continue;
-            }
-            if set.iter().any(|member| normalize_ap_path(member) == target) {
-                return true;
-            }
-        }
-        false
+        let norm_dir = normalize_path(product_dir);
+        let Some(set) = guard.get(&norm_dir) else {
+            return false;
+        };
+
+        let target = normalize_ap_path(relative);
+        let target_stripped = normalize_ap_path(&strip_shader_prefix(relative));
+
+        set.contains(&target)
+            || set.contains(&target_stripped)
+            || set.contains(target.trim_start_matches('\\'))
+            || set.contains(target_stripped.trim_start_matches('\\'))
     }
 }
 
-fn regex_tag(tag: &str) -> Regex {
-    Regex::new(&format!(r"(?is)<{tag}(?:\s[^>]*)?>(.*?)</{tag}>")).unwrap()
+// Статические прекомпилированные регулярные выражения
+macro_rules! static_tag_regex {
+    ($name:ident, $tag:expr) => {
+        fn $name() -> &'static Regex {
+            static RE: OnceLock<Regex> = OnceLock::new();
+            RE.get_or_init(|| {
+                Regex::new(&format!(r"(?is)<{tag}(?:\s[^>]*)?>(.*?)</{tag}>", tag = $tag)).unwrap()
+            })
+        }
+    };
 }
 
-fn tag_text(xml: &str, tag: &str) -> Option<String> {
-    regex_tag(tag)
-        .captures(xml)
+static_tag_regex!(re_geometry_id, "GeometryID");
+static_tag_regex!(re_shadow_geometry_id, "ShadowGeometryID");
+static_tag_regex!(re_collision_geometry_id, "CollisionGeometryID");
+static_tag_regex!(re_script_component, "ScriptComponent");
+static_tag_regex!(re_path, "Path");
+static_tag_regex!(re_blueprint_lib, "iBlueprintLibrary-cAbsoluteBlueprintID");
+static_tag_regex!(re_provider, "Provider");
+static_tag_regex!(re_product, "Product");
+static_tag_regex!(re_blueprint_id, "BlueprintID");
+static_tag_regex!(re_texture_by_name, "TextureByName");
+static_tag_regex!(re_e_tag, "e");
+static_tag_regex!(re_texture_name, "TextureName");
+static_tag_regex!(re_texture, "Texture");
+static_tag_regex!(re_hc_material, "cHcExplicitStateMaterial");
+static_tag_regex!(re_dx_material, "cEffectMaterialDx");
+static_tag_regex!(re_shader_name, "ShaderName");
+static_tag_regex!(re_visible, "Visible");
+
+fn tag_text_cached(xml: &str, re: &Regex) -> Option<String> {
+    re.captures(xml)
         .and_then(|c| c.get(1))
         .map(|m| unescape_xml_entities(m.as_str().trim()))
         .filter(|s| !s.is_empty())
-}
-
-#[allow(dead_code)]
-fn maybe_sound(raw: &str, fallback: AssetResourceKind) -> AssetResourceKind {
-    // Tag-based classification wins over path heuristics: only explicit
-    // sound-container extensions may promote a reference to Sound here.
-    let lower = raw.to_lowercase();
-    if lower.contains(".proxybin") || lower.contains(".proxyxml") || lower.contains(".dav") {
-        AssetResourceKind::Sound
-    } else {
-        fallback
-    }
 }
 
 fn strip_tags(s: &str) -> String {
@@ -173,6 +196,7 @@ fn strip_tags(s: &str) -> String {
     re.replace_all(s, "").to_string()
 }
 
+#[inline]
 fn is_numeric_token(s: &str) -> bool {
     let t = s.trim();
     !t.is_empty() && t.parse::<f64>().is_ok()
@@ -194,6 +218,7 @@ fn is_blacklisted_sound_tag(tag: &str) -> bool {
             | "priority"
     ) || lower.contains("editorrenderdata")
 }
+
 pub fn unescape_xml_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
@@ -207,8 +232,10 @@ pub fn unescape_xml_entities(s: &str) -> String {
 
 pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResourceKind, String)> {
     let mut out = Vec::new();
-    for tag in ["GeometryID", "ShadowGeometryID", "CollisionGeometryID"] {
-        for value in regex_tag(tag).captures_iter(xml).filter_map(|c| c.get(1)) {
+
+    // Извлечение геометрий
+    for re in [re_geometry_id(), re_shadow_geometry_id(), re_collision_geometry_id()] {
+        for value in re.captures_iter(xml).filter_map(|c| c.get(1)) {
             let raw = unescape_xml_entities(value.as_str().trim());
             if !raw.is_empty() && !is_numeric_token(&raw) {
                 out.push((AssetResourceKind::Geometry, raw));
@@ -216,14 +243,13 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
         }
     }
 
-    // ВАЖНО: AnimationID — это лишь внутренний идентификатор (тег / алиас).
-    // Реальный путь к файлу анимации ВСЕГДА лежит ТОЛЬКО в *AnimName!
-    // Tag-based classification: any tag ending in "AnimName" resolves to .ban.
+    // Извлечение анимаций и звуков в один проход
     {
         static TAG_RE: OnceLock<Regex> = OnceLock::new();
         let re = TAG_RE.get_or_init(|| {
             Regex::new(r"(?is)<([A-Za-z0-9_]+)[^>]*>(.*?)</([A-Za-z0-9_]+)>").unwrap()
         });
+
         for cap in re.captures_iter(xml) {
             let tag = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             let close = cap.get(3).map(|m| m.as_str()).unwrap_or("");
@@ -233,29 +259,40 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             if is_blacklisted_sound_tag(tag) {
                 continue;
             }
-            if !tag.to_lowercase().ends_with("animname")
-                && !tag.to_lowercase().ends_with("animationname")
-            {
+
+            let lower_tag = tag.to_lowercase();
+            let is_anim = lower_tag.ends_with("animname") || lower_tag.ends_with("animationname");
+            let is_sound = lower_tag.contains("sound")
+                || lower_tag.contains("audio")
+                || lower_tag.contains("proxy");
+
+            if !is_anim && !is_sound {
                 continue;
             }
+
             let inner = cap.get(2).map(|m| m.as_str()).unwrap_or("");
             if inner.contains('<') {
                 continue;
             }
+
             let raw = unescape_xml_entities(strip_tags(inner).trim());
             let clean = raw.lines().next().unwrap_or("").trim().to_string();
-            if !clean.is_empty() && !is_numeric_token(&clean) {
+            if clean.is_empty() || is_numeric_token(&clean) {
+                continue;
+            }
+
+            if is_anim {
                 out.push((AssetResourceKind::Animation, clean));
+            } else if is_sound {
+                out.push((AssetResourceKind::Sound, clean));
             }
         }
     }
 
-    for sc in regex_tag("ScriptComponent")
-        .captures_iter(xml)
-        .filter_map(|c| c.get(1))
-    {
+    // Скрипты
+    for sc in re_script_component().captures_iter(xml).filter_map(|c| c.get(1)) {
         let inner = sc.as_str();
-        let raw = regex_tag("Path")
+        let raw = re_path()
             .captures(inner)
             .and_then(|c| c.get(1))
             .map(|m| unescape_xml_entities(m.as_str().trim()))
@@ -265,52 +302,16 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
         }
     }
 
-    // Sound references: only from sound-related tags, never from path substrings.
-    {
-        static TAG_RE: OnceLock<Regex> = OnceLock::new();
-        let re = TAG_RE.get_or_init(|| {
-            Regex::new(r"(?is)<([A-Za-z0-9_]+)[^>]*>(.*?)</([A-Za-z0-9_]+)>").unwrap()
-        });
-        for cap in re.captures_iter(xml) {
-            let tag = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-            let close = cap.get(3).map(|m| m.as_str()).unwrap_or("");
-            if !tag.eq_ignore_ascii_case(close) {
-                continue;
-            }
-            if is_blacklisted_sound_tag(tag) {
-                continue;
-            }
-            let lower_tag = tag.to_lowercase();
-            let is_sound_tag = lower_tag.contains("sound")
-                || lower_tag.contains("audio")
-                || lower_tag.contains("proxy");
-            if !is_sound_tag {
-                continue;
-            }
-            let inner = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-            if inner.contains('<') {
-                continue;
-            }
-            let raw = unescape_xml_entities(strip_tags(inner).trim());
-            let clean = raw.lines().next().unwrap_or("").trim().to_string();
-            if !clean.is_empty() && !is_numeric_token(&clean) {
-                out.push((AssetResourceKind::Sound, clean));
-            }
-        }
-    }
-    // Preserve explicit handling for known sound tags already covered above.
-
-    for block in regex_tag("iBlueprintLibrary-cAbsoluteBlueprintID")
-        .captures_iter(xml)
-        .filter_map(|c| c.get(1))
-    {
+    // Дочерние объекты (Blueprints)
+    for block in re_blueprint_lib().captures_iter(xml).filter_map(|c| c.get(1)) {
         let inner = block.as_str();
-        let mut provider = tag_text(inner, "Provider").unwrap_or_default();
-        let mut product = tag_text(inner, "Product").unwrap_or_default();
-        let mut blueprint = tag_text(inner, "BlueprintID").unwrap_or_default();
+        let mut provider = tag_text_cached(inner, re_provider()).unwrap_or_default();
+        let mut product = tag_text_cached(inner, re_product()).unwrap_or_default();
+        let mut blueprint = tag_text_cached(inner, re_blueprint_id()).unwrap_or_default();
         if blueprint.is_empty() {
             continue;
         }
+
         if provider.is_empty() || product.is_empty() {
             let comps: Vec<_> = product_root.components().collect();
             let after_assets = comps
@@ -325,14 +326,8 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
                 )
             } else if comps.len() >= 2 {
                 (
-                    comps[comps.len() - 2]
-                        .as_os_str()
-                        .to_string_lossy()
-                        .to_string(),
-                    comps[comps.len() - 1]
-                        .as_os_str()
-                        .to_string_lossy()
-                        .to_string(),
+                    comps[comps.len() - 2].as_os_str().to_string_lossy().to_string(),
+                    comps[comps.len() - 1].as_os_str().to_string_lossy().to_string(),
                 )
             } else {
                 (String::new(), String::new())
@@ -343,9 +338,7 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             provider = prov;
             product = prod;
         }
-        if provider.is_empty() || product.is_empty() {
-            continue;
-        }
+
         blueprint = blueprint.trim().to_string();
         if blueprint.to_lowercase().ends_with(".xml") {
             blueprint = format!("{}.bin", &blueprint[..blueprint.len() - 4]);
@@ -353,13 +346,15 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             && !blueprint.to_lowercase().ends_with(".geopcdx")
             && !blueprint.to_lowercase().ends_with(".tgpcdx")
         {
-            blueprint = format!("{}.bin", blueprint);
+            blueprint = format!("{blueprint}.bin");
         }
-        let raw = format!("{}\\{}\\{}", provider, product, blueprint);
+
+        let raw = format!("{provider}\\{product}\\{blueprint}");
         if !raw.is_empty() && !is_numeric_token(&blueprint) {
             out.push((AssetResourceKind::ChildBlueprint, raw));
         }
     }
+
     out
 }
 
@@ -368,12 +363,13 @@ pub fn strip_shader_prefix(raw: &str) -> String {
     let re = RE.get_or_init(|| Regex::new(r"^\[[0-9a-zA-Z_\-]+\]").unwrap());
     if let Some(idx) = raw.rfind(['\\', '/']) {
         let (head, tail) = raw.split_at(idx + 1);
-        format!("{}{}", head, re.replace(tail, ""))
+        format!("{head}{}", re.replace(tail, ""))
     } else {
         re.replace(raw, "").to_string()
     }
 }
 
+#[inline]
 fn is_valid_texture_path(raw: &str) -> bool {
     !raw.is_empty()
         && !raw.contains('<')
@@ -401,9 +397,9 @@ fn has_valid_texture_stem(raw: &str) -> bool {
 }
 
 fn material_has_valid_texture(inner: &str) -> bool {
-    for cap in regex_tag("TextureByName").captures_iter(inner) {
+    for cap in re_texture_by_name().captures_iter(inner) {
         let block_inner = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        for ecap in regex_tag("e").captures_iter(block_inner) {
+        for ecap in re_e_tag().captures_iter(block_inner) {
             let raw = unescape_xml_entities(ecap.get(1).map(|m| m.as_str()).unwrap_or("").trim());
             if is_valid_texture_path(raw.as_str()) && has_valid_texture_stem(raw.as_str()) {
                 return true;
@@ -417,8 +413,8 @@ fn material_has_valid_texture(inner: &str) -> bool {
             return true;
         }
     }
-    for tag in ["TextureName", "Texture"] {
-        for cap in regex_tag(tag).captures_iter(inner) {
+    for re in [re_texture_name(), re_texture()] {
+        for cap in re.captures_iter(inner) {
             let raw = unescape_xml_entities(cap.get(1).map(|m| m.as_str()).unwrap_or("").trim());
             if is_valid_texture_path(raw.as_str()) && has_valid_texture_stem(raw.as_str()) {
                 return true;
@@ -430,17 +426,16 @@ fn material_has_valid_texture(inner: &str) -> bool {
 
 fn filter_material_blocks(xml: &str) -> String {
     let mut result = xml.to_string();
-    for tag in ["cHcExplicitStateMaterial", "cEffectMaterialDx"] {
-        let re = regex_tag(tag);
+    for re in [re_hc_material(), re_dx_material()] {
         result = re
             .replace_all(&result, |caps: &regex::Captures| {
                 let full = caps.get(0).map(|m| m.as_str()).unwrap_or("");
                 let inner = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-                let shader = tag_text(inner, "ShaderName").unwrap_or_default();
+                let shader = tag_text_cached(inner, re_shader_name()).unwrap_or_default();
                 if shader.eq_ignore_ascii_case("Invisible") {
                     return String::new();
                 }
-                let visible = tag_text(inner, "Visible").unwrap_or_default();
+                let visible = tag_text_cached(inner, re_visible()).unwrap_or_default();
                 let visible_false =
                     visible.eq_ignore_ascii_case("0") || visible.eq_ignore_ascii_case("false");
                 if visible_false && !material_has_valid_texture(inner) {
@@ -457,9 +452,9 @@ pub fn extract_geo_texture_references(xml: &str) -> Vec<String> {
     let filtered = filter_material_blocks(xml);
     let mut out = Vec::new();
 
-    for cap in regex_tag("TextureByName").captures_iter(&filtered) {
+    for cap in re_texture_by_name().captures_iter(&filtered) {
         let inner = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        for ecap in regex_tag("e").captures_iter(inner) {
+        for ecap in re_e_tag().captures_iter(inner) {
             let raw = unescape_xml_entities(ecap.get(1).map(|m| m.as_str()).unwrap_or("").trim());
             if is_valid_texture_path(raw.as_str()) && has_valid_texture_stem(raw.as_str()) {
                 out.push(normalize_texture_reference(raw.as_str()));
@@ -474,8 +469,8 @@ pub fn extract_geo_texture_references(xml: &str) -> Vec<String> {
         }
     }
 
-    for tag in ["TextureName", "Texture"] {
-        for cap in regex_tag(tag).captures_iter(&filtered) {
+    for re in [re_texture_name(), re_texture()] {
+        for cap in re.captures_iter(&filtered) {
             let raw = unescape_xml_entities(cap.get(1).map(|m| m.as_str()).unwrap_or("").trim());
             if is_valid_texture_path(raw.as_str()) && has_valid_texture_stem(raw.as_str()) {
                 out.push(normalize_texture_reference(raw.as_str()));
@@ -494,7 +489,7 @@ pub fn normalize_texture_reference(raw: &str) -> String {
     if lower.ends_with(".tgpcdx") {
         stripped
     } else {
-        format!("{}.TgPcDx", stripped)
+        format!("{stripped}.TgPcDx")
     }
 }
 
@@ -520,7 +515,7 @@ fn product_root_for(file: &Path, assets_root: &Path) -> PathBuf {
     if let Ok(rel) = file.strip_prefix(assets_root) {
         let comps: Vec<_> = rel.components().collect();
         if comps.len() >= 2 {
-            return assets_root.join(comps[0]).join(comps[1]);
+            return assets_root.join(&comps[0]).join(&comps[1]);
         }
     }
     file.parent().unwrap_or(assets_root).to_path_buf()
@@ -545,14 +540,14 @@ fn ensure_extension(raw: &str, kind: AssetResourceKind) -> String {
         raw.to_string()
     } else {
         match kind {
-            AssetResourceKind::Texture => format!("{}.TgPcDx", raw),
-            AssetResourceKind::Geometry => format!("{}.GeoPcDx", raw),
-            AssetResourceKind::Animation => format!("{}.ban", raw),
+            AssetResourceKind::Texture => format!("{raw}.TgPcDx"),
+            AssetResourceKind::Geometry => format!("{raw}.GeoPcDx"),
+            AssetResourceKind::Animation => format!("{raw}.ban"),
             AssetResourceKind::ChildBlueprint => {
                 if raw.to_lowercase().ends_with(".xml") {
                     raw.to_string()
                 } else {
-                    format!("{}.bin", raw)
+                    format!("{raw}.bin")
                 }
             }
             _ => raw.to_string(),
@@ -574,13 +569,13 @@ fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
                 } else {
                     cleaned
                 };
-            vec![format!("{}.out", stripped), format!("{}.lua", stripped)]
+            vec![format!("{stripped}.out"), format!("{stripped}.lua")]
         }
         AssetResourceKind::Texture => {
             let with_ext = ensure_extension(&cleaned, kind);
             let mut v = vec![with_ext.clone()];
             if !with_ext.to_lowercase().starts_with("textures\\") {
-                v.push(format!("textures\\{}", with_ext));
+                v.push(format!("textures\\{with_ext}"));
             }
             v
         }
@@ -595,8 +590,8 @@ fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
                 cleaned.clone()
             };
             vec![
-                format!("{}.ban", stripped),
-                format!("{}.ia", stripped),
+                format!("{stripped}.ban"),
+                format!("{stripped}.ia"),
                 cleaned,
             ]
         }
@@ -609,7 +604,7 @@ fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
             {
                 vec![cleaned]
             } else {
-                vec![format!("{}.bin", cleaned), format!("{}.xml", cleaned)]
+                vec![format!("{cleaned}.bin"), format!("{cleaned}.xml")]
             }
         }
         AssetResourceKind::Sound => {
@@ -623,11 +618,11 @@ fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
                 vec![cleaned]
             } else {
                 vec![
-                    format!("{}.proxybin", cleaned),
-                    format!("{}.proxyxml", cleaned),
-                    format!("{}.bin", cleaned),
-                    format!("{}.xml", cleaned),
-                    format!("{}.dav", cleaned),
+                    format!("{cleaned}.proxybin"),
+                    format!("{cleaned}.proxyxml"),
+                    format!("{cleaned}.bin"),
+                    format!("{cleaned}.xml"),
+                    format!("{cleaned}.dav"),
                 ]
             }
         }
@@ -635,10 +630,7 @@ fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
     }
 }
 
-/// Определяет, является ли ссылка глобальной (от корня Assets)
-/// Определяет, является ли ссылка глобальной (от корня Assets)
 fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) -> bool {
-    // Текстуры в GeoPcDx НИКОГДА не бывают глобальными от корня Assets
     if kind == AssetResourceKind::Texture {
         return false;
     }
@@ -646,7 +638,6 @@ fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) 
     let clean = norm.trim_start_matches('/').replace('\\', "/");
     let lower = clean.to_lowercase();
 
-    // Относительные переходы never global
     if lower.starts_with('.') || lower.starts_with("..") {
         return false;
     }
@@ -657,32 +648,18 @@ fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) 
     let parts: Vec<&str> = lower.split('/').filter(|p| !p.is_empty()).collect();
     if parts.len() >= 2 {
         let p1 = parts[0];
-        // Защита от .. и .
         if p1 == ".." || p1 == "." {
             return false;
         }
 
         const KNOWN_PROVIDERS: &[&str] = &[
-            "kuju",
-            "dtg",
-            "rsc",
-            "3dzug",
-            "virtualtracks",
-            "justtrains",
-            "rsslo",
-            "railstudio",
-            "shg",
-            "vizzart",
-            "tsg",
-            "rw-0381",
-            "ted",
-            "kal000px",
+            "kuju", "dtg", "rsc", "3dzug", "virtualtracks", "justtrains", "rsslo",
+            "railstudio", "shg", "vizzart", "tsg", "rw-0381", "ted", "kal000px",
         ];
         if KNOWN_PROVIDERS.contains(&p1) {
             return true;
         }
 
-        // Проверяем реальную папку провайдера внутри Assets
         let prov_dir = assets_root.join(p1);
         if prov_dir.is_dir() && !p1.starts_with('.') {
             return true;
@@ -783,16 +760,14 @@ fn loose_path_exists(path: &Path) -> bool {
     if path.is_file() {
         return true;
     }
-    // Slot prefixes like [0d] may differ between reference and disk; scan the
-    // same directory for a file whose prefix-stripped name matches.
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return false;
     };
     let target = strip_shader_prefix(&name.to_string_lossy()).to_lowercase();
     if let Ok(entries) = fs::read_dir(parent) {
         for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if !entry_path.is_file() {
+            let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
+            if !is_file {
                 continue;
             }
             let entry_name = entry.file_name();
@@ -807,31 +782,9 @@ fn loose_path_exists(path: &Path) -> bool {
     false
 }
 
+#[inline]
 fn loose_exists(candidates: &[PathBuf]) -> bool {
     candidates.iter().any(|p| loose_path_exists(p))
-}
-
-fn ap_member_matches(product_dir: &Path, relative: &str, ap_cache: &ApArchiveCache) -> bool {
-    let target = normalize_ap_path(&strip_shader_prefix(relative));
-    let target = target.trim_start_matches('\\').to_string();
-    if let Ok(guard) = ap_cache.inner.lock() {
-        for (key, set) in guard.iter() {
-            if !key
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&product_dir.to_string_lossy())
-            {
-                continue;
-            }
-            for member in set {
-                let member = normalize_ap_path(&strip_shader_prefix(member));
-                let member = member.trim_start_matches('\\').to_string();
-                if member == target {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 fn ap_exists(
@@ -847,31 +800,18 @@ fn ap_exists(
         norm = norm["assets/".len()..].to_string();
     }
     let norm = strip_shader_prefix(&norm).replace('/', "\\");
+
     let mut is_global = is_global_asset_ref(&norm, kind, assets_root);
-    if kind == AssetResourceKind::Texture {
-        let first = norm
-            .split(['\\', '/'])
-            .find(|s| !s.is_empty())
-            .unwrap_or("");
-        if !is_global
-            && !first.is_empty()
-            && !first.starts_with('.')
-            && assets_root.join(first).is_dir()
-        {
-            is_global = true;
-        }
-    } else {
-        let first = norm
-            .split(['\\', '/'])
-            .find(|s| !s.is_empty())
-            .unwrap_or("");
-        if !is_global
-            && !first.is_empty()
-            && !first.starts_with('.')
-            && assets_root.join(first).is_dir()
-        {
-            is_global = true;
-        }
+    let first = norm
+        .split(['\\', '/'])
+        .find(|s| !s.is_empty())
+        .unwrap_or("");
+    if !is_global
+        && !first.is_empty()
+        && !first.starts_with('.')
+        && assets_root.join(first).is_dir()
+    {
+        is_global = true;
     }
 
     for rel in candidate_relatives(&norm, kind) {
@@ -882,9 +822,7 @@ fn ap_exists(
             if parts.len() >= 3 {
                 let product_dir = assets_root.join(parts[0]).join(parts[1]);
                 let inner = parts[2..].join("/");
-                if ap_cache.lookup(&product_dir, &inner)
-                    || ap_member_matches(&product_dir, &inner, ap_cache)
-                {
+                if ap_cache.lookup(&product_dir, &inner) {
                     return true;
                 }
             }
@@ -892,16 +830,12 @@ fn ap_exists(
             let target_loose = normalize_path(&parent.join(&cleaned));
             if let Ok(rel_from_prod) = target_loose.strip_prefix(product_root) {
                 let inner = rel_from_prod.to_string_lossy().replace('\\', "/");
-                if ap_cache.lookup(product_root, &inner)
-                    || ap_member_matches(product_root, &inner, ap_cache)
-                {
+                if ap_cache.lookup(product_root, &inner) {
                     return true;
                 }
             }
             let inner_direct = cleaned.trim_start_matches(".\\").replace('\\', "/");
-            if ap_cache.lookup(product_root, &inner_direct)
-                || ap_member_matches(product_root, &inner_direct, ap_cache)
-            {
+            if ap_cache.lookup(product_root, &inner_direct) {
                 return true;
             }
         }
@@ -1038,10 +972,10 @@ pub fn audit_folder_with_progress(
     let total_files = files.len();
     let progress_cb = progress.clone();
 
-    let results: Vec<Vec<BrokenResourceRef>> = pool.install(|| {
+    let broken: Vec<BrokenResourceRef> = pool.install(|| {
         files
             .par_iter()
-            .map(|f| {
+            .flat_map_iter(|f| {
                 let r = audit_one_file(f, folder_path, assets_root, serz_path, ap_cache);
                 let done = processed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if let Some(cb) = &progress_cb
@@ -1054,11 +988,6 @@ pub fn audit_folder_with_progress(
             })
             .collect()
     });
-
-    let mut broken = Vec::new();
-    for r in results {
-        broken.extend(r);
-    }
 
     AuditReport {
         broken_references: broken,
@@ -1114,36 +1043,15 @@ pub fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
 
 pub fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
     items.sort_by(|a, b| {
-        let va = match col {
-            0 => (a.kind as usize).to_string(),
-            1 => a.expected_path.to_string_lossy().to_string(),
-            _ => a.parent_file.to_string_lossy().to_string(),
+        let cmp = match col {
+            0 => (a.kind as usize).cmp(&(b.kind as usize)),
+            1 => a.expected_path.cmp(&b.expected_path),
+            _ => a.parent_file.cmp(&b.parent_file),
         };
-        let vb = match col {
-            0 => (b.kind as usize).to_string(),
-            1 => b.expected_path.to_string_lossy().to_string(),
-            _ => b.parent_file.to_string_lossy().to_string(),
-        };
-        if asc { va.cmp(&vb) } else { vb.cmp(&va) }
+        if asc { cmp } else { cmp.reverse() }
     });
 }
 
 #[cfg(test)]
 #[path = "tests/auditor.rs"]
 mod tests;
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum CheckError {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error("{0}")]
-    Message(String),
-}
-
-impl From<String> for CheckError {
-    fn from(value: String) -> Self { Self::Message(value) }
-}
-
-impl From<CheckError> for String {
-    fn from(value: CheckError) -> Self { value.to_string() }
-}
