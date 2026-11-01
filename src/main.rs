@@ -491,6 +491,13 @@ fn main() {
             }
         }
     });
+    let settings_weak = settings.weak.clone();
+    ui.on_open_settings(move || {
+        if let Some(w) = settings_weak.upgrade() {
+            let _ = w.show();
+        }
+    });
+
     let auditor = auditor_controller::AuditorController::new();
     let auditor_weak_for_open_folder = auditor.weak.clone();
     ui.on_open_folder_auditor(move || {
