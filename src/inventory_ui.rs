@@ -1,7 +1,7 @@
-//! Таблица инвентаря ассетов: список используемых объектов маршрута.\
-//! Действия, запрошенные строками таблицы инвентаря.
+//! Таблица инвентаря ассетов: список используемых объектов маршрута.
 
 use std::collections::BTreeMap;
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 /// Столбец, по которому отсортирована таблица инвентаря.
@@ -23,12 +23,6 @@ pub(crate) struct InventorySort {
     pub(crate) descending: bool,
 }
 
-/// Сортирует строки таблицы инвентаря.
-/// Ширины столбцов таблицы инвентаря.
-///
-/// Считаются один раз для шапки и для строк, чтобы подписи и данные стояли
-/// в одних и тех же местах.
-/// Измеряет ширину текста в стиле мелкого шрифта.
 pub(crate) fn asset_directory(assets_path: &Path, asset_path: &str) -> PathBuf {
     let normalized = asset_path.replace('/', "\\");
     let relative = Path::new(&normalized);
@@ -54,28 +48,11 @@ pub fn build_inventory_rows(
     state: &crate::app::AssetInventoryWindowState,
     show_missing: bool,
 ) -> (Vec<slint::ModelRc<slint::StandardListViewItem>>, Vec<bool>) {
-    let mut assets: Vec<&crate::domain::ReferencedAsset> = state.assets.iter().collect();
-    match state.sort.column {
-        InventorySortColumn::Path => {
-            if state.sort.descending {
-                assets.sort_by(|a, b| b.path.cmp(&a.path));
-            } else {
-                assets.sort_by(|a, b| a.path.cmp(&b.path));
-            }
-        }
-        InventorySortColumn::Usage => {
-            if state.sort.descending {
-                assets.sort_by_key(|a| std::cmp::Reverse(a.uses.iter().map(|u| u.count as usize).sum::<usize>()));
-            } else {
-                assets.sort_by_key(|a| a.uses.iter().map(|u| u.count as usize).sum::<usize>());
-            }
-        }
-    }
-    let search = state.search.to_lowercase();
-    let mut rows = Vec::new();
-    let mut safe_flags = Vec::new();
-    for a in assets {
-        let usage_count: usize = a.uses.iter().map(|u| u.count as usize).sum();
+    let search = state.search.trim().to_lowercase();
+
+    // 1. Сначала фильтруем элементы и один раз вычисляем суммарное число использований
+    let mut matched: Vec<(&crate::domain::ReferencedAsset, usize)> = Vec::new();
+    for a in &state.assets {
         if show_missing && !a.missing {
             continue;
         }
@@ -88,30 +65,66 @@ pub fn build_inventory_rows(
                 continue;
             }
         }
-        let mut by_tile: BTreeMap<String, usize> = BTreeMap::new();
-        for u in a.uses.iter() {
-            *by_tile.entry(u.tile.clone()).or_insert(0) += u.count as usize;
+        let usage_count: usize = a.uses.iter().map(|u| u.count as usize).sum();
+        matched.push((a, usage_count));
+    }
+
+    // 2. Сортируем только отфильтрованные элементы по готовым числовым значениям
+    match state.sort.column {
+        InventorySortColumn::Path => {
+            if state.sort.descending {
+                matched.sort_by(|(a, _), (b, _)| b.path.cmp(&a.path));
+            } else {
+                matched.sort_by(|(a, _), (b, _)| a.path.cmp(&b.path));
+            }
         }
-        let tiles: String = by_tile
-            .iter()
-            .map(|(tile, count)| format!("{} ({})", tile.trim_start_matches("тайл "), count))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let path_text = a.path.clone();
+        InventorySortColumn::Usage => {
+            if state.sort.descending {
+                matched.sort_by(|(_, count_a), (_, count_b)| count_b.cmp(count_a));
+            } else {
+                matched.sort_by(|(_, count_a), (_, count_b)| count_a.cmp(count_b));
+            }
+        }
+    }
+
+    // 3. Формируем строки для Slint UI
+    let mut rows = Vec::with_capacity(matched.len());
+    let mut safe_flags = Vec::with_capacity(matched.len());
+
+    for (a, usage_count) in matched {
+        // Заимствуем срезы &str в BTreeMap без аллокаций строк
+        let mut by_tile: BTreeMap<&str, usize> = BTreeMap::new();
+        for u in &a.uses {
+            *by_tile.entry(u.tile.as_str()).or_insert(0) += u.count as usize;
+        }
+
+        // Собираем строку описания тайлов в один буфер
+        let mut tiles = String::new();
+        for (i, (tile, count)) in by_tile.into_iter().enumerate() {
+            if i > 0 {
+                tiles.push_str(", ");
+            }
+            let clean_tile = tile.trim_start_matches("тайл ");
+            let _ = write!(tiles, "{clean_tile} ({count})");
+        }
 
         let mut item0 = slint::StandardListViewItem::default();
-        item0.text = path_text.as_str().into();
+        item0.text = slint::SharedString::from(a.path.as_str());
+
         let mut item1 = slint::StandardListViewItem::default();
-        item1.text = usage_count.to_string().as_str().into();
+        item1.text = format!("{usage_count}").into();
+
         let mut item2 = slint::StandardListViewItem::default();
-        item2.text = tiles.as_str().into();
-        let row_items = vec![item0, item1, item2];
-        let row: slint::ModelRc<slint::StandardListViewItem> =
-            slint::ModelRc::new(slint::VecModel::from(row_items));
-        rows.push(row);
+        item2.text = tiles.into();
+
+        rows.push(slint::ModelRc::new(slint::VecModel::from(vec![
+            item0, item1, item2,
+        ])));
+
         safe_flags.push(crate::assets::is_safe_for_global_replacement(
             &a.path, &a.uses,
         ));
     }
+
     (rows, safe_flags)
 }
