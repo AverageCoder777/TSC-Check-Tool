@@ -360,7 +360,7 @@ impl AuditorController {
 
                 let is_editable = |p: &PathBuf| {
                     p.extension()
-                        .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("geopcdx"))
+                        .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("geopcdx") || e.eq_ignore_ascii_case("xsec"))
                         .unwrap_or(false)
                 };
 
@@ -370,7 +370,7 @@ impl AuditorController {
                     expected_path
                 } else {
                     if let Some(win) = handle.upgrade() {
-                        win.set_editor_status("Выбранный элемент не является .bin/.GeoPcDx".into());
+                        win.set_editor_status("Выбранный элемент не является .bin/.GeoPcDx/.XSec".into());
                     }
                     return;
                 };

@@ -279,6 +279,9 @@ fn handle_cli_args() {
             println!("[HKEY_CLASSES_ROOT\\.GeoPcDx\\shell\\Open with TS-Checker\\command]");
             println!("@=\"\\\"{}\\\" \\\"%1\\\"\"", exe.display());
             println!();
+            println!("[HKEY_CLASSES_ROOT\\.XSec\\shell\\Open with TS-Checker\\command]");
+            println!("@=\"\\\"{}\\\" \\\"%1\\\"\"", exe.display());
+            println!();
             println!("[HKEY_CLASSES_ROOT\\.TgPcDx\\shell\\Open with TS-Checker\\command]");
             println!("@=\"\\\"{}\\\" \\\"%1\\\"\"", exe.display());
         }
@@ -307,7 +310,7 @@ fn handle_cli_args() {
             && path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("geopcdx"))
+                .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("geopcdx") || e.eq_ignore_ascii_case("xsec"))
                 .unwrap_or(false);
         if is_asset {
             println!("[ExternalEditor] Запуск синхронизации для: {:?}", path);

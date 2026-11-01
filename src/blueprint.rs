@@ -255,6 +255,7 @@ pub(crate) fn resolve_blueprint_file(
         {
             Some("bin") => 0usize,
             Some("geopcdx") => 1,
+            Some("xsec") => 1,
             Some("tgpcdx") => 2,
             Some("xml") => 3,
             _ => 4,
