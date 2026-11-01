@@ -2,6 +2,7 @@
 
 use super::*;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 use walkdir::WalkDir;
 
 /// Реальные файлы в .ap сжимаются в десятки раз: в проверенных архивах максимум
@@ -14,6 +15,48 @@ const ARCHIVE_RATIO_CHECK_MIN_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_ARCHIVE_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
 /// Иконка маршрута — это картинка, больше 64 МБ она быть не может.
 const MAX_ICON_MEMBER_BYTES: u64 = 64 * 1024 * 1024;
+
+const INTERESTING_TAGS: [&str; 12] = [
+    "ScenarioName",
+    "DisplayName",
+    "ScenarioDescription",
+    "Description",
+    "StartLocation",
+    "StartLocationName",
+    "StationName",
+    "LocationName",
+    "DestinationName",
+    "MarkerName",
+    "PlaceName",
+    "StopName",
+];
+
+const REQUIRED_DIRECTORIES: [&str; 4] = ["Networks", "RouteInformation", "Scenery", "Terrain"];
+
+static STRIP_TAGS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<[^>]+>").expect("valid regex"));
+
+static LOCALIZATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<Localisation-cUserLocalisedString\b[^>]*>(.*?)</Localisation-cUserLocalisedString\s*>")
+        .expect("valid regex")
+});
+
+static LANGUAGE_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<([A-Za-z][A-Za-z0-9_-]*)\b[^>]*>([^<]*)</[A-Za-z][A-Za-z0-9_-]*\s*>")
+        .expect("valid regex")
+});
+
+static ROUTE_NAME_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<RouteName\b[^>]*>(.*?)</RouteName>").expect("valid regex"));
+
+static SCENARIO_TAG_RES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    INTERESTING_TAGS
+        .iter()
+        .map(|tag| {
+            Regex::new(&format!(r"(?is)<{tag}\b[^>]*>(.*?)</{tag}\s*>")).expect("valid regex")
+        })
+        .collect()
+});
 
 /// Возвращает true, если элемент архива выглядит как «бомба» и его не стоит распаковывать.
 pub(crate) fn is_suspicious_archive_member(size: u64, compressed_size: u64) -> bool {
@@ -61,18 +104,30 @@ pub(crate) fn sorted_ids(ids: &HashSet<String>) -> Vec<String> {
     ids
 }
 
+fn clean_canonical_path(path: &Path) -> Result<PathBuf, String> {
+    let canonical = path.canonicalize().map_err(|error| {
+        format!(
+            "Не удалось проверить папку игры {}: {error}",
+            path.display()
+        )
+    })?;
+    let raw = canonical.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        Ok(PathBuf::from(format!(r"\\{rest}")))
+    } else if let Some(rest) = raw.strip_prefix(r"\\?\") {
+        Ok(PathBuf::from(rest))
+    } else {
+        Ok(canonical)
+    }
+}
+
 pub(crate) fn scan_routes_with_cache(
     rw_path: &Path,
     ignored_route_ids: &HashSet<String>,
     allow_cache: bool,
     max_threads: usize,
 ) -> Result<crate::domain::RouteScanOutcome, String> {
-    let canonical_game_path = rw_path.canonicalize().map_err(|error| {
-        format!(
-            "Не удалось проверить папку игры {}: {error}",
-            rw_path.display()
-        )
-    })?;
+    let canonical_game_path = clean_canonical_path(rw_path)?;
     let routes_path = canonical_game_path.join("Content").join("Routes");
     let folder_ids = read_route_folder_ids(&routes_path)?;
     let game_path = canonical_game_path.to_string_lossy().into_owned();
@@ -249,7 +304,7 @@ pub(crate) fn scan_route_folder(
         Ok(crate::domain::RouteScanItem::Incomplete(report))
     } else {
         let name = read_route_name(path, id)?;
-Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
+        Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
             id: id.to_owned(),
             name,
             path: path.to_path_buf(),
@@ -262,7 +317,6 @@ pub(crate) fn inspect_route_folder(
     path: &Path,
     id: &str,
 ) -> Result<Option<crate::domain::IncompleteRouteFolder>, String> {
-    const REQUIRED_DIRECTORIES: [&str; 4] = ["Networks", "RouteInformation", "Scenery", "Terrain"];
     let children: Vec<(PathBuf, String, bool)> = fs::read_dir(path)
         .map_err(|error| format!("Не удалось прочитать {}: {error}", path.display()))?
         .map(|entry| {
@@ -283,14 +337,102 @@ pub(crate) fn inspect_route_folder(
         })
         .collect::<Result<_, String>>()?;
 
+    // Fast path: streaming boolean checks only, no inventory allocations.
+    let mut has_archived_route_properties = path.join("RouteProperties.xml").is_file();
+    let mut archived_required = [false; 4];
+    for (child_path, name, is_directory) in &children {
+        if *is_directory {
+            continue;
+        }
+        if !Path::new(name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
+        {
+            continue;
+        }
+        let archive_file = fs::File::open(child_path).map_err(|error| {
+            format!("Не удалось открыть архив {}: {error}", child_path.display())
+        })?;
+        let mut archive = ZipArchive::new(archive_file).map_err(|error| {
+            format!(
+                "Не удалось прочитать архив {}: {error}",
+                child_path.display()
+            )
+        })?;
+        for index in 0..archive.len() {
+            let member = match archive.by_index(index) {
+                Ok(member) => member,
+                Err(_) => continue,
+            };
+            if !member.is_file() {
+                continue;
+            }
+            let raw_name = match member.name() {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+            if !has_archived_route_properties {
+                let base = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
+                if base.eq_ignore_ascii_case("RouteProperties.xml") {
+                    has_archived_route_properties = true;
+                }
+            }
+            for (required_index, required) in REQUIRED_DIRECTORIES.iter().enumerate() {
+                if archived_required[required_index] {
+                    continue;
+                }
+                if archive_member_is_under_directory(raw_name.as_ref(), required) {
+                    archived_required[required_index] = true;
+                }
+            }
+        }
+    }
+
+    let route_properties_exists =
+        path.join("RouteProperties.xml").is_file() || has_archived_route_properties;
+
+    let mut problems = Vec::new();
+    if !route_properties_exists {
+        problems.push("нет RouteProperties.xml".to_owned());
+    }
+
+    for (required_index, required) in REQUIRED_DIRECTORIES.iter().enumerate() {
+        let found_path = children
+            .iter()
+            .find_map(|(entry_path, name, is_directory)| {
+                (name.eq_ignore_ascii_case(required) && *is_directory).then_some(entry_path)
+            });
+
+        let has_disk_files = match found_path {
+            Some(directory) => directory_contains_files(directory)?,
+            None => false,
+        };
+        let has_archived_files = archived_required[required_index];
+        if !has_disk_files && !has_archived_files {
+            problems.push(if found_path.is_some() {
+                format!("папка {required} пуста (файлы не найдены на диске или в .ap)")
+            } else {
+                format!("нет папки {required} с файлами на диске или в .ap")
+            });
+        }
+    }
+
+    if problems.is_empty() {
+        return Ok(None);
+    }
+
+    // Slow path: detailed inventory, clues and archived names.
     let mut archive_members = Vec::new();
     let mut archived_route_name = None;
     let mut scenario_clues = ScenarioClueCollection::default();
+
     for (child_path, name, is_directory) in &children {
-        if *is_directory
-            || !Path::new(name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
+        if *is_directory {
+            continue;
+        }
+        if !Path::new(name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
         {
             continue;
         }
@@ -307,10 +449,12 @@ pub(crate) fn inspect_route_folder(
             let mut member = archive
                 .by_index(index)
                 .map_err(|error| format!("Ошибка в архиве {}: {error}", child_path.display()))?;
-            let member_name = match member.name() {
-                Ok(name) => name.replace('\\', "/"),
+            let raw_name = match member.name() {
+                Ok(name) => name,
                 Err(_) => continue,
             };
+            let member_name = raw_name.replace('\\', "/");
+
             if member.is_file()
                 && member_name
                     .rsplit('/')
@@ -328,11 +472,10 @@ pub(crate) fn inspect_route_folder(
                 })?;
                 scenario_clues.add(&contents, &format!("[.ap: {name} :: {member_name}]"));
             }
+
+            let base_name = member_name.rsplit('/').next().unwrap_or_default();
             if member.is_file()
-                && (member_name
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("RouteProperties.xml"))
+                && (base_name.eq_ignore_ascii_case("RouteProperties.xml")
                     || (member_name.to_lowercase().contains("routeinformation")
                         && member_name.to_lowercase().ends_with(".xml")))
                 && !is_suspicious_archive_member(member.size(), member.compressed_size())
@@ -344,77 +487,34 @@ pub(crate) fn inspect_route_folder(
                         .or_else(|| parse_route_name_tag(&contents));
                 }
             }
+
             archive_members.push((name.clone(), member_name, member.is_file()));
         }
     }
 
-    let route_properties_exists = path.join("RouteProperties.xml").is_file()
-        || archive_members.iter().any(|(_, entry, is_file)| {
-            *is_file
-                && entry
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("RouteProperties.xml"))
-        });
-    let mut problems = Vec::new();
-    if !route_properties_exists {
-        problems.push("нет RouteProperties.xml".to_owned());
-    }
-
-    for required in REQUIRED_DIRECTORIES {
-        let found_path = children
-            .iter()
-            .find_map(|(entry_path, name, is_directory)| {
-                (name.eq_ignore_ascii_case(required) && *is_directory).then_some(entry_path)
-            });
-
-        let has_disk_files = match found_path {
-            Some(directory) => directory_contains_files(directory)?,
-            None => false,
-        };
-        let has_archived_files = archive_members.iter().any(|(_, member, is_file)| {
-            *is_file && archive_member_is_under_directory(member, required)
-        });
-        if !has_disk_files && !has_archived_files {
-            problems.push(if found_path.is_some() {
-                format!("папка {required} пуста (файлы не найдены на диске или в .ap)")
-            } else {
-                format!("нет папки {required} с файлами на диске или в .ap")
-            });
-        }
-    }
-
-    if problems.is_empty() {
-        return Ok(None);
-    }
-
+    // Single WalkDir pass: clues + inventory concurrently.
+    let mut inventory = Vec::new();
+    let mut file_count = 0usize;
     for entry in WalkDir::new(path).follow_links(false) {
         let entry =
             entry.map_err(|error| format!("Ошибка при обходе {}: {error}", path.display()))?;
-        if !entry.file_type().is_file()
-            || !entry
+        if entry.file_type().is_file()
+            && entry
                 .file_name()
                 .to_string_lossy()
                 .eq_ignore_ascii_case("ScenarioProperties.xml")
         {
-            continue;
+            let contents = fs::read_to_string(entry.path()).map_err(|error| {
+                format!("Не удалось прочитать {}: {error}", entry.path().display())
+            })?;
+            let relative = entry
+                .path()
+                .strip_prefix(path)
+                .unwrap_or(entry.path())
+                .display();
+            scenario_clues.add(&contents, &relative.to_string());
         }
-        let contents = fs::read_to_string(entry.path())
-            .map_err(|error| format!("Не удалось прочитать {}: {error}", entry.path().display()))?;
-        let relative = entry
-            .path()
-            .strip_prefix(path)
-            .unwrap_or(entry.path())
-            .display();
-        scenario_clues.add(&contents, &relative.to_string());
-    }
-    let scenario_clues = scenario_clues.into_clues();
 
-    let mut inventory = Vec::new();
-    let mut file_count = 0;
-    for entry in WalkDir::new(path).follow_links(false) {
-        let entry =
-            entry.map_err(|error| format!("Ошибка при обходе {}: {error}", path.display()))?;
         if entry.path() == path {
             continue;
         }
@@ -434,6 +534,7 @@ pub(crate) fn inspect_route_folder(
             inventory.push(format!("[ссылка, не обходилась] {}", relative.display()));
         }
     }
+
     for (archive, member, is_file) in &archive_members {
         if *is_file {
             file_count += 1;
@@ -441,6 +542,8 @@ pub(crate) fn inspect_route_folder(
         }
     }
     inventory.sort();
+    let scenario_clues = scenario_clues.into_clues();
+
     let suggested_name = if problems.len() == 2
         && problems
             .iter()
@@ -587,16 +690,21 @@ pub(crate) fn find_route_icon_with_cache(
         let mut archive = ZipArchive::new(archive_file)
             .map_err(|error| format!("Не удалось прочитать {}: {error}", entry.path().display()))?;
         for index in 0..archive.len() {
-            let member = archive
-                .by_index(index)
-                .map_err(|error| format!("Ошибка в архиве {}: {error}", entry.path().display()))?;
-            let member_name = match member.name() {
-                Ok(name) => name.replace('\\', "/"),
+            let member = match archive.by_index(index) {
+                Ok(member) => member,
                 Err(_) => continue,
             };
-            if !member.is_file() || !is_route_information_image(&member_name) {
+            if !member.is_file() {
                 continue;
             }
+            let raw_name = match member.name() {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+            if !is_route_information_image(raw_name.as_ref()) {
+                continue;
+            }
+            let member_name = raw_name.replace('\\', "/");
             let file_name = member_name.rsplit('/').next().unwrap_or_default();
             archived_images.push((icon_priority(file_name), entry.path(), member_name));
         }
@@ -622,7 +730,7 @@ fn is_route_image(extension: Option<&std::ffi::OsStr>) -> bool {
 
 fn is_route_information_image(member_name: &str) -> bool {
     let components: Vec<_> = member_name
-        .split('/')
+        .split(['/', '\\'])
         .filter(|part| !part.is_empty())
         .collect();
     components.windows(2).any(|pair| {
@@ -710,34 +818,15 @@ pub(crate) fn is_uuid_like(value: &str) -> bool {
 }
 
 pub(crate) fn extract_scenario_clues(xml: &str) -> Vec<String> {
-    const INTERESTING_TAGS: [&str; 12] = [
-        "ScenarioName",
-        "DisplayName",
-        "ScenarioDescription",
-        "Description",
-        "StartLocation",
-        "StartLocationName",
-        "StationName",
-        "LocationName",
-        "DestinationName",
-        "MarkerName",
-        "PlaceName",
-        "StopName",
-    ];
-    let Ok(strip_tags) = Regex::new(r"(?is)<[^>]+>") else {
-        return Vec::new();
-    };
     let mut clues = Vec::new();
-    for tag in INTERESTING_TAGS {
-        let Ok(element) = Regex::new(&format!(r"(?is)<{tag}\b[^>]*>(.*?)</{tag}\s*>")) else {
-            continue;
-        };
+    for (index, tag) in INTERESTING_TAGS.iter().enumerate() {
+        let element = &SCENARIO_TAG_RES[index];
         for capture in element.captures_iter(xml) {
             let Some(contents) = capture.get(1).map(|capture| capture.as_str()) else {
                 continue;
             };
             let text = parse_route_name(contents).or_else(|| {
-                let plain_text = strip_tags.replace_all(contents, " ");
+                let plain_text = STRIP_TAGS_RE.replace_all(contents, " ");
                 let decoded = crate::translit::decode_xml_text(&plain_text);
                 let normalized = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
                 (!normalized.is_empty()).then_some(normalized)
@@ -807,15 +896,17 @@ impl ScenarioClueCollection {
 }
 
 pub(crate) fn archive_member_is_under_directory(member: &str, directory: &str) -> bool {
-    let components: Vec<&str> = member.split('/').filter(|part| !part.is_empty()).collect();
+    let components: Vec<&str> = member
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
     components.iter().enumerate().any(|(index, component)| {
         component.eq_ignore_ascii_case(directory) && index + 1 < components.len()
     })
 }
 
 pub(crate) fn parse_route_name_tag(xml: &str) -> Option<String> {
-    let route_name = Regex::new(r"(?is)<RouteName\b[^>]*>(.*?)</RouteName>").ok()?;
-    route_name
+    ROUTE_NAME_TAG_RE
         .captures(xml)
         .and_then(|capture| capture.get(1))
         .map(|value| crate::translit::decode_xml_text(value.as_str()))
@@ -888,15 +979,13 @@ pub(crate) fn read_route_name(route_path: &Path, fallback: &str) -> Result<Strin
                     let mut member = archive.by_index(index).map_err(|error| {
                         format!("Ошибка в архиве {}: {error}", entry.path().display())
                     })?;
-                    let member_name = match member.name() {
-                        Ok(name) => name.to_string(),
+                    let raw_name = match member.name() {
+                        Ok(name) => name,
                         Err(_) => continue,
                     };
+                    let base_name = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
                     if !member.is_file()
-                        || !member_name
-                            .rsplit(['/', '\\'])
-                            .next()
-                            .is_some_and(|name| name.eq_ignore_ascii_case("RouteProperties.xml"))
+                        || !base_name.eq_ignore_ascii_case("RouteProperties.xml")
                         || is_suspicious_archive_member(member.size(), member.compressed_size())
                     {
                         continue;
@@ -930,18 +1019,12 @@ pub(crate) fn read_route_name(route_path: &Path, fallback: &str) -> Result<Strin
 }
 
 pub(crate) fn parse_route_name(xml: &str) -> Option<String> {
-    let localization = Regex::new(
-        r"(?is)<Localisation-cUserLocalisedString\b[^>]*>(.*?)</Localisation-cUserLocalisedString\s*>",
-    )
-    .ok()?;
+    let localization = LOCALIZATION_RE.captures(xml);
     let localized_contents = localization
-        .captures(xml)
         .and_then(|capture| capture.get(1))
         .map(|capture| capture.as_str())
         .unwrap_or(xml);
-    let languages =
-        Regex::new(r"(?is)<([A-Za-z][A-Za-z0-9_-]*)\b[^>]*>([^<]*)</[A-Za-z][A-Za-z0-9_-]*\s*>")
-            .ok()?;
+    let languages = &LANGUAGE_TAG_RE;
     let values: Vec<_> = languages
         .captures_iter(localized_contents)
         .filter_map(|capture| {
