@@ -133,8 +133,12 @@ fn consist_name(consist: &str) -> String {
         let tag_name = &after[1..tag_end];
         let tag_name = tag_name.split_whitespace().next().unwrap_or(tag_name);
         if tag_name == "Key" || tag_name == "Other" {
-            let close_tag = format!("</{}>", tag_name);
-            if let Some(ct) = loc_block[abs..].find(&close_tag) {
+            let close_tag = if tag_name == "Key" {
+                "</Key>"
+            } else {
+                "</Other>"
+            };
+            if let Some(ct) = loc_block[abs..].find(close_tag) {
                 pos = abs + ct + close_tag.len();
                 continue;
             } else {
@@ -489,17 +493,18 @@ pub(crate) fn absolute_blueprint_block(text: &str) -> Option<&str> {
 /// Текст элемента: содержимое между открывающим и закрывающим тегом.
 pub(crate) fn element_text(xml: &str, element: &str) -> String {
     let open = format!("<{element}");
+    let close = format!("</{element}>");
     let mut search_from = 0;
     while let Some(pos) = xml[search_from..].find(&open) {
         let abs = search_from + pos;
         let after = &xml[abs + open.len()..];
         if after.starts_with(' ') || after.starts_with('>') || after.starts_with('/') {
             let rest = &xml[abs..];
-            let Some(close) = rest.find(&format!("</{element}>")) else {
+            let Some(close_pos) = rest.find(&close) else {
                 return String::new();
             };
             let value_start = rest.find('>').map(|index| index + 1).unwrap_or(0);
-            let value = &rest[value_start..close];
+            let value = &rest[value_start..close_pos];
             let text = match value.find('<') {
                 Some(index) => &value[..index],
                 None => value,
@@ -516,13 +521,13 @@ pub(crate) fn element_text(xml: &str, element: &str) -> String {
 /// из остальных языков.
 fn localised_text(xml: &str, block: &str) -> String {
     let open = format!("<{block}");
+    let close_tag = format!("</{block}>");
     let mut search_from = 0;
     while let Some(pos) = xml[search_from..].find(&open) {
         let abs = search_from + pos;
         let after = &xml[abs + open.len()..];
         if after.starts_with(' ') || after.starts_with('>') {
             let rest = &xml[abs..];
-            let close_tag = format!("</{block}>");
             let end = rest.find(&close_tag).unwrap_or(rest.len());
             let block_xml = &rest[..end];
             // Сначала пробуем English.
@@ -626,6 +631,24 @@ fn scenario_date(xml: &str) -> String {
     }
     format!("{day:02}.{month:02}.{year}")
 }
+/// Проверяет наличие подстроки без учёта регистра ASCII, без выделения памяти.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let hay = haystack.as_bytes();
+    let ned = needle.as_bytes();
+    if hay.len() < ned.len() {
+        return false;
+    }
+    for start in 0..=hay.len() - ned.len() {
+        if hay[start..start + ned.len()].eq_ignore_ascii_case(ned) {
+            return true;
+        }
+    }
+    false
+}
+
 fn has_scenario_type_marker(xml: &str) -> bool {
     for tag in [
         "ScenarioClass",
@@ -641,17 +664,18 @@ fn has_scenario_type_marker(xml: &str) -> bool {
     if !element_text(xml, "QuickDrivePlayerConsistName").is_empty() {
         return true;
     }
-    let lower = xml.to_lowercase().replace('_', " ");
-    lower.contains("freeroam")
-        || lower.contains("free roam")
-        || lower.contains("quickdrive")
-        || lower.contains("quick drive")
-        || lower.contains("career")
-        || lower.contains("<careerrules")
-        || lower.contains("etemplate")
-        || lower.contains("template scenario")
-        || lower.contains("timetable")
-        || lower.contains("etimetable")
+    contains_ignore_ascii_case(xml, "freeroam")
+        || contains_ignore_ascii_case(xml, "free roam")
+        || contains_ignore_ascii_case(xml, "free_roam")
+        || contains_ignore_ascii_case(xml, "quickdrive")
+        || contains_ignore_ascii_case(xml, "quick drive")
+        || contains_ignore_ascii_case(xml, "quick_drive")
+        || contains_ignore_ascii_case(xml, "career")
+        || contains_ignore_ascii_case(xml, "<careerrules")
+        || contains_ignore_ascii_case(xml, "etemplate")
+        || contains_ignore_ascii_case(xml, "template scenario")
+        || contains_ignore_ascii_case(xml, "timetable")
+        || contains_ignore_ascii_case(xml, "etimetable")
 }
 
 /// Определяет тип сценария по XML свойств/сценария.
@@ -677,24 +701,29 @@ pub(crate) fn scenario_type_from_xml(xml: &str) -> String {
     if !element_text(xml, "QuickDrivePlayerConsistName").is_empty() {
         return "Quick Drive".to_owned();
     }
-    let lower = xml.to_lowercase().replace('_', " ");
-    if lower.contains("freeroam") || lower.contains("free roam") {
+    if contains_ignore_ascii_case(xml, "freeroam")
+        || contains_ignore_ascii_case(xml, "free roam")
+        || contains_ignore_ascii_case(xml, "free_roam")
+    {
         return "Free Roam".to_owned();
     }
-    if lower.contains("quickdrive")
-        || lower.contains("quick drive")
-        || lower.contains("etemplate")
-        || lower.contains("template scenario")
+    if contains_ignore_ascii_case(xml, "quickdrive")
+        || contains_ignore_ascii_case(xml, "quick drive")
+        || contains_ignore_ascii_case(xml, "quick_drive")
+        || contains_ignore_ascii_case(xml, "etemplate")
+        || contains_ignore_ascii_case(xml, "template scenario")
     {
         return "Quick Drive".to_owned();
     }
-    if lower.contains("timetable") || lower.contains("etimetable") {
+    if contains_ignore_ascii_case(xml, "timetable")
+        || contains_ignore_ascii_case(xml, "etimetable")
+    {
         return "Timetable (Standard)".to_owned();
     }
-    if lower.contains("<careerrules") {
+    if contains_ignore_ascii_case(xml, "<careerrules") {
         return "Career".to_owned();
     }
-    if lower.contains("career") {
+    if contains_ignore_ascii_case(xml, "career") {
         return "Career".to_owned();
     }
     "Standard".to_owned()
