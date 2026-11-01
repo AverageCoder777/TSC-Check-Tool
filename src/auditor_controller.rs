@@ -261,10 +261,10 @@ impl AuditorController {
                             _ => empty.to_string(),
                         }
                     };
-                    let incoming_str = fmt(incoming, "Не используется ни одним файлом в папке");
+                    let incoming_str = fmt(incoming, "Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте");
                     let outgoing_str = fmt(outgoing, "Нет зависимостей");
                     (incoming_str, outgoing_str)
-                }).unwrap_or_else(|| ("Не используется ни одним файлом в папке".to_string(), "Нет зависимостей".to_string()));
+                }).unwrap_or_else(|| ("Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте".to_string(), "Нет зависимостей".to_string()));
                 if let Some(w) = handle.upgrade() {
                     w.set_incoming_text(incoming.into());
                     w.set_outgoing_text(outgoing.into());

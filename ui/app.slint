@@ -1308,7 +1308,7 @@ export component FolderAuditorWindow inherits Window {
             }
             Rectangle { background: root.active-filter == "orphans" ? #059669 : #333333; border-radius: 4px; min-width: 120px; height: 28px;
                 TouchArea { clicked => { root.active-filter = "orphans"; root.filter-changed("orphans"); } }
-                Text { text: @tr("Неиспользуемые"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+                Text { text: @tr("Мёртвые ресурсы"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
             }
         }
         StandardTableView {

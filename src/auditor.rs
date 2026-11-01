@@ -25,7 +25,7 @@ impl AssetResourceKind {
             Self::Script => "Скрипт",
             Self::Sound => "Звуки",
             Self::ChildBlueprint => "Дочерние объекты",
-            Self::Unused => "Неиспользуемые",
+            Self::Unused => "Мёртвый ресурс",
         }
     }
 }
@@ -871,6 +871,46 @@ pub fn audit_folder_with_progress(
         collect_files(folder_path, &mut files, &mut texture_files);
     }
 
+    let product_root = product_root_for(folder_path, assets_root);
+
+    // Collect additional .bin/.geopcdx across product root for dependency scope
+    let mut extra_files: Vec<PathBuf> = Vec::new();
+    if product_root != folder_path {
+        let mut all_product_files = Vec::new();
+        let mut dummy_textures = Vec::new();
+        if let Ok(entries) = walkdir::WalkDir::new(&product_root)
+            .into_iter()
+            .filter_entry(|e| {
+                !e.path().components().any(|c| {
+                    c.as_os_str()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case("preload")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+        {
+            for entry in entries {
+                let path = entry.path();
+                if path.is_file() {
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if (ext == "bin" || ext == "geopcdx")
+                        && !path.starts_with(folder_path)
+                    {
+                        all_product_files.push(path.to_path_buf());
+                    }
+                }
+            }
+        } else {
+            collect_files(&product_root, &mut all_product_files, &mut dummy_textures);
+            all_product_files.retain(|p| !p.starts_with(folder_path));
+        }
+        extra_files = all_product_files;
+    }
+
     let threads = max_concurrent.max(1);
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -925,6 +965,32 @@ pub fn audit_folder_with_progress(
         }
     }
 
+    // Product-wide dependency scope: extract references from other files
+    let extra_outcomes: Vec<FileAuditOutcome> = pool.install(|| {
+        extra_files
+            .par_iter()
+            .map(|f| audit_one_file(f, &product_root, assets_root, serz_path, ap_cache))
+            .collect()
+    });
+
+    for outcome in extra_outcomes {
+        let parent_norm = std::path::PathBuf::from(
+            crate::fs_utils::normalize_path(&outcome.parent)
+                .to_string_lossy()
+                .to_lowercase(),
+        );
+        let set = outgoing_map.entry(parent_norm.clone()).or_default();
+        for t in &outcome.outgoing {
+            let tn = std::path::PathBuf::from(
+                crate::fs_utils::normalize_path(t)
+                    .to_string_lossy()
+                    .to_lowercase(),
+            );
+            set.insert(tn.clone());
+            incoming_map.entry(tn).or_default().insert(parent_norm.clone());
+        }
+    }
+
     // Dedup broken references
     let mut deduped: Vec<BrokenResourceRef> = Vec::with_capacity(broken_all.len());
     let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
@@ -946,7 +1012,12 @@ pub fn audit_folder_with_progress(
                 .to_string_lossy()
                 .to_lowercase(),
         );
-        let has_incoming = incoming_map.get(&nf).map_or(false, |s| !s.is_empty());
+        let rel_product = f
+            .strip_prefix(&product_root)
+            .map(|p| p.to_string_lossy().replace('/', "\\"))
+            .unwrap_or_else(|_| f.to_string_lossy().replace('/', "\\"));
+        let in_ap = ap_cache.lookup(&product_root, &rel_product);
+        let has_incoming = incoming_map.get(&nf).map_or(false, |s| !s.is_empty()) || in_ap;
         if has_incoming {
             continue;
         }
@@ -956,16 +1027,10 @@ pub fn audit_folder_with_progress(
             .unwrap_or("")
             .to_lowercase();
         let rel = f.strip_prefix(folder_path).unwrap_or(f);
-        let in_secondary = rel.components().any(|c| {
-            let s = c.as_os_str().to_string_lossy().to_lowercase();
-            matches!(
-                s.as_str(),
-                "material" | "materials" | "components" | "cabs" | "cab" | "passengers" | "lights"
-            )
-        });
+        let _ = rel;
+
         let is_orphan = match ext.as_str() {
             "geopcdx" | "tgpcdx" => true,
-            "bin" => in_secondary,
             _ => false,
         };
         if is_orphan {
@@ -1029,7 +1094,7 @@ pub fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
             Some(AssetResourceKind::Sound)
         }
         _ if f.contains("дочер") || f.contains("child") => Some(AssetResourceKind::ChildBlueprint),
-        _ if f.contains("неиспольз") || f.contains("orphan") || f.contains("unused") || f.contains("dead") => {
+        _ if f.contains("неиспольз") || f.contains("orphan") || f.contains("unused") || f.contains("dead") || f.contains("мертв") => {
             Some(AssetResourceKind::Unused)
         }
         _ => None,
