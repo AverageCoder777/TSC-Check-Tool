@@ -1,9 +1,9 @@
 use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crate::MissingAssetsWindow;
 
@@ -19,7 +19,12 @@ impl MissingAssetsController {
         let window = MissingAssetsWindow::new().unwrap();
         let weak = window.as_weak();
         let clipboard = Arc::new(Mutex::new(arboard::Clipboard::new().unwrap()));
-        Self { window, weak, app, clipboard }
+        Self {
+            window,
+            weak,
+            app,
+            clipboard,
+        }
     }
 
     pub fn bind(&self) {
@@ -111,7 +116,9 @@ impl MissingAssetsController {
                     let repairable_count = repairable.len();
                     eprintln!("[Repair] Found {} repairable assets", repairable_count);
                     if repairable_count == 0 {
-                        eprintln!("[Repair] No candidates resolved; fuzzy directory matching failed.");
+                        eprintln!(
+                            "[Repair] No candidates resolved; fuzzy directory matching failed."
+                        );
                         return;
                     }
                     let assets_path = PathBuf::from(app.rw_path.trim()).join("Assets");
@@ -123,7 +130,14 @@ impl MissingAssetsController {
                             Some((missing, replacement, repair))
                         })
                         .collect();
-                    app.asset_replacement_queue = queue;
+                    app.asset_replacement_queue = repairable
+                        .into_iter()
+                        .filter_map(|missing| {
+                            let repair = missing.suggested_repair.clone()?;
+                            let replacement = assets_path.join(repair.replace('/', "\\"));
+                            Some((missing, replacement, repair))
+                        })
+                        .collect();
                     app.asset_replacement = None;
                     app.missing_assets_shown = false;
                     app.start_next_asset_replacement();
@@ -318,15 +332,13 @@ impl MissingAssetsController {
         if let Some(mw) = self.weak.upgrade() {
             mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
             mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));
-            mw.set_missing_suggested_repairs(slint::ModelRc::new(slint::VecModel::from(
-                repairs,
-            )));
+            mw.set_missing_suggested_repairs(slint::ModelRc::new(slint::VecModel::from(repairs)));
             mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(corrupted)));
             mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
             mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-            mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::<
-                slint::SharedString,
-            >::default()));
+            mw.set_active_tile_list(slint::ModelRc::new(
+                slint::VecModel::<slint::SharedString>::default(),
+            ));
             mw.set_active_tile_asset("".into());
             let _ = mw.show();
             app.missing_assets_shown = true;

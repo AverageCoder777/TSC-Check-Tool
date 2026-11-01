@@ -305,7 +305,7 @@ impl InventoryController {
             if let Ok(mut app) = app.lock() {
                 app.inventory_replacement_pending_check = true;
                 app.asset_replacement_queue
-                    .push((missing, picked, replacement_relative));
+                    .push_back((missing, picked, replacement_relative));
                 app.start_next_asset_replacement();
             }
         });

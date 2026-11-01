@@ -1,8 +1,8 @@
-//! egui application state, windows, and user interactions.
+//! Application state, background tasks, and Slint UI synchronization.
 
 use super::*;
-use std::collections::{BTreeMap, HashSet};
-use std::time::{Duration, Instant};
+use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 enum CheckMessage {
     Progress(String),
@@ -47,7 +47,7 @@ pub(crate) struct CheckerApp {
     pub(crate) check_log: String,
     pub(crate) progress_pending: Option<String>,
     pub(crate) last_progress_log: Option<Instant>,
-    pub(crate) last_progress_text: Option<String>,
+    pub(crate) has_ephemeral_progress: bool,
     pub(crate) incomplete_folders: Vec<crate::domain::IncompleteRouteFolder>,
     selected_incomplete: Option<usize>,
     pub(crate) ignored_route_ids: HashSet<String>,
@@ -59,7 +59,7 @@ pub(crate) struct CheckerApp {
             Result<crate::domain::AssetReplacementReport, String>,
         )>,
     >,
-    pub(crate) asset_replacement_queue: Vec<(crate::domain::MissingAsset, PathBuf, String)>,
+    pub(crate) asset_replacement_queue: VecDeque<(crate::domain::MissingAsset, PathBuf, String)>,
     asset_replacement_feedback: Option<Result<String, String>>,
     pub(crate) route_thumbnails_enabled: bool,
     pub(crate) serz_process_limit: usize,
@@ -156,11 +156,11 @@ impl Default for CheckerApp {
             check_log: String::new(),
             progress_pending: None,
             last_progress_log: None,
-            last_progress_text: None,
+            has_ephemeral_progress: false,
             route_scan: None,
             check: None,
             asset_replacement: None,
-            asset_replacement_queue: Vec::new(),
+            asset_replacement_queue: VecDeque::new(),
             asset_replacement_feedback: None,
             route_thumbnails_enabled,
             serz_process_limit,
@@ -240,6 +240,9 @@ impl CheckerApp {
         replacement_relative: String,
         fixes: crate::translit::CharacterFixes,
     ) {
+        if self.asset_replacement.is_some() {
+            return;
+        }
         let Some(route) = self
             .selected_route
             .and_then(|index| self.routes.get(index))
@@ -296,8 +299,12 @@ impl CheckerApp {
                     .into_iter()
                     .collect();
                 original_files.sort();
+                let timestamp_unix_seconds = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 let mut entry = crate::domain::AssetReplacementLogEntry {
-                    timestamp_unix_seconds: 0,
+                    timestamp_unix_seconds,
                     operation: "Замена отсутствующего ассета".to_owned(),
                     route_id: Some(route.id.clone()),
                     route_name: Some(route.name.clone()),
@@ -340,7 +347,7 @@ impl CheckerApp {
             return;
         }
         if let Some((missing, replacement, replacement_relative)) =
-            self.asset_replacement_queue.pop()
+            self.asset_replacement_queue.pop_front()
         {
             self.start_asset_replacement(
                 missing,
@@ -357,6 +364,9 @@ impl CheckerApp {
     }
 
     fn begin_route_scan(&mut self, preserve_incomplete: bool, allow_cache: bool) {
+        if self.route_scan.is_some() {
+            return;
+        }
         let root = PathBuf::from(self.rw_path.trim());
         let (tx, rx) = mpsc::channel();
         self.route_scan = Some(rx);
@@ -388,6 +398,9 @@ impl CheckerApp {
     }
 
     pub(crate) fn start_check(&mut self) {
+        if self.is_checking() {
+            return;
+        }
         let Some(route) = self
             .selected_route
             .and_then(|index| self.routes.get(index))
@@ -408,7 +421,7 @@ impl CheckerApp {
         self.check_log.clear();
         self.progress_pending = None;
         self.last_progress_log = None;
-        self.last_progress_text = None;
+        self.has_ephemeral_progress = false;
         if let Ok(mut state) = self.asset_inventory_state.lock() {
             state.open = false;
             state.assets.clear();
@@ -457,8 +470,24 @@ impl CheckerApp {
         self.scenario_vehicle_files = None;
     }
 
+    fn pop_ephemeral_progress(&mut self) {
+        if self.has_ephemeral_progress {
+            if let Some(pos) = self.check_log.rfind('\n') {
+                let slice = &self.check_log[..pos];
+                if let Some(prev_pos) = slice.rfind('\n') {
+                    self.check_log.truncate(prev_pos + 1);
+                } else {
+                    self.check_log.clear();
+                }
+            } else {
+                self.check_log.clear();
+            }
+            self.has_ephemeral_progress = false;
+        }
+    }
+
     fn flush_progress_log(&mut self, force: bool) {
-        let Some(pending) = self.progress_pending.clone() else {
+        let Some(pending) = self.progress_pending.take() else {
             return;
         };
         let due = force
@@ -466,19 +495,14 @@ impl CheckerApp {
                 .last_progress_log
                 .is_none_or(|instant| instant.elapsed() >= Duration::from_millis(200));
         if !due {
+            self.progress_pending = Some(pending);
             return;
         }
-        if let Some(previous) = self.last_progress_text.take() {
-            let marker = format!("{previous}\n");
-            if self.check_log.ends_with(&marker) {
-                self.check_log.truncate(self.check_log.len() - marker.len());
-            }
-        }
+        self.pop_ephemeral_progress();
         self.check_log.push_str(&pending);
         self.check_log.push('\n');
-        self.last_progress_text = Some(pending);
+        self.has_ephemeral_progress = true;
         self.last_progress_log = Some(Instant::now());
-        self.progress_pending = None;
     }
 
     pub(crate) fn is_checking(&self) -> bool {
@@ -609,8 +633,11 @@ impl CheckerApp {
                     if !report.backups.is_empty() {
                         self.status = format!("Создано резервных копий: {}.", report.backups.len());
                     }
-                    if remaining_assets == Some((0, 0)) {
+
+                    let all_done = remaining_assets == Some((0, 0));
+                    if all_done {
                         self.status = "Все отсутствующие ассеты обработаны. Выполняется итоговая проверка маршрута...".to_owned();
+                        self.inventory_replacement_pending_check = false;
                         self.start_check();
                     } else if let Some((remaining, umlauts)) = remaining_assets {
                         self.status = format!(
@@ -624,9 +651,14 @@ impl CheckerApp {
                 }
             }
         }
-        let was_last_inventory_replacement = self.asset_replacement_queue.is_empty();
+
+        let was_queue_empty_before = self.asset_replacement_queue.is_empty();
         self.start_next_asset_replacement();
-        if was_last_inventory_replacement && self.inventory_replacement_pending_check {
+        if was_queue_empty_before
+            && self.inventory_replacement_pending_check
+            && self.asset_replacement.is_none()
+            && !self.is_checking()
+        {
             self.inventory_replacement_pending_check = false;
             self.start_check();
         }
@@ -689,6 +721,7 @@ impl CheckerApp {
                         self.progress_pending = Some(status);
                     } else {
                         self.flush_progress_log(true);
+                        self.pop_ephemeral_progress();
                         self.check_log.push_str(&status);
                         self.check_log.push('\n');
                     }
@@ -728,6 +761,7 @@ impl CheckerApp {
                                 format!("Проверка завершена: {}.", summary.join(", "))
                             };
                             self.flush_progress_log(true);
+                            self.pop_ephemeral_progress();
                             for issue in &result.structure_issues {
                                 self.check_log
                                     .push_str(&format!("Проблема структуры: {issue}\n"));
@@ -736,13 +770,13 @@ impl CheckerApp {
                                 self.check_log
                                     .push_str(&format!("Ошибка Serz/XML: {error}\n"));
                             }
-                            let inventory = result.asset_inventory.clone();
-                            self.result = Some(result);
+
                             if let Ok(mut state) = self.asset_inventory_state.lock()
                                 && state.open
                             {
-                                state.assets = inventory;
+                                state.assets = result.asset_inventory.clone();
                             }
+                            self.result = Some(result);
                             self.inventory_refresh_pending = true;
                         }
                         Err(error) => self.status = error,
