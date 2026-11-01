@@ -15,7 +15,25 @@ export component TextureViewerWindow inherits Window {
 
     VerticalBox {
         Text { text: info-text; }
-        Image { source: texture-image; width: texture-orig-width * 1px; height: texture-orig-height * 1px; }
+        Rectangle {
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+            TouchArea {
+                scroll-event(event) => {
+                    if (event.delta-y > 0) {
+                        root.zoom_factor = Math.min(8.0, root.zoom_factor * 1.15);
+                    } else if (event.delta-y < 0) {
+                        root.zoom_factor = Math.max(0.1, root.zoom_factor / 1.15);
+                    }
+                    accept
+                }
+            }
+            Image {
+                source: texture-image;
+                width: texture-orig-width * zoom-factor * 1px;
+                height: texture-orig-height * zoom-factor * 1px;
+            }
+        }
         Button { text: @tr("Переключить альфа-канал"); clicked => { toggle-alpha(); } }
         Button { text: @tr("Экспортировать DDS"); clicked => { export-dds(); } }
         Button { text: @tr("Заменить из DDS"); clicked => { replace-from-dds(); } }

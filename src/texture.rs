@@ -14,11 +14,13 @@ pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String>
     };
 
     let image_block = first_image_block(&xml).ok_or("no image block")?;
-    let format = extract_tag(image_block, "Format", "cDeltaString").unwrap_or_default();
+    let format = extract_format(image_block);
     let width: u32 = extract_tag(image_block, "Width", "sUInt16")
+        .or_else(|| extract_tag(image_block, "Width", "sUInt32"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let height: u32 = extract_tag(image_block, "Height", "sUInt16")
+        .or_else(|| extract_tag(image_block, "Height", "sUInt32"))
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     if width == 0 || height == 0 {
@@ -27,21 +29,63 @@ pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String>
     let blob = extract_blob(image_block).ok_or("no blob")?;
     let bytes = hex_decode(&blob);
 
-    let mut image_u32 = vec![0u32; (width * height) as usize];
-    if format.contains("INTERP_ALPHA") {
+    let pixels = (width * height) as usize;
+    let format_upper = format.to_uppercase();
+    let is_bc3 = format_upper.contains("INTERP_ALPHA")
+        || format_upper.contains("BC3")
+        || format_upper.contains("DXT5");
+    let is_bc1 = format_upper.contains("COMPRESSED") && !is_bc3;
+    let is_uncompressed = format_upper.contains("RGBA")
+        || format_upper.contains("BGRA")
+        || format_upper.contains("ARGB")
+        || format_upper.contains("UNCOMPRESSED");
+
+    let mut rgba = Vec::with_capacity(pixels * 4);
+
+    if is_uncompressed || (!is_bc3 && !is_bc1 && bytes.len() >= pixels * 4) {
+        // Uncompressed 32-bit (RGBA/BGRA)
+        let bgra = format_upper.contains("BGRA");
+        for i in 0..pixels {
+            let off = i * 4;
+            if off + 4 > bytes.len() {
+                break;
+            }
+            let (r, g, b, a) = if bgra {
+                (bytes[off + 2], bytes[off + 1], bytes[off], bytes[off + 3])
+            } else {
+                (bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3])
+            };
+            rgba.push(r);
+            rgba.push(g);
+            rgba.push(b);
+            rgba.push(a);
+        }
+    } else if is_bc3 || bytes.len() >= pixels {
+        // BC3 / DXT5 (16 bytes per 4x4 block)
+        let mut image_u32 = vec![0u32; pixels];
         texture2ddecoder::decode_bc3(&bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
+        for px in image_u32 {
+            rgba.push(((px >> 16) & 0xff) as u8);
+            rgba.push(((px >> 8) & 0xff) as u8);
+            rgba.push((px & 0xff) as u8);
+            rgba.push(((px >> 24) & 0xff) as u8);
+        }
     } else {
+        // BC1 / DXT1 (8 bytes per 4x4 block)
+        let mut image_u32 = vec![0u32; pixels];
         texture2ddecoder::decode_bc1(&bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
+        for px in image_u32 {
+            rgba.push(((px >> 16) & 0xff) as u8);
+            rgba.push(((px >> 8) & 0xff) as u8);
+            rgba.push((px & 0xff) as u8);
+            rgba.push(((px >> 24) & 0xff) as u8);
+        }
     }
 
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for px in image_u32 {
-        rgba.push(((px >> 16) & 0xff) as u8);
-        rgba.push(((px >> 8) & 0xff) as u8);
-        rgba.push((px & 0xff) as u8);
-        rgba.push(((px >> 24) & 0xff) as u8);
+    if rgba.len() < pixels * 4 {
+        return Err("decoded data too small".into());
     }
     Ok((width, height, rgba))
 }
@@ -75,7 +119,7 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
     }
 
     let first = blocks[0];
-    let fmt_str = extract_tag(first, "Format", "cDeltaString").unwrap_or_default();
+    let fmt_str = extract_format(first);
     let d3d_fmt = tgpcdx_format_to_d3d(&fmt_str);
     let width: u32 = extract_tag(first, "Width", "sUInt16")
         .and_then(|s| s.parse().ok())
@@ -282,6 +326,32 @@ fn all_image_blocks(xml: &str) -> Vec<&str> {
     out
 }
 
+fn extract_format(block: &str) -> String {
+    if let Some(start) = block.find("<Format") {
+        let rest = &block[start..];
+        if let Some(gt) = rest.find('>') {
+            let content_start = start + gt + 1;
+            if let Some(end) = block[content_start..].find("</Format>") {
+                let val = block[content_start..content_start + end].trim();
+                if !val.is_empty() {
+                    return val.to_string();
+                }
+            }
+        }
+    }
+    // Fallback: scan block for known markers
+    if block.contains("INTERP_ALPHA") {
+        return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".to_string();
+    }
+    if block.contains("DXT5") || block.contains("BC3") {
+        return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".to_string();
+    }
+    if block.contains("DXT1") || block.contains("BC1") {
+        return "HC_IMAGE_FORMAT_COMPRESSED".to_string();
+    }
+    String::new()
+}
+
 fn extract_tag(block: &str, tag: &str, dtype: &str) -> Option<String> {
     let pattern = format!("<{} d:type=\"{}\">", tag, dtype);
     let start = block.find(&pattern)?;
@@ -289,7 +359,6 @@ fn extract_tag(block: &str, tag: &str, dtype: &str) -> Option<String> {
     let end = rest.find("</")?;
     Some(rest[..end].trim().to_string())
 }
-
 fn extract_blob(block: &str) -> Option<String> {
     let marker = "<d:blob d:size=\"";
     let start = block.find(marker)?;
