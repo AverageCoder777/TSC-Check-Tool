@@ -3,7 +3,6 @@ use slint::Weak;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 
 use crate::ScenarioWindow;
 
@@ -124,9 +123,9 @@ impl ScenarioController {
                 (None, None)
             };
 
-            let serz_path = crate::assets::preferred_serz_path(&crate::app::clean_rw_path(&rw_path));
+            let serz_path = crate::assets::preferred_serz_path(&PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')));
             let weather_name = crate::scenario::weather_display_name(
-                &crate::app::clean_rw_path(&rw_path),
+                &PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')),
                 std::path::Path::new(&route_path),
                 &serz_path,
                 &scenario.weather,
@@ -277,35 +276,31 @@ impl ScenarioController {
                 Some(i) => i,
                 None => return,
             };
-            let scenario = match app.scenarios.get(scen_idx) {
-                Some(s) => s.clone(),
-                None => return,
-            };
-            let consists = match scenario.consists.as_ref() {
-                Some(c) => c,
-                None => return,
-            };
             let i = idx as usize;
-            if i >= consists.len() {
-                return;
-            }
-            let c = &consists[i];
-            let vehicles: Vec<slint::SharedString> = c
-                .vehicles
-                .iter()
-                .map(|v| format!("{} - {}", v.provider, v.name).into())
-                .collect();
-            let missing: Vec<bool> = app
-                .scenario_vehicle_files
-                .as_ref()
-                .and_then(|vf| vf.get(i))
-                .cloned()
-                .unwrap_or_default();
-            let paths: Vec<slint::SharedString> = c
-                .vehicles
-                .iter()
-                .map(|v| v.blueprint.clone().into())
-                .collect();
+            let (vehicles, missing, paths, consist_idx_valid) = {
+                let Some(scenario) = app.scenarios.get(scen_idx) else { return; };
+                let Some(consists) = scenario.consists.as_ref() else { return; };
+                if i >= consists.len() { return; }
+                let c = &consists[i];
+                let vehicles: Vec<slint::SharedString> = c
+                    .vehicles
+                    .iter()
+                    .map(|v| format!("{} - {}", v.provider, v.name).into())
+                    .collect();
+                let missing: Vec<bool> = app
+                    .scenario_vehicle_files
+                    .as_ref()
+                    .and_then(|vf| vf.get(i))
+                    .cloned()
+                    .unwrap_or_default();
+                let paths: Vec<slint::SharedString> = c
+                    .vehicles
+                    .iter()
+                    .map(|v| v.blueprint.clone().into())
+                    .collect();
+                (vehicles, missing, paths, true)
+            };
+            let _ = consist_idx_valid;
             app.selected_consist = Some(i);
             if let Some(sw) = scenario_handle2.upgrade() {
                 sw.set_vehicle_names(slint::ModelRc::new(slint::VecModel::from(vehicles)));
@@ -426,44 +421,50 @@ impl ScenarioController {
                 Some(i) => i,
                 None => return,
             };
-            let scenario = match app.scenarios.get(scen_idx) {
-                Some(s) => s.clone(),
-                None => return,
-            };
             let consist_idx = app.selected_consist.unwrap_or(0);
-            let consists = match scenario.consists.as_ref() {
-                Some(c) => c,
-                None => return,
+            let vehicle = {
+                let Some(scenario) = app.scenarios.get(scen_idx) else { return; };
+                let Some(consists) = scenario.consists.as_ref() else { return; };
+                let Some(consist) = consists.get(consist_idx) else { return; };
+                let Some(vehicle) = consist.vehicles.get(idx as usize) else { return; };
+                (
+                    vehicle.provider.clone(),
+                    vehicle.product.clone(),
+                    vehicle.blueprint.clone(),
+                    vehicle.number.clone(),
+                )
             };
-            let vehicle = match consists
-                .get(consist_idx)
-                .and_then(|c| c.vehicles.get(idx as usize))
-            {
-                Some(v) => v.clone(),
-                None => return,
+            let (provider, product, blueprint, number) = vehicle;
+            let vehicle = crate::scenario::ScenarioVehicle {
+                provider: provider.clone(),
+                product: product.clone(),
+                blueprint: blueprint.clone(),
+                name: String::new(),
+                number: number.clone(),
             };
+
             let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
                 &rw_path,
                 &route_path,
-                &vehicle.blueprint,
-                &vehicle.provider,
-                &vehicle.product,
+                &blueprint,
+                &provider,
+                &product,
             );
             let exists = crate::blueprint::vehicle_blueprint_exists(
                 &rw_path,
-                &vehicle.provider,
-                &vehicle.product,
-                &vehicle.blueprint,
+                &provider,
+                &product,
+                &blueprint,
             );
             let path_text = if exists {
-                if vehicle.provider.trim().is_empty() || vehicle.product.trim().is_empty() {
-                    vehicle.blueprint.clone()
+                if provider.trim().is_empty() || product.trim().is_empty() {
+                    blueprint.clone()
                 } else {
                     format!(
                         "Assets\\{}\\{}\\{}",
-                        vehicle.provider.trim(),
-                        vehicle.product.trim(),
-                        vehicle.blueprint.trim().replace('/', "\\")
+                        provider.trim(),
+                        product.trim(),
+                        blueprint.trim().replace('/', "\\")
                     )
                 }
             } else {
@@ -480,10 +481,10 @@ impl ScenarioController {
                 sw.set_selected_vehicle_image(image);
                 let details = format!(
                     "Поставщик: {}\nДополнение: {}\nФайл: {}\nНомер: {}",
-                    vehicle.provider,
-                    vehicle.product,
-                    vehicle.blueprint,
-                    vehicle.number.clone().unwrap_or_else(|| "—".to_owned())
+                    provider,
+                    product,
+                    blueprint,
+                    number.clone().unwrap_or_else(|| "—".to_owned())
                 );
                 sw.set_selected_vehicle_info(details.into());
             }
@@ -501,21 +502,12 @@ impl ScenarioController {
                 Some(i) => i,
                 None => return,
             };
-            let scenario = match app.scenarios.get(scen_idx) {
-                Some(s) => s.clone(),
-                None => return,
-            };
-            let consists = match scenario.consists.as_ref() {
-                Some(c) => c,
-                None => return,
-            };
-            let consist = match consists.get(consist_idx) {
-                Some(c) => c,
-                None => return,
-            };
-            let vehicle = match consist.vehicles.get(vehicle_idx) {
-                Some(v) => v.clone(),
-                None => return,
+            let (blueprint, provider, product) = {
+                let Some(scenario) = app.scenarios.get(scen_idx) else { return; };
+                let Some(consists) = scenario.consists.as_ref() else { return; };
+                let Some(consist) = consists.get(consist_idx) else { return; };
+                let Some(vehicle) = consist.vehicles.get(vehicle_idx) else { return; };
+                (vehicle.blueprint.clone(), vehicle.provider.clone(), vehicle.product.clone())
             };
             let rw_path = app.rw_path.clone();
             let route_path = app
@@ -524,11 +516,11 @@ impl ScenarioController {
                 .map(|r| r.path.clone())
                 .unwrap_or_default();
             let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
-                &crate::app::clean_rw_path(&rw_path),
+                &PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')),
                 Path::new(&route_path),
-                &vehicle.blueprint,
-                &vehicle.provider,
-                &vehicle.product,
+                &blueprint,
+                &provider,
+                &product,
             );
             if let Some(path) = resolved {
                 if path.is_file() {
@@ -577,7 +569,7 @@ impl ScenarioController {
                 .map(|r| r.path.clone())
                 .unwrap_or_default();
             let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
-                &crate::app::clean_rw_path(&rw_path),
+                &PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')),
                 Path::new(&route_path),
                 &vehicle.blueprint,
                 &vehicle.provider,
@@ -659,27 +651,26 @@ pub fn load_vehicle_preview_image(
         .unwrap_or_else(|| vehicle.blueprint.clone());
     let mut base_dir = String::new();
     let mut found = false;
-    // Один проход по архиву: ищем блюпринт и сразу строим карту имён записей.
-    let mut entry_index_by_name: HashMap<String, usize> = HashMap::with_capacity(zip.len());
     for index in 0..zip.len() {
         let Ok(entry) = zip.by_index(index) else {
             continue;
         };
-        let name = entry.name().unwrap_or_default().to_string();
-        entry_index_by_name.insert(name.to_lowercase(), index);
-        if !found {
-            let entry_stem = Path::new(&name)
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
+        let name = match entry.name() {
+            Ok(name) => name,
+            Err(_) => continue,
+        };
+        let entry_stem = Path::new(name.as_ref())
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if entry_stem.eq_ignore_ascii_case(&stem) {
+            base_dir = name
+                .rsplit_once('/')
+                .or_else(|| name.rsplit_once('\\'))
+                .map(|(dir, _)| dir.to_owned())
                 .unwrap_or_default();
-            if entry_stem.eq_ignore_ascii_case(&stem) {
-                base_dir = name
-                    .rsplit_once('/')
-                    .or_else(|| name.rsplit_once('\\'))
-                    .map(|(dir, _)| dir.to_owned())
-                    .unwrap_or_default();
-                found = true;
-            }
+            found = true;
+            break;
         }
     }
     if !found {
@@ -695,10 +686,25 @@ pub fn load_vehicle_preview_image(
         )
     };
 
-    if let Some(index) = entry_index_by_name.get(&image_name.to_lowercase()) {
-        let Ok(mut entry) = zip.by_index(*index) else {
-            return slint::Image::default();
+    let mut image_index = None;
+    for index in 0..zip.len() {
+        let Ok(entry) = zip.by_index(index) else {
+            continue;
         };
+        let name = match entry.name() {
+            Ok(name) => name,
+            Err(_) => continue,
+        };
+        let normalized = name.replace('\\', "/");
+        if normalized.eq_ignore_ascii_case(&image_name) {
+            image_index = Some(index);
+            break;
+        }
+    }
+
+    if let Some(index) = image_index
+        && let Ok(mut entry) = zip.by_index(index)
+    {
         let mut data = Vec::new();
         if std::io::Read::read_to_end(&mut entry, &mut data).is_ok()
             && let Ok(image) = slint::Image::load_from_data(&data, Some("png"))
