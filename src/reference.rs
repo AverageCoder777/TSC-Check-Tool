@@ -33,9 +33,9 @@ pub(crate) fn find_ignore_ascii_case(haystack: &[u8], needle: &[u8], from: usize
     let last = haystack.len() - needle.len();
     let mut index = from;
     while index <= last {
-        let offset = haystack[index..=last]
-            .iter()
-            .position(|byte| *byte == first)?;
+    let offset = haystack[index..=last]
+        .iter()
+        .position(|byte| byte.eq_ignore_ascii_case(&first))?;
         let start = index + offset;
         if haystack[start..start + needle.len()].eq_ignore_ascii_case(needle) {
             return Some(start);
@@ -332,11 +332,8 @@ pub(crate) fn route_tile_label(
     route_path: &Path,
     source_file: &crate::domain::RouteFile,
 ) -> String {
-    let relative = source_file
-        .route_name(route_path)
-        .unwrap_or_else(|| source_file.file_name());
-    let file_name = source_file.file_name();
-    let stem = Path::new(&file_name)
+    let file_name = source_file.file_name_str();
+    let stem = Path::new(file_name)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or_default();
@@ -357,7 +354,9 @@ pub(crate) fn route_tile_label(
             }
         }
     }
-    relative
+    source_file
+        .route_name(route_path)
+        .unwrap_or_else(|| source_file.file_name())
 }
 
 fn update_context_state(
@@ -390,19 +389,20 @@ fn kind_from_context_state(
     scenery: &Option<usize>,
     loft: &Option<usize>,
 ) -> crate::domain::AssetKind {
-    let mut candidates: Vec<(usize, crate::domain::AssetKind)> = Vec::new();
+    let mut best: Option<(usize, crate::domain::AssetKind)> = None;
     if let Some(index) = vehicle {
-        candidates.push((*index, crate::domain::AssetKind::Vehicle));
+        best = Some((*index, crate::domain::AssetKind::Vehicle));
     }
     if let Some(index) = scenery {
-        candidates.push((*index, crate::domain::AssetKind::Scenery));
+        if best.map_or(true, |(current, _)| *index > current) {
+            best = Some((*index, crate::domain::AssetKind::Scenery));
+        }
     }
     if let Some(index) = loft {
-        candidates.push((*index, crate::domain::AssetKind::Loft));
+        if best.map_or(true, |(current, _)| *index > current) {
+            best = Some((*index, crate::domain::AssetKind::Loft));
+        }
     }
-    candidates
-        .into_iter()
-        .max_by_key(|(index, _)| *index)
-        .map(|(_, kind)| kind)
+    best.map(|(_, kind)| kind)
         .unwrap_or(crate::domain::AssetKind::Other)
 }
