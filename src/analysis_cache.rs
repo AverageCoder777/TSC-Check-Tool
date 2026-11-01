@@ -26,26 +26,11 @@ pub(crate) struct FileStamp {
     pub(crate) modified: u64,
     pub(crate) size: u64,
     pub(crate) hash: u64,
-    pub(crate) content_hash: u64,
-    pub(crate) crc: u64,
-    pub(crate) content: u64,
-    pub(crate) digest: u64,
-    pub(crate) checksum: u64,
 }
 
 impl FileStamp {
-    /// Конструктор для создания штампа с единым хэшем без дублирования кода.
     pub(crate) fn new(modified: u64, size: u64, hash: u64) -> Self {
-        Self {
-            modified,
-            size,
-            hash,
-            content_hash: hash,
-            crc: hash,
-            content: hash,
-            digest: hash,
-            checksum: hash,
-        }
+        Self { modified, size, hash }
     }
 
     pub(crate) fn of(path: &Path) -> Option<Self> {

@@ -78,7 +78,31 @@ pub(crate) fn transliterate_xml_umlauts_outside(
 
 /// Есть ли в XML символы, которые нужно перевести.
 pub(crate) fn has_umlauts_in_xml(xml: &str) -> bool {
-    has_umlauts(&decode_xml_text(xml))
+    if has_umlauts(xml) {
+        return true;
+    }
+    let mut remaining = xml;
+    while let Some(ampersand) = remaining.find('&') {
+        remaining = &remaining[ampersand + 1..];
+        let Some(semicolon) = remaining.find(';') else {
+            break;
+        };
+        let entity = &remaining[..semicolon];
+        let character = if entity.starts_with("#x") || entity.starts_with("#X") {
+            u32::from_str_radix(&entity[2..], 16).ok().and_then(char::from_u32)
+        } else if entity.starts_with('#') {
+            entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+        } else {
+            None
+        };
+        if let Some(ch) = character
+            && (has_transliteration_rule(ch) || BROKEN_CHARACTERS.contains(&ch))
+        {
+            return true;
+        }
+        remaining = &remaining[semicolon + 1..];
+    }
+    false
 }
 
 pub(crate) fn transliterate_xml_umlauts(xml: &str, fixes: &CharacterFixes) -> String {

@@ -1,6 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -99,10 +97,6 @@ pub(crate) enum RouteFile {
     },
 }
 
-thread_local! {
-    static ZIP_ARCHIVE_CACHE: RefCell<HashMap<PathBuf, zip::ZipArchive<fs::File>>> =
-        RefCell::new(HashMap::new());
-}
 impl RouteFile {
     /// Имя файла маршрута относительно его папки.
     pub(crate) fn route_name(&self, route_path: &Path) -> Option<String> {

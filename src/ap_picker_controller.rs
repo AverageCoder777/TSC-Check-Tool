@@ -128,45 +128,8 @@ impl ApPickerController {
                     let target_file_path =
                         resolve_extraction_path(&assets_path, &archive_path, &entry);
 
-                    let extract_result = (|| -> Result<(), String> {
-                        let file = std::fs::File::open(&archive_path).map_err(|e| {
-                            format!("Не удалось открыть архив {}: {e}", archive_path.display())
-                        })?;
-                        let mut zip = zip::ZipArchive::new(file).map_err(|e| {
-                            format!("Не удалось прочитать архив {}: {e}", archive_path.display())
-                        })?;
-
-                        // Проверяем имя записи с обоими вариантами слешей
-                        let alt1 = entry.replace('/', "\\");
-                        let alt2 = entry.replace('\\', "/");
-
-                        let entry_idx = zip
-                            .index_for_name(&entry)
-                            .or_else(|| zip.index_for_name(&alt1))
-                            .or_else(|| zip.index_for_name(&alt2))
-                            .ok_or_else(|| format!("Файл «{entry}» не найден внутри архива"))?;
-
-                        let mut member = zip.by_index(entry_idx).map_err(|e| {
-                            format!("Не удалось прочитать файл «{entry}» из архива: {e}")
-                        })?;
-
-                        if let Some(parent) = target_file_path.parent() {
-                            std::fs::create_dir_all(parent).map_err(|e| {
-                                format!("Не удалось создать каталог {}: {e}", parent.display())
-                            })?;
-                        }
-
-                        let mut out = std::fs::File::create(&target_file_path).map_err(|e| {
-                            format!(
-                                "Не удалось создать файл {}: {e}",
-                                target_file_path.display()
-                            )
-                        })?;
-                        std::io::copy(&mut member, &mut out)
-                            .map_err(|e| format!("Ошибка распаковки {entry}: {e}"))?;
-
-                        Ok(())
-                    })();
+                    let extract_result =
+                        crate::archive::extract_archive_member(&archive_path, &entry, &target_file_path);
 
                     match extract_result {
                         Ok(()) => {

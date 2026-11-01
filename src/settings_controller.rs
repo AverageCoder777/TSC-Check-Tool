@@ -22,7 +22,7 @@ impl SettingsController {
     pub fn sync_from_app(&self) {
         let Ok(app) = self.app.lock() else { return };
         let available = crate::settings::maximum_serz_processes();
-        let all_presets: [usize; 6] = [1, 6, 8, 12, 16, 32];
+        let all_presets: [usize; 9] = [1, 2, 4, 6, 8, 12, 16, 24, 32];
         let presets: Vec<slint::SharedString> = all_presets
             .iter()
             .filter(|p| **p <= available)

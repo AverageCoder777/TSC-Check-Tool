@@ -39,16 +39,11 @@
     fn stores_repeated_assets_as_single_entry_with_count() {
         let temp = tempfile::tempdir().unwrap();
         let route = temp.path();
-        let stamp = FileStamp {
-            modified: 5,
-            size: 7,
-            hash: 0,
-            content_hash: 0,
-            crc: 0,
-            content: 0,
-            digest: 0,
-            checksum: 0,
-        };
+    let stamp = FileStamp {
+        modified: 5,
+        size: 7,
+        hash: 0,
+    };
         let mut cache = AnalysisCache::empty();
         cache.put(
             "Scenery/+000000+000000.bin".to_owned(),
@@ -90,11 +85,6 @@
             modified: stamp.modified + 1,
             size: stamp.size,
             hash: stamp.hash,
-            content_hash: stamp.content_hash,
-            crc: stamp.crc,
-            content: stamp.content,
-            digest: stamp.digest,
-            checksum: stamp.checksum,
         };
         assert!(cache.get("+000000+000000.bin", changed).is_none());
         assert!(cache.get("+000000+000000.bin", stamp).is_some());
@@ -115,11 +105,6 @@
                         modified: 0,
                         size: 0,
                         hash: 0,
-                        content_hash: 0,
-                        crc: 0,
-                        content: 0,
-                        digest: 0,
-                        checksum: 0
                     }
                 )
                 .is_none()
@@ -145,11 +130,6 @@
                         modified: 0,
                         size: 0,
                         hash: 0,
-                        content_hash: 0,
-                        crc: 0,
-                        content: 0,
-                        digest: 0,
-                        checksum: 0
                     }
                 )
                 .is_none()
@@ -165,11 +145,6 @@
             modified: 1,
             size: 2,
             hash: 0,
-            content_hash: 0,
-            crc: 0,
-            content: 0,
-            digest: 0,
-            checksum: 0,
         };
         cache.put("kept.bin".to_owned(), file_with_uses(stamp, &[]));
         cache.put("removed.bin".to_owned(), file_with_uses(stamp, &[]));

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 ///
 /// В именах файлов игры встречается кириллическая «Е» вместо латинской: такой
 /// файл нужно найти, но спутать его с другим нельзя.
-pub(crate) const HOMOGLYPHS: [(char, char); 46] = [
+pub(crate) const HOMOGLYPHS: [(char, char); 45] = [
     ('а', 'a'),
     ('б', 'b'),
     ('в', 'b'),
@@ -39,7 +39,6 @@ pub(crate) const HOMOGLYPHS: [(char, char); 46] = [
     ('э', 'e'),
     ('ю', 'i'),
     ('я', 'r'),
-    ('с', 'c'),
     ('А', 'A'),
     ('В', 'B'),
     ('Е', 'E'),

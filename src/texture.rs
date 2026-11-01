@@ -259,7 +259,14 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
 
 fn find_serz() -> Result<PathBuf, String> {
     let rw = crate::fs_utils::clean_rw_path(&crate::settings::load_last_game_path());
-    if let Some(path) = crate::assets::find_serz_path(&rw) {
+    let preferred = crate::assets::preferred_serz_path(&rw);
+    if preferred.is_file() {
+        return Ok(preferred);
+    }
+    // fallback: try find_serz_path
+    if let Some(path) = crate::assets::find_serz_path(&rw)
+        && path.is_file()
+    {
         return Ok(path);
     }
     let candidates = [

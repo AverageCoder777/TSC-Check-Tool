@@ -43,6 +43,4 @@ pub(crate) fn open_in_explorer(target_path: &Path) -> Result<(), String> {
     }
 }
 
-pub(crate) fn open_in_file_explorer(path: &Path) -> Result<(), String> {
-    open_in_explorer(path)
-}
+pub(crate) use open_in_explorer as open_in_file_explorer;

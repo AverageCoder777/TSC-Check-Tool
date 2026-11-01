@@ -103,7 +103,7 @@ pub fn classify_route_asset_type(asset: &str, uses: &[crate::domain::AssetUse]) 
 }
 pub fn is_protected_network_asset(asset: &RouteAssetItem) -> bool {
     if asset.uses.iter().any(|usage| {
-        let path = usage.source_file.display().to_lowercase();
+        let path = &usage.source_file_search;
         path.contains("tracks.bin")
             || path.contains("/networks/")
             || path.contains("\\networks\\")
@@ -120,7 +120,7 @@ pub fn is_protected_network_asset(asset: &RouteAssetItem) -> bool {
 
     if path_lower.contains("signal")
         && asset.uses.iter().any(|usage| {
-            let path = usage.source_file.display().to_lowercase();
+            let path = &usage.source_file_search;
             path.contains("tracks.bin")
                 || path.contains("/networks/")
                 || path.contains("\\networks\\")
