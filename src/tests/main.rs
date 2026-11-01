@@ -82,19 +82,25 @@
 
     #[test]
     fn accepts_serz_progress_output_when_process_succeeds() {
-        assert!(validate_serz_process(true, "Converting input.bin to output.xml", "").is_ok());
-        assert!(validate_serz_process(true, "", "").is_ok());
+        fn serz_exit_status(code: i32) -> std::process::ExitStatus {
+            std::process::Command::new("cmd")
+                .args(["/C", &format!("exit {code}")])
+                .status()
+                .unwrap()
+        }
+        assert!(validate_serz_process(serz_exit_status(0), "Converting input.bin to output.xml", "").is_ok());
+        assert!(validate_serz_process(serz_exit_status(0), "", "").is_ok());
         assert!(
-            validate_serz_process(false, "Could not open input file", "")
-.unwrap_err()
-.to_string()
-.contains("Could not open input file")
+            validate_serz_process(serz_exit_status(1), "Could not open input file", "")
+                .unwrap_err()
+                .to_string()
+                .contains("Could not open input file")
         );
         assert!(
-            validate_serz_process(true, "Converting input.bin", "warning")
-.unwrap_err()
-.to_string()
-.contains("warning")
+            validate_serz_process(serz_exit_status(0), "Converting input.bin", "warning")
+                .unwrap_err()
+                .to_string()
+                .contains("warning")
         );
     }
 

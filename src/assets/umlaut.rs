@@ -58,7 +58,7 @@ pub fn asset_chain_umlaut_evidence(
         if !extension.eq_ignore_ascii_case("bin") && !extension.eq_ignore_ascii_case("GeoPcDx") {
             continue;
         }
-        let xml = read_serz_xml(serz_path, &canonical)?;
+        let xml = read_serz_xml(serz_path, &canonical).map_err(|e| e.to_string())?;
         if crate::translit::has_umlauts_in_xml(&xml) {
             evidence.push(format!("Внутри файла: {}", canonical.display()));
         }
@@ -437,7 +437,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         if !extension.eq_ignore_ascii_case("bin") && !extension.eq_ignore_ascii_case("GeoPcDx") {
             continue;
         }
-        let xml = read_serz_xml(serz_path, &canonical)?;
+        let xml = read_serz_xml(serz_path, &canonical).map_err(|e| e.to_string())?;
         let target_file = transliterated_asset_path(&assets_root, &canonical, fixes)?;
         let mut edits = Vec::new();
         let mut protected_references: Vec<std::ops::Range<usize>> = Vec::new();
@@ -556,7 +556,7 @@ pub(crate) fn repair_umlaut_asset_chain(
             if !canonical.starts_with(&scope_root) || !visited.insert(canonical.clone()) {
                 continue;
             }
-            let xml = read_serz_xml(serz_path, &canonical)?;
+            let xml = read_serz_xml(serz_path, &canonical).map_err(|e| e.to_string())?;
             let mut protected_references: Vec<std::ops::Range<usize>> = Vec::new();
             for (reference, range) in referenced_geometry_paths(&xml) {
                 let reference_text = reference.to_text();
@@ -688,8 +688,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         let file_path = source.materialize(temp.path())?;
         let xml_path = temp.path().join("route.xml");
         if is_binary {
-let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
-            conversion?;
+            SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path).map_err(|e| e.to_string())?;
         } else {
             fs::copy(&file_path, &xml_path)
                 .map_err(|error| format!("Не удалось подготовить {}: {error}", source.display()))?;
@@ -726,8 +725,7 @@ let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
         let staged_path = if is_binary {
             let mut staged = temp.path().join("route-new");
             staged.set_extension(source.extension().unwrap());
-let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
-            conversion?;
+            SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged).map_err(|e| e.to_string())?;
             staged
         } else {
             xml_path

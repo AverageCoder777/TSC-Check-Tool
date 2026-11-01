@@ -22,22 +22,17 @@ pub(crate) fn fallback_serz_path(serz_path: &Path) -> Option<PathBuf> {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SerzError {
-    #[error("serz process failed: {0}")]
-    Process(String),
+    #[error("serz.exe process failed (exit code {code:?}): {message}")]
+    Process {
+        code: Option<i32>,
+        message: String,
+    },
     #[error(transparent)]
     Io(#[from] std::io::Error),
-}
-
-impl From<String> for SerzError {
-    fn from(value: String) -> Self {
-        Self::Process(value)
-    }
-}
-
-impl From<SerzError> for String {
-    fn from(value: SerzError) -> Self {
-        value.to_string()
-    }
+    #[error("Serz timeout: process hung")]
+    Timeout,
+    #[error("Invalid output: {0}")]
+    InvalidOutput(String),
 }
 
 
@@ -75,31 +70,37 @@ impl SerzTool {
     }
 
     pub(crate) fn bin_to_xml(&self, input: &Path, output: &Path) -> Result<(), SerzError> {
-        convert_bin_to_xml(&self.primary, input, output).or_else(|primary_error| {
-            let Some(fallback) = &self.fallback else {
-                return Err(primary_error);
-            };
-            convert_bin_to_xml(fallback, input, output).map_err(|fallback_error| {
-                SerzError::from(format!(
+    convert_bin_to_xml(&self.primary, input, output).or_else(|primary_error| {
+        let Some(fallback) = &self.fallback else {
+            return Err(primary_error);
+        };
+        convert_bin_to_xml(fallback, input, output).map_err(|fallback_error| {
+            SerzError::Process {
+                code: None,
+                message: format!(
                     "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
                     fallback.display()
-                ))
-            })
+                ),
+            }
         })
+    })
     }
 
     pub(crate) fn xml_to_bin(&self, input: &Path, output: &Path) -> Result<(), SerzError> {
-        convert_xml_to_bin(&self.primary, input, output).or_else(|primary_error| {
-            let Some(fallback) = &self.fallback else {
-                return Err(primary_error);
-            };
-            convert_xml_to_bin(fallback, input, output).map_err(|fallback_error| {
-                SerzError::from(format!(
+    convert_xml_to_bin(&self.primary, input, output).or_else(|primary_error| {
+        let Some(fallback) = &self.fallback else {
+            return Err(primary_error);
+        };
+        convert_xml_to_bin(fallback, input, output).map_err(|fallback_error| {
+            SerzError::Process {
+                code: None,
+                message: format!(
                     "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
                     fallback.display()
-                ))
-            })
+                ),
+            }
         })
+    })
     }
 }
 
@@ -144,12 +145,12 @@ pub(crate) fn find_serz_path(target: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn read_serz_xml(serz_path: &Path, asset_path: &Path) -> Result<String, SerzError> {
-    let temp = tempdir().map_err(|error| format!("Не удалось создать временную папку: {error}"))?;
+    let temp = tempdir().map_err(|error| SerzError::InvalidOutput(format!("Не удалось создать временную папку: {error}")))?;
     let xml_path = temp.path().join("asset.xml");
 let conversion = SerzTool::new(serz_path).bin_to_xml(asset_path, &xml_path);
     conversion?;
     let bytes = fs::read(&xml_path)
-        .map_err(|error| format!("Не удалось прочитать XML {}: {error}", xml_path.display()))?;
+        .map_err(|error| SerzError::InvalidOutput(format!("Не удалось прочитать XML {}: {error}", xml_path.display())))?;
     Ok(decode_xml_bytes(&bytes))
 }
 
@@ -172,7 +173,7 @@ pub fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Ou
 
     let parent = serz_path
         .parent()
-        .ok_or_else(|| format!("Некорректный путь к Serz: {}", serz_path.display()))?;
+        .ok_or_else(|| SerzError::InvalidOutput(format!("Некорректный путь к Serz: {}", serz_path.display())))?;
     let mut cmd = Command::new(serz_path);
     cmd.current_dir(parent)
         .args(args)
@@ -219,9 +220,7 @@ pub fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Ou
                     let _ = child.wait();
                     let _ = stdout_thread.join();
                     let _ = stderr_thread.join();
-                    return Err(SerzError::Process(
-                        "serz.exe превысил лимит времени выполнения".into(),
-                    ));
+                    return Err(SerzError::Timeout);
                 }
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -252,10 +251,10 @@ pub(crate) fn convert_bin_to_xml(
 ) -> Result<(), SerzError> {
     if xml_path.exists() {
         fs::remove_file(xml_path).map_err(|error| {
-            format!(
+            SerzError::InvalidOutput(format!(
                 "не удалось удалить предыдущий временный XML {}: {error}",
                 xml_path.display()
-            )
+            ))
         })?;
     }
     let mut args = vec![legacy_windows_path(bin_path).display().to_string()];
@@ -263,25 +262,24 @@ pub(crate) fn convert_bin_to_xml(
     let output = serz_output(serz_path, &args)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    validate_serz_process(output.status.success(), &stdout, &stderr)
-        .map_err(|error| format!("{error} (код выхода {})", output.status))?;
+    validate_serz_process(output.status, &stdout, &stderr)?;
     let metadata = fs::metadata(xml_path).map_err(|error| {
-        format!(
+        SerzError::InvalidOutput(format!(
             "Serz завершился успешно, но выходной XML {} недоступен: {error}",
             xml_path.display()
-        )
+        ))
     })?;
     if !metadata.is_file() || metadata.len() == 0 {
-        return Err(format!(
+        return Err(SerzError::InvalidOutput(format!(
             "Serz завершился успешно, но не создал непустой XML-файл: {}",
             xml_path.display()
-        ).into());
+        )));
     }
-    if !has_complete_xml_tail(xml_path)? {
-        return Err(format!(
-            "Serz создал незавершённый XML для {}. Файл использует формат, который не поддерживает конвертация в XML.",
+    if !has_complete_xml_tail(xml_path).map_err(SerzError::InvalidOutput)? {
+        return Err(SerzError::InvalidOutput(format!(
+            "Serz создал незавершённый XML для {}. Файл использует формат, который не поддерживает конвертацию в XML.",
             bin_path.display()
-        ).into());
+        )));
     }
     Ok(())
 }
@@ -328,10 +326,10 @@ pub(crate) fn convert_xml_to_bin(
         .suffix(".bin")
         .tempfile_in(staging_dir)
         .map_err(|error| {
-            format!(
+            SerzError::InvalidOutput(format!(
                 "не удалось создать временный BIN в {}: {error}",
                 staging_dir.display()
-            )
+            ))
         })?
         .into_temp_path();
     let staging_output = staging_output.to_path_buf();
@@ -351,43 +349,43 @@ pub(crate) fn convert_xml_to_bin(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     println!("[Serz Output] stdout: {}, stderr: {}", stdout, stderr);
-    validate_serz_process(output.status.success(), &stdout, &stderr).map_err(|error| {
+    validate_serz_process(output.status, &stdout, &stderr).map_err(|error| {
         let _ = fs::remove_file(&staging_output);
-        format!("{error} (код выхода {})", output.status)
+        error
     })?;
 
     let metadata = fs::metadata(&staging_output).map_err(|error| {
         let _ = fs::remove_file(&staging_output);
-        format!(
+        SerzError::InvalidOutput(format!(
             "Serz завершился успешно, но выходной бинарный файл {} недоступен: {error}",
             staging_output.display()
-        )
+        ))
     })?;
     if !metadata.is_file() || metadata.len() == 0 {
         let _ = fs::remove_file(&staging_output);
-        return Err(format!(
+        return Err(SerzError::InvalidOutput(format!(
             "Serz не сгенерировал данные или вернул пустой файл: {}",
             staging_output.display()
-        ).into());
+        )));
     }
 
     fs::copy(&staging_output, target_asset_path).map_err(|error| {
         let _ = fs::remove_file(&staging_output);
-        format!(
+        SerzError::InvalidOutput(format!(
             "Не удалось скопировать скомпилированный BIN в {}: {error}",
             target_asset_path.display()
-        )
+        ))
     })?;
     let _ = fs::remove_file(&staging_output);
     Ok(())
 }
 
 pub(crate) fn validate_serz_process(
-    status_success: bool,
+    status: std::process::ExitStatus,
     stdout: &str,
     stderr: &str,
 ) -> Result<(), SerzError> {
-    if !status_success {
+    if !status.success() {
         let detail = if !stderr.trim().is_empty() {
             stderr.trim().to_owned()
         } else if stdout.trim().is_empty() {
@@ -395,10 +393,16 @@ pub(crate) fn validate_serz_process(
         } else {
             stdout.trim().to_owned()
         };
-        return Err(detail.into());
+        return Err(SerzError::Process {
+            code: status.code(),
+            message: detail,
+        });
     }
     if !stderr.trim().is_empty() {
-        return Err(format!("Serz сообщил об ошибке: {}", stderr.trim()).into());
+        return Err(SerzError::Process {
+            code: status.code(),
+            message: format!("Serz сообщил об ошибке: {}", stderr.trim()),
+        });
     }
     Ok(())
 }
