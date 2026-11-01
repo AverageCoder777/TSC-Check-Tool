@@ -321,6 +321,7 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path)
             }
         }
             Err(error) => {
+                transaction.rollback();
                 return Err(format!(
                     "Заменено размещений: {replaced_instances}; успешно изменено файлов: {replaced_files}. Ошибка в {}: {error}. Созданные резервные копии: {}",
                     source_file.display(),

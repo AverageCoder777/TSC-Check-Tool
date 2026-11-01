@@ -18,10 +18,8 @@ impl FileTransaction {
     pub(crate) fn commit(&mut self) {
         self.committed = true;
     }
-}
 
-impl Drop for FileTransaction {
-    fn drop(&mut self) {
+    pub(crate) fn rollback(&mut self) {
         if self.committed {
             return;
         }
@@ -33,6 +31,13 @@ impl Drop for FileTransaction {
                 let _ = fs::rename(backup, original);
             }
         }
+        self.committed = true;
+    }
+}
+
+impl Drop for FileTransaction {
+    fn drop(&mut self) {
+        self.rollback();
     }
 }
 
