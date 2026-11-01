@@ -41,10 +41,6 @@ pub struct AuditReport {
     pub broken_references: Vec<BrokenResourceRef>,
 }
 
-#[inline]
-fn normalize_ap_path(value: &str) -> String {
-    value.replace('/', "\\").trim().to_lowercase()
-}
 
 pub use crate::archive::ApArchiveCache;
 pub use crate::fs_utils::normalize_path;

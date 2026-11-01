@@ -31,7 +31,7 @@ pub(crate) fn clear_route_icon_cache() {
 mod analysis_cache;
 mod ap_picker_controller;
 mod archive;
-mod diagnostics;
+
 mod fs_utils;
 mod xml_scan;
 mod app;
@@ -469,11 +469,8 @@ fn main() {
         }
     });
 
-    let settings_weak = settings.weak.clone();
     ui.on_open_settings(move || {
-        if let Some(w) = settings_weak.upgrade() {
-            let _ = w.show();
-        }
+        settings.show();
     });
 
     let auditor = auditor_controller::AuditorController::new();
@@ -494,12 +491,6 @@ fn main() {
 
 #[cfg(test)]
 pub(crate) use assets::*;
-#[cfg(test)]
-pub(crate) use archive::*;
-#[cfg(test)]
-pub(crate) use fs_utils::*;
-#[cfg(test)]
-pub(crate) use xml_scan::*;
 #[cfg(test)]
 pub(crate) use domain::*;
 #[cfg(test)]
