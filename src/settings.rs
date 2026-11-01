@@ -23,36 +23,24 @@ impl Default for AppConfig {
     }
 }
 
+pub(crate) fn app_data_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|app_data| PathBuf::from(app_data).join("TS-Checker"))
+}
+
 pub(crate) fn last_game_path_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("last_game_path.txt")
-    })
+    app_data_dir().map(|dir| dir.join("last_game_path.txt"))
 }
 
 pub(crate) fn route_thumbnail_setting_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("route_thumbnails_enabled.txt")
-    })
+    app_data_dir().map(|dir| dir.join("route_thumbnails_enabled.txt"))
 }
 
 pub(crate) fn serz_process_limit_setting_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("serz_process_limit.txt")
-    })
+    app_data_dir().map(|dir| dir.join("serz_process_limit.txt"))
 }
 
 pub(crate) fn locoswap_path_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("locoswap_path.txt")
-    })
+    app_data_dir().map(|dir| dir.join("locoswap_path.txt"))
 }
 
 pub(crate) fn load_locoswap_path() -> String {
@@ -80,11 +68,7 @@ pub(crate) fn save_locoswap_path(path: &str) -> Result<(), String> {
 }
 
 pub(crate) fn asset_replacement_log_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("replacement_log.jsonl")
-    })
+    app_data_dir().map(|dir| dir.join("replacement_log.jsonl"))
 }
 
 pub(crate) fn append_asset_replacement_log(
@@ -113,16 +97,21 @@ pub(crate) fn append_asset_replacement_log(
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("Не удалось определить время записи журнала: {error}"))?
         .as_secs();
-    let line = serde_json::to_vec(entry)
+    let mut line = serde_json::to_vec(entry)
         .map_err(|error| format!("Не удалось подготовить запись журнала замен: {error}"))?;
-    file.write_all(&line)
-        .and_then(|()| file.write_all(b"\n"))
-        .map_err(|error| {
-            format!(
-                "Не удалось записать журнал замен {}: {error}",
-                path.display()
-            )
-        })
+    line.push(b'\n');
+    file.write_all(&line).map_err(|error| {
+        format!(
+            "Не удалось записать журнал замен {}: {error}",
+            path.display()
+        )
+    })?;
+    file.flush().map_err(|error| {
+        format!(
+            "Не удалось записать журнал замен {}: {error}",
+            path.display()
+        )
+    })
 }
 
 pub(crate) fn maximum_serz_processes() -> usize {
@@ -190,11 +179,7 @@ pub(crate) fn write_serz_process_limit(path: &Path, limit: usize) -> Result<(), 
 }
 
 pub(crate) fn route_scan_on_hdd_setting_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("route_scan_on_hdd.txt")
-    })
+    app_data_dir().map(|dir| dir.join("route_scan_on_hdd.txt"))
 }
 
 pub(crate) fn load_route_scan_on_hdd() -> Result<bool, String> {
@@ -287,11 +272,7 @@ pub(crate) fn write_route_thumbnail_setting(path: &Path, enabled: bool) -> Resul
 }
 
 pub(crate) fn ignored_route_ids_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("ignored_routes.txt")
-    })
+    app_data_dir().map(|dir| dir.join("ignored_routes.txt"))
 }
 
 pub(crate) fn load_ignored_route_ids() -> Result<HashSet<String>, String> {
@@ -315,7 +296,12 @@ pub(crate) fn load_ignored_route_ids() -> Result<HashSet<String>, String> {
 pub(crate) fn load_last_game_path() -> String {
     last_game_path_file()
         .and_then(|path| fs::read_to_string(path).ok())
-        .map(|path| path.trim().to_owned())
+        .map(|path| {
+            path.trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_owned()
+        })
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| r"C:\Program Files (x86)\Steam\steamapps\common\RailWorks".to_owned())
 }
@@ -337,11 +323,7 @@ pub(crate) fn save_last_game_path(path: &str) -> Result<(), String> {
 }
 
 pub(crate) fn hide_quick_drive_free_roam_setting_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("hide_quick_drive_free_roam.txt")
-    })
+    app_data_dir().map(|dir| dir.join("hide_quick_drive_free_roam.txt"))
 }
 
 pub(crate) fn load_hide_quick_drive_free_roam() -> Result<bool, String> {
@@ -383,11 +365,7 @@ pub(crate) fn save_hide_quick_drive_free_roam(enabled: bool) -> Result<(), Strin
 }
 
 pub(crate) fn config_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("config.json")
-    })
+    app_data_dir().map(|dir| dir.join("config.json"))
 }
 
 pub(crate) fn load_config() -> AppConfig {
