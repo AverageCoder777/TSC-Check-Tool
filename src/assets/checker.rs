@@ -249,15 +249,13 @@ where
         .into_iter()
         .map(crate::domain::RouteFile::Path)
         .collect();
-    let outside: Vec<String> = route_files
+    let outside: HashSet<String> = route_files
         .iter()
-        .filter_map(|file| file.route_name(route_path))
+        .filter_map(|file| file.route_name(route_path).map(|name| name.to_lowercase()))
         .collect();
     for member in collect_archive_members(route_path, ignore_scenarios)? {
-        let name = member.route_name(route_path).unwrap_or_default();
-        if outside
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&name))
+        if let Some(name) = member.route_name(route_path)
+            && outside.contains(&name.to_lowercase())
         {
             // Такой файл лежит рядом с архивом и перекрывает запись архива.
             continue;
