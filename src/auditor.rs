@@ -1102,6 +1102,70 @@ pub fn extract_xml_texture_id_refs(
     }
 }
 
+pub fn extract_xml_cross_section_refs(
+    xml: &str,
+    current_file_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+) {
+    let assets_root = find_assets_root(current_file_path);
+    let parent_dir = current_file_path.parent();
+
+    static RE_CS: OnceLock<Regex> = OnceLock::new();
+    let re_cs = RE_CS.get_or_init(|| {
+        Regex::new(r"<(?:CrossSectionID|CrossSectionCapID|CrossSectionStartCapID|CrossSectionEndCapID)[^>]*>([^<]+)</").unwrap()
+    });
+
+    for cap in re_cs.captures_iter(xml) {
+        let raw = cap[1].trim().replace('/', "\\");
+        let raw = raw.trim_start_matches('\\');
+        if raw.is_empty() {
+            continue;
+        }
+
+        // Strip [00] prefix if present
+        let clean = if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']')) {
+            if b_close >= b_open {
+                format!("{}{}", &raw[..b_open], &raw[b_close + 1..])
+            } else {
+                raw.to_string()
+            }
+        } else {
+            raw.to_string()
+        };
+
+        // If the path already has .xsec or .geopcdx, strip it to get the base stem
+        let base = if clean.to_ascii_lowercase().ends_with(".xsec") {
+            &clean[..clean.len() - 5]
+        } else if clean.to_ascii_lowercase().ends_with(".geopcdx") {
+            &clean[..clean.len() - 8]
+        } else {
+            &clean
+        };
+
+        let mut check_and_add = |candidate: PathBuf| {
+            if loose_path_exists(&candidate) {
+                let norm = crate::fs_utils::normalize_path(&candidate);
+                if !outgoing.contains(&norm) {
+                    register_texture_siblings(&candidate, outgoing);
+                    outgoing.push(norm);
+                }
+            }
+        };
+
+        // 1. Check relative to Assets root
+        if let Some(root) = &assets_root {
+            check_and_add(root.join(format!("{}.XSec", base)));
+            check_and_add(root.join(format!("{}.GeoPcDx", base)));
+        }
+
+        // 2. Check relative to current file's directory
+        if let Some(p_dir) = parent_dir {
+            check_and_add(p_dir.join(format!("{}.XSec", base)));
+            check_and_add(p_dir.join(format!("{}.GeoPcDx", base)));
+        }
+    }
+}
+
 pub fn extract_absolute_blueprint_refs(
     xml: &str,
     current_file_path: &Path,
@@ -1290,6 +1354,7 @@ fn audit_one_file(
     let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
     let mut outgoing: Vec<PathBuf> = Vec::new();
     extract_absolute_blueprint_refs(&xml, file, &mut outgoing);
+    extract_xml_cross_section_refs(&xml, file, &mut outgoing);
     let parent = file.parent().unwrap_or(folder);
     let product_root = product_root_for(file, assets_root);
     let parent_file = file.to_path_buf();
