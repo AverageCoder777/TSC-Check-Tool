@@ -1116,6 +1116,70 @@ pub fn extract_absolute_blueprint_refs(
     }
 }
 
+/// Identifies common multi-language vehicle category directories.
+pub fn is_vehicle_category_folder(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "railvehicles"
+            | "elloks"
+            | "eloks"
+            | "dieselloks"
+            | "dampfloks"
+            | "personenwagen"
+            | "personenw"
+            | "gueterwagen"
+            | "guterwagen"
+            | "triebwagen"
+            | "steuerwagen"
+            | "rollingstock"
+            | "wagons"
+    )
+}
+
+/// Resolves the component root folder containing the script by walking up the directory tree
+/// until it finds a recognized category folder, a parent directory hosting a .bin blueprint,
+/// or the package boundary.
+pub fn find_scripted_component_root(script_path: &Path) -> Option<PathBuf> {
+    let mut curr = script_path.parent();
+    let mut candidate_root = None;
+
+    while let Some(dir) = curr {
+        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+        // Stop traversal at Assets boundary
+        if dir_name.eq_ignore_ascii_case("Assets") {
+            break;
+        }
+
+        // If direct parent is a recognized category folder (e.g. Elloks/<LocoFolder>),
+        // then `dir` is the vehicle root.
+        if let Some(parent) = dir.parent() {
+            if let Some(p_name) = parent.file_name().and_then(|n| n.to_str()) {
+                if is_vehicle_category_folder(p_name) {
+                    return Some(dir.to_path_buf());
+                }
+            }
+        }
+
+        // Check if `dir` contains a controlling blueprint (.bin)
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            let has_blueprint = entries.flatten().any(|e| {
+                e.path()
+                    .extension()
+                    .map_or(false, |ext| ext.eq_ignore_ascii_case("bin"))
+            });
+            if has_blueprint {
+                candidate_root = Some(dir.to_path_buf());
+            }
+        }
+
+        curr = dir.parent();
+    }
+
+    candidate_root.or_else(|| script_path.parent().map(|p| p.to_path_buf()))
+}
+
 fn audit_one_file(
     file: &Path,
     folder: &Path,
@@ -1319,6 +1383,8 @@ pub fn audit_folder_with_progress(
 ) -> AuditReport {
     let mut files = Vec::new();
     let mut texture_files = Vec::new();
+    let mut scripted_component_roots: std::collections::HashSet<PathBuf> =
+        std::collections::HashSet::new();
     if let Ok(entries) = walkdir::WalkDir::new(folder_path)
         .into_iter()
         .filter_entry(|e| {
@@ -1346,7 +1412,11 @@ pub fn audit_folder_with_progress(
                     .and_then(|e| e.to_str())
                     .unwrap_or("")
                     .to_lowercase();
-                if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
+                if ext == "lua" || ext == "out" {
+                    if let Some(root) = find_scripted_component_root(path) {
+                        scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
+                    }
+                } else if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
                     files.push(path.to_path_buf());
                 } else if ext == "tgpcdx" {
                     texture_files.push(path.to_path_buf());
@@ -1354,7 +1424,7 @@ pub fn audit_folder_with_progress(
             }
         }
     } else {
-        collect_files(folder_path, &mut files, &mut texture_files);
+        collect_files(folder_path, &mut files, &mut texture_files, &mut scripted_component_roots);
     }
 
     let product_root = product_root_for(folder_path, assets_root);
@@ -1387,11 +1457,16 @@ pub fn audit_folder_with_progress(
                         && !path.starts_with(folder_path)
                     {
                         all_product_files.push(path.to_path_buf());
+                    } else if ext == "lua" || ext == "out" {
+                        if let Some(root) = find_scripted_component_root(path) {
+                            scripted_component_roots
+                                .insert(crate::fs_utils::normalize_path(&root));
+                        }
                     }
                 }
             }
         } else {
-            collect_files(&product_root, &mut all_product_files, &mut dummy_textures);
+            collect_files(&product_root, &mut all_product_files, &mut dummy_textures, &mut scripted_component_roots);
             all_product_files.retain(|p| !p.starts_with(folder_path));
         }
         extra_files = all_product_files;
@@ -1524,6 +1599,15 @@ pub fn audit_folder_with_progress(
             _ => false,
         };
         if is_orphan {
+            let is_shielded = (ext == "geopcdx" || ext == "tgpcdx")
+                && scripted_component_roots.iter().any(|root| {
+                    nf.starts_with(&std::path::PathBuf::from(
+                        root.to_string_lossy().to_lowercase(),
+                    ))
+                });
+            if is_shielded {
+                continue;
+            }
             orphans.push(nf);
             deduped.push(BrokenResourceRef {
                 parent_file: f.clone(),
@@ -1547,7 +1631,7 @@ pub fn audit_folder_with_progress(
     }
 }
 
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, textures_out: &mut Vec<PathBuf>) {
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, textures_out: &mut Vec<PathBuf>, scripted_roots: &mut std::collections::HashSet<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -1559,14 +1643,18 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, textures_out: &mut Vec<Path
                 continue;
             }
             if path.is_dir() {
-                collect_files(&path, out, textures_out);
+                collect_files(&path, out, textures_out, scripted_roots);
             } else if path.is_file() {
                 let ext = path
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("")
                     .to_lowercase();
-                if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
+                if ext == "lua" || ext == "out" {
+                    if let Some(root) = find_scripted_component_root(&path) {
+                        scripted_roots.insert(crate::fs_utils::normalize_path(&root));
+                    }
+                } else if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
                     out.push(path);
                 } else if ext == "tgpcdx" {
                     textures_out.push(path);
