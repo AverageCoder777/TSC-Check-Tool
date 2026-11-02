@@ -925,7 +925,7 @@ fn audit_one_file(
             outgoing.push(crate::fs_utils::normalize_path(target));
             if kind == AssetResourceKind::Texture && loose_path_exists(target) {
                 if let (Some(dir), Some(stem)) = (target.parent(), target.file_stem()) {
-                    for suf in ["_Au", "_Sp", "_Wi"] {
+                    for suf in ["_Au", "_Sp", "_Wi", "_Su"] {
                         let seasonal = dir.join(format!("{}{}.TgPcDx", stem.to_string_lossy(), suf));
                         if loose_path_exists(&seasonal) {
                             outgoing.push(crate::fs_utils::normalize_path(&seasonal));
