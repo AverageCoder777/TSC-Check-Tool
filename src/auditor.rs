@@ -1031,8 +1031,72 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
             if b_close > b_open {
                 let prefix = &raw[..b_open];
                 let model = &raw[b_close + 1..];
-                try_register(&format!("{}{}.GeoPcDx", prefix, model));
-                try_register(&format!("{}{}.XSec", prefix, model));
+            try_register(&format!("{}{}.GeoPcDx", prefix, model));
+            try_register(&format!("{}{}.XSec", prefix, model));
+            try_register(&format!("{}{}.TgPcDx", prefix, model)); // <-- ADD THIS
+            }
+        }
+    }
+}
+
+pub fn extract_xml_texture_id_refs(
+    xml: &str,
+    current_file_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+) {
+    let assets_root = find_assets_root(current_file_path);
+    let parent_dir = current_file_path.parent();
+
+    static RE_TEXTURE_ID: OnceLock<Regex> = OnceLock::new();
+    let re_tex = RE_TEXTURE_ID.get_or_init(|| {
+        Regex::new(r"<TextureID[^>]*>([^<]+)</TextureID>").unwrap()
+    });
+
+    for cap in re_tex.captures_iter(xml) {
+        let raw = cap[1].trim().replace('/', "\\");
+        let raw = raw.trim_start_matches('\\');
+        if raw.is_empty() {
+            continue;
+        }
+
+        // Remove [00] LOD/Mip prefix if present
+        let clean_rel = if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']')) {
+            if b_close >= b_open {
+                format!("{}{}", &raw[..b_open], &raw[b_close + 1..])
+            } else {
+                raw.to_string()
+            }
+        } else {
+            raw.to_string()
+        };
+
+        // Append .TgPcDx if extension is omitted
+        let file_rel = if clean_rel.to_ascii_lowercase().ends_with(".tgpcdx") {
+            clean_rel
+        } else {
+            format!("{}.TgPcDx", clean_rel)
+        };
+
+        // 1. Check relative to Assets root
+        if let Some(root) = &assets_root {
+            let candidate = root.join(&file_rel);
+            if loose_path_exists(&candidate) {
+                let norm = crate::fs_utils::normalize_path(&candidate);
+                if !outgoing.contains(&norm) {
+                    outgoing.push(norm);
+                }
+                continue;
+            }
+        }
+
+        // 2. Check relative to file parent directory
+        if let Some(p_dir) = parent_dir {
+            let candidate = p_dir.join(&file_rel);
+            if loose_path_exists(&candidate) {
+                let norm = crate::fs_utils::normalize_path(&candidate);
+                if !outgoing.contains(&norm) {
+                    outgoing.push(norm);
+                }
             }
         }
     }
@@ -1237,6 +1301,7 @@ fn audit_one_file(
         .to_lowercase();
 
     if ext == "bin" {
+        extract_xml_texture_id_refs(&xml, file, &mut outgoing);
         for (kind, raw) in extract_bin_references(&xml, &product_root) {
             let cands = candidate_paths(&raw, parent, &product_root, assets_root, kind);
             let expected = cands
