@@ -914,6 +914,103 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
     }
 }
 
+fn find_assets_root(start_path: &Path) -> Option<PathBuf> {
+    let mut curr = start_path;
+    loop {
+        if let Some(name) = curr.file_name().and_then(|n| n.to_str()) {
+            if name.eq_ignore_ascii_case("Assets") {
+                return Some(curr.to_path_buf());
+            }
+        }
+        match curr.parent() {
+            Some(p) => curr = p,
+            None => break,
+        }
+    }
+    None
+}
+
+pub fn extract_raw_bin_references(
+    bytes: &[u8],
+    bin_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+) {
+    // 1. Same-Stem Safety Net
+    for ext in &["GeoPcDx", "XSec"] {
+        let paired = bin_path.with_extension(ext);
+        if loose_path_exists(&paired) {
+            let norm = crate::fs_utils::normalize_path(&paired);
+            if !outgoing.contains(&norm) {
+                register_texture_siblings(&norm, outgoing);
+                outgoing.push(norm);
+            }
+        }
+    }
+
+    // 2. Raw byte string regex matching
+    let assets_root = find_assets_root(bin_path);
+    let parent_dir = bin_path.parent();
+    let lossy_text = String::from_utf8_lossy(bytes);
+
+    static RE_EXT: OnceLock<Regex> = OnceLock::new();
+    static RE_LOD: OnceLock<Regex> = OnceLock::new();
+
+    let re_ext = RE_EXT.get_or_init(|| {
+        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\.(?:geopcdx|tgpcdx|xsec|bin)").unwrap()
+    });
+    let re_lod = RE_LOD.get_or_init(|| {
+        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[\d{2}\][a-zA-Z0-9_\-]+").unwrap()
+    });
+
+    let mut try_register = |rel_str: &str| {
+        let clean = rel_str.trim_matches(|c| c == '\0' || c == '"' || c == '\'').replace('/', "\\");
+        if clean.is_empty() {
+            return;
+        }
+
+        // Test relative to Assets root
+        if let Some(root) = &assets_root {
+            let candidate = root.join(&clean);
+            if loose_path_exists(&candidate) {
+                let norm = crate::fs_utils::normalize_path(&candidate);
+                if !outgoing.contains(&norm) {
+                    register_texture_siblings(&candidate, outgoing);
+                    outgoing.push(norm);
+                }
+                return;
+            }
+        }
+
+        // Test relative to parent directory
+        if let Some(dir) = parent_dir {
+            let candidate = dir.join(&clean);
+            if loose_path_exists(&candidate) {
+                let norm = crate::fs_utils::normalize_path(&candidate);
+                if !outgoing.contains(&norm) {
+                    register_texture_siblings(&candidate, outgoing);
+                    outgoing.push(norm);
+                }
+            }
+        }
+    };
+
+    for mat in re_ext.find_iter(&lossy_text) {
+        try_register(mat.as_str());
+    }
+
+    for mat in re_lod.find_iter(&lossy_text) {
+        let raw = mat.as_str();
+        if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']')) {
+            if b_close > b_open {
+                let prefix = &raw[..b_open];
+                let model = &raw[b_close + 1..];
+                try_register(&format!("{}{}.GeoPcDx", prefix, model));
+                try_register(&format!("{}{}.XSec", prefix, model));
+            }
+        }
+    }
+}
+
 fn audit_one_file(
     file: &Path,
     folder: &Path,
@@ -921,10 +1018,31 @@ fn audit_one_file(
     serz_path: &Path,
     ap_cache: &ApArchiveCache,
 ) -> FileAuditOutcome {
-    let xml = match crate::assets::read_serz_xml(serz_path, file) {
+let xml = match crate::assets::read_serz_xml(serz_path, file) {
         Ok(x) => x,
         Err(_) => match fs::read(file) {
             Ok(bytes) if bytes.starts_with(b"<?xm") => String::from_utf8_lossy(&bytes).to_string(),
+            Ok(bytes) => {
+                let is_bin = file
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.eq_ignore_ascii_case("bin"))
+                    .unwrap_or(false);
+                if is_bin {
+                    let mut outgoing = Vec::new();
+                    extract_raw_bin_references(&bytes, file, &mut outgoing);
+                    return FileAuditOutcome {
+                        parent: file.to_path_buf(),
+                        broken: Vec::new(),
+                        outgoing,
+                    };
+                }
+                return FileAuditOutcome {
+                    parent: file.to_path_buf(),
+                    broken: Vec::new(),
+                    outgoing: Vec::new(),
+                };
+            }
             _ => {
                 return FileAuditOutcome {
                     parent: file.to_path_buf(),
