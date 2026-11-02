@@ -878,6 +878,41 @@ fn ap_exists(
     false
 }
 
+fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
+    let (Some(dir), Some(stem_os)) = (target.parent(), target.file_stem()) else {
+        return;
+    };
+    let stem = stem_os.to_string_lossy();
+
+    const SEASONAL_SUFFIXES: [&str; 4] = ["_Au", "_Sp", "_Wi", "_Su"];
+    let is_seasonal = SEASONAL_SUFFIXES.iter().any(|suf| stem.ends_with(suf));
+
+    if !is_seasonal {
+        for suf in SEASONAL_SUFFIXES {
+            let seasonal = dir.join(format!("{}{}.TgPcDx", stem, suf));
+            if loose_path_exists(&seasonal) {
+                outgoing.push(crate::fs_utils::normalize_path(&seasonal));
+            }
+        }
+    }
+
+    if stem.ends_with("_nm") {
+        if let Some(base) = stem.strip_suffix("_nm") {
+            let nmc = dir.join(format!("{}_nmc.TgPcDx", base));
+            if loose_path_exists(&nmc) {
+                outgoing.push(crate::fs_utils::normalize_path(&nmc));
+            }
+        }
+    } else if stem.ends_with("_nmc") {
+        if let Some(base) = stem.strip_suffix("_nmc") {
+            let nm = dir.join(format!("{}_nm.TgPcDx", base));
+            if loose_path_exists(&nm) {
+                outgoing.push(crate::fs_utils::normalize_path(&nm));
+            }
+        }
+    }
+}
+
 fn audit_one_file(
     file: &Path,
     folder: &Path,
@@ -924,14 +959,7 @@ fn audit_one_file(
             let target = cands.iter().find(|p| loose_path_exists(p)).unwrap_or(&expected);
             outgoing.push(crate::fs_utils::normalize_path(target));
             if kind == AssetResourceKind::Texture && loose_path_exists(target) {
-                if let (Some(dir), Some(stem)) = (target.parent(), target.file_stem()) {
-                    for suf in ["_Au", "_Sp", "_Wi", "_Su"] {
-                        let seasonal = dir.join(format!("{}{}.TgPcDx", stem.to_string_lossy(), suf));
-                        if loose_path_exists(&seasonal) {
-                            outgoing.push(crate::fs_utils::normalize_path(&seasonal));
-                        }
-                    }
-                }
+                register_texture_siblings(target, &mut outgoing);
             }
             if !exists {
                 let key = (kind, expected.clone(), parent_file.clone());
@@ -971,14 +999,7 @@ fn audit_one_file(
             outgoing.push(crate::fs_utils::normalize_path(target));
 
             if loose_path_exists(target) {
-                if let (Some(dir), Some(stem)) = (target.parent(), target.file_stem()) {
-                    for suf in ["_Au", "_Sp", "_Wi"] {
-                        let seasonal = dir.join(format!("{}{}.TgPcDx", stem.to_string_lossy(), suf));
-                        if loose_path_exists(&seasonal) {
-                            outgoing.push(crate::fs_utils::normalize_path(&seasonal));
-                        }
-                    }
-                }
+                register_texture_siblings(target, &mut outgoing);
             }
 
             if !exists {
@@ -1019,14 +1040,7 @@ fn audit_one_file(
             outgoing.push(crate::fs_utils::normalize_path(target));
 
             if loose_path_exists(target) {
-                if let (Some(dir), Some(stem)) = (target.parent(), target.file_stem()) {
-                    for suf in ["_Au", "_Sp", "_Wi"] {
-                        let seasonal = dir.join(format!("{}{}.TgPcDx", stem.to_string_lossy(), suf));
-                        if loose_path_exists(&seasonal) {
-                            outgoing.push(crate::fs_utils::normalize_path(&seasonal));
-                        }
-                    }
-                }
+                register_texture_siblings(target, &mut outgoing);
             }
 
             if !exists {
