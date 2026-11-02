@@ -974,7 +974,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
     static RE_LOD: OnceLock<Regex> = OnceLock::new();
 
     let re_ext = RE_EXT.get_or_init(|| {
-        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\.(?:geopcdx|tgpcdx|xsec|bin)").unwrap()
+        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\.(?:geopcdx|tgpcdx|xsec|bin|xml)").unwrap()
     });
     let re_lod = RE_LOD
         .get_or_init(|| Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[\d{2}\][a-zA-Z0-9_\-]+").unwrap());
@@ -1015,7 +1015,14 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
     };
 
     for mat in re_ext.find_iter(&lossy_text) {
-        try_register(mat.as_str());
+        let s = mat.as_str();
+        if s.to_ascii_lowercase().ends_with(".xml") {
+            let base = &s[..s.len() - 4];
+            try_register(&format!("{}.bin", base));
+            try_register(&format!("{}.GeoPcDx", base));
+        } else {
+            try_register(s);
+        }
     }
 
     for mat in re_lod.find_iter(&lossy_text) {
@@ -1026,6 +1033,84 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
                 let model = &raw[b_close + 1..];
                 try_register(&format!("{}{}.GeoPcDx", prefix, model));
                 try_register(&format!("{}{}.XSec", prefix, model));
+            }
+        }
+    }
+}
+
+pub fn extract_absolute_blueprint_refs(
+    xml: &str,
+    current_file_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+) {
+    let assets_root = find_assets_root(current_file_path);
+
+    static RE_BLOCK: OnceLock<Regex> = OnceLock::new();
+    static RE_PROV: OnceLock<Regex> = OnceLock::new();
+    static RE_PROD: OnceLock<Regex> = OnceLock::new();
+    static RE_BP: OnceLock<Regex> = OnceLock::new();
+
+    let re_block = RE_BLOCK.get_or_init(|| {
+        Regex::new(r"(?s)<iBlueprintLibrary-cAbsoluteBlueprintID>(.*?)</iBlueprintLibrary-cAbsoluteBlueprintID>").unwrap()
+    });
+    let re_prov = RE_PROV.get_or_init(|| {
+        Regex::new(r"<Provider[^>]*>([^<]*)</Provider>").unwrap()
+    });
+    let re_prod = RE_PROD.get_or_init(|| {
+        Regex::new(r"<Product[^>]*>([^<]*)</Product>").unwrap()
+    });
+    let re_bp = RE_BP.get_or_init(|| {
+        Regex::new(r"<BlueprintID[^>]*>([^<]+)</BlueprintID>").unwrap()
+    });
+
+    for cap in re_block.captures_iter(xml) {
+        let block = &cap[1];
+        let Some(bp_mat) = re_bp.captures(block) else { continue };
+        let raw_bp = bp_mat[1].trim().replace('/', "\\");
+        let raw_bp = raw_bp.trim_start_matches('\\');
+        if raw_bp.is_empty() {
+            continue;
+        }
+
+        let provider = re_prov.captures(block).map(|c| c[1].trim().to_string()).unwrap_or_default();
+        let product = re_prod.captures(block).map(|c| c[1].trim().to_string()).unwrap_or_default();
+
+        let base_rel = if raw_bp.to_ascii_lowercase().ends_with(".xml") {
+            &raw_bp[..raw_bp.len() - 4]
+        } else {
+            &raw_bp
+        };
+
+        let base_dir = if !provider.is_empty() && !product.is_empty() {
+            assets_root.as_ref().map(|root| root.join(provider).join(product))
+        } else {
+            current_file_path.parent().map(|p| p.to_path_buf())
+        };
+
+        let Some(target_dir) = base_dir else { continue };
+
+        let bin_candidate = target_dir.join(format!("{}.bin", base_rel));
+        if loose_path_exists(&bin_candidate) {
+            let norm = crate::fs_utils::normalize_path(&bin_candidate);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
+            }
+        }
+
+        let geo_candidate = target_dir.join(format!("{}.GeoPcDx", base_rel));
+        if loose_path_exists(&geo_candidate) {
+            let norm = crate::fs_utils::normalize_path(&geo_candidate);
+            if !outgoing.contains(&norm) {
+                register_texture_siblings(&geo_candidate, outgoing);
+                outgoing.push(norm);
+            }
+        }
+
+        let xsec_candidate = target_dir.join(format!("{}.XSec", base_rel));
+        if loose_path_exists(&xsec_candidate) {
+            let norm = crate::fs_utils::normalize_path(&xsec_candidate);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
             }
         }
     }
@@ -1076,6 +1161,7 @@ fn audit_one_file(
     let mut out: Vec<BrokenResourceRef> = Vec::new();
     let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
     let mut outgoing: Vec<PathBuf> = Vec::new();
+    extract_absolute_blueprint_refs(&xml, file, &mut outgoing);
     let parent = file.parent().unwrap_or(folder);
     let product_root = product_root_for(file, assets_root);
     let parent_file = file.to_path_buf();
