@@ -977,7 +977,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
         Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\.(?:geopcdx|tgpcdx|xsec|bin|xml)").unwrap()
     });
     let re_lod = RE_LOD
-        .get_or_init(|| Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[\d{2}\][a-zA-Z0-9_\-]+").unwrap());
+        .get_or_init(|| Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[[a-zA-Z0-9]{2}\][a-zA-Z0-9_\-]+").unwrap());
 
     let mut try_register = |rel_str: &str| {
         let clean = rel_str
@@ -1049,7 +1049,7 @@ pub fn extract_xml_texture_id_refs(
 
     static RE_TEXTURE_ID: OnceLock<Regex> = OnceLock::new();
     let re_tex = RE_TEXTURE_ID.get_or_init(|| {
-        Regex::new(r"<TextureID[^>]*>([^<]+)</TextureID>").unwrap()
+        Regex::new(r"<[a-zA-Z0-9_]*TextureID[^>]*>([^<]+)</").unwrap()
     });
 
     for cap in re_tex.captures_iter(xml) {
@@ -1059,7 +1059,7 @@ pub fn extract_xml_texture_id_refs(
             continue;
         }
 
-        // Remove [00] LOD/Mip prefix if present
+        // Strip [00], [0f], or any [xx] prefix
         let clean_rel = if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']')) {
             if b_close >= b_open {
                 format!("{}{}", &raw[..b_open], &raw[b_close + 1..])
@@ -1070,34 +1070,30 @@ pub fn extract_xml_texture_id_refs(
             raw.to_string()
         };
 
-        // Append .TgPcDx if extension is omitted
         let file_rel = if clean_rel.to_ascii_lowercase().ends_with(".tgpcdx") {
             clean_rel
         } else {
             format!("{}.TgPcDx", clean_rel)
         };
 
+        let mut check_and_add = |candidate: PathBuf| {
+            if loose_path_exists(&candidate) {
+                let norm = crate::fs_utils::normalize_path(&candidate);
+                if !outgoing.contains(&norm) {
+                    register_texture_siblings(&candidate, outgoing);
+                    outgoing.push(norm);
+                }
+            }
+        };
+
         // 1. Check relative to Assets root
         if let Some(root) = &assets_root {
-            let candidate = root.join(&file_rel);
-            if loose_path_exists(&candidate) {
-                let norm = crate::fs_utils::normalize_path(&candidate);
-                if !outgoing.contains(&norm) {
-                    outgoing.push(norm);
-                }
-                continue;
-            }
+            check_and_add(root.join(&file_rel));
         }
 
-        // 2. Check relative to file parent directory
+        // 2. Check relative to current blueprint directory
         if let Some(p_dir) = parent_dir {
-            let candidate = p_dir.join(&file_rel);
-            if loose_path_exists(&candidate) {
-                let norm = crate::fs_utils::normalize_path(&candidate);
-                if !outgoing.contains(&norm) {
-                    outgoing.push(norm);
-                }
-            }
+            check_and_add(p_dir.join(&file_rel));
         }
     }
 }
