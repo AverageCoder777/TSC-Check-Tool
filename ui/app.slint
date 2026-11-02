@@ -1245,6 +1245,10 @@ export component FolderAuditorWindow inherits Window {
     in property <[ [StandardListViewItem] ]> broken-rows;
     in property <string> incoming-text: "";
     in property <string> outgoing-text: "";
+    in-out property <int> summer-candidate-count: 0;
+    in-out property <string> summer-candidate-size-text: "";
+    in-out property <bool> is-consolidating: false;
+    callback consolidate-summer-textures();
     callback pick-folder();
     callback start-audit(string);
     callback open-source-file(int);
@@ -1328,6 +1332,11 @@ export component FolderAuditorWindow inherits Window {
         Text { text: @tr("Входящие ссылки: {}", incoming-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
         Text { text: @tr("Исходящие ссылки: {}", outgoing-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
         HorizontalBox {
+            Button {
+                text: summer-candidate-count > 0 ? "Оптимизировать лето (" + summer-candidate-count + " шт, " + summer-candidate-size-text + ")" : "Оптимизация лета";
+                enabled: summer-candidate-count > 0 && !is-consolidating;
+                clicked => { root.consolidate-summer-textures(); }
+            }
             Button {
                 text: @tr("Открыть папку файла-источника");
                 enabled: root.selected-row >= 0;

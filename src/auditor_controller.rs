@@ -146,9 +146,11 @@ impl AuditorController {
 
                     let mut items = report.broken_references;
                     let graph = report.dependency_graph;
+                    let summer_candidates = report.summer_candidates;
                     let (col, asc) = if let Ok(mut s) = thread_state.lock() {
                         s.all_items = items.clone();
                         s.dependency_graph = graph;
+                        s.summer_candidates = summer_candidates.clone();
                         (s.sort_col, s.sort_asc)
                     } else {
                         (0, true)
@@ -165,6 +167,17 @@ impl AuditorController {
                         return;
                     }
 
+                    let total_bytes: u64 = summer_candidates.iter().map(|c| c.size_bytes).sum();
+                    let size_mb = total_bytes as f64 / (1024.0 * 1024.0);
+                    let size_text = if summer_candidates.is_empty() {
+                        String::new()
+                    } else if size_mb >= 1.0 {
+                        format!("{:.1} МБ", size_mb)
+                    } else {
+                        format!("{:.0} КБ", total_bytes as f64 / 1024.0)
+                    };
+                    let cand_count = summer_candidates.len() as i32;
+
                     let h = thread_handle;
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = h.upgrade() {
@@ -172,6 +185,9 @@ impl AuditorController {
                             w.set_audit_progress(1.0);
                             w.set_audit_status(format!("Готово: {} проблем", items.len()).into());
                             w.set_selected_row(-1);
+                            w.set_summer_candidate_count(cand_count);
+                            w.set_summer_candidate_size_text(slint::SharedString::from(size_text));
+                            w.set_is_consolidating(false);
                         }
                     });
                 });
@@ -421,5 +437,56 @@ impl AuditorController {
                 });
             });
         }
-    }
-}
+
+        // Консолидация летних текстур
+        {
+            let handle = self.weak.clone();
+            let state = self.state.clone();
+
+            self.window.on_consolidate_summer_textures(move || {
+                let Some(w) = handle.upgrade() else { return };
+                let candidates = state
+                    .lock()
+                    .map(|s| s.summer_candidates.clone())
+                    .unwrap_or_default();
+                if candidates.is_empty() {
+                    return;
+                }
+                w.set_is_consolidating(true);
+
+                let ui_weak_async = handle.clone();
+                let state_async = state.clone();
+
+                std::thread::spawn(move || {
+                    let mut succeeded = 0usize;
+                    let mut freed_bytes: u64 = 0;
+
+                    for cand in &candidates {
+                        if crate::auditor::apply_summer_consolidation(cand).is_ok() {
+                            succeeded += 1;
+                            freed_bytes += cand.size_bytes;
+                        }
+                    }
+
+                    let freed_mb = freed_bytes as f64 / (1024.0 * 1024.0);
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = ui_weak_async.upgrade() {
+                            w.set_is_consolidating(false);
+                            w.set_summer_candidate_count(0);
+                            w.set_summer_candidate_size_text(slint::SharedString::from(""));
+                            let msg = format!(
+                                "Оптимизировано {} текстур, освобождено {:.1} МБ",
+                                succeeded, freed_mb
+                            );
+                            w.set_audit_status(slint::SharedString::from(msg));
+                        }
+                    });
+
+                    if let Ok(mut s) = state_async.lock() {
+                        s.summer_candidates.clear();
+                    }
+                });
+            });
+        }
+    }}

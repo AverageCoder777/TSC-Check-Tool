@@ -331,6 +331,7 @@ pub(crate) struct AuditorState {
     sort_col: usize,
     sort_asc: bool,
     dependency_graph: auditor::DependencyGraph,
+    summer_candidates: Vec<auditor::SummerConsolidationCandidate>,
 }
 
 impl Default for AuditorState {
@@ -341,6 +342,7 @@ impl Default for AuditorState {
             sort_col: 0,
             sort_asc: true,
             dependency_graph: auditor::DependencyGraph::default(),
+            summer_candidates: Vec::new(),
         }
     }
 }
