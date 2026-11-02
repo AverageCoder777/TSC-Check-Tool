@@ -12,6 +12,13 @@ export struct ScenarioItem {
     scenario-type: string,
 }
 
+export struct SummerCandidateItem {
+    base-name: string,
+    summer-name: string,
+    folder: string,
+    size-text: string,
+}
+
 export component MainWindow inherits Window {
     title: "TSC Check Tool";
     min-width: 1350px;
@@ -1248,7 +1255,11 @@ export component FolderAuditorWindow inherits Window {
     in-out property <int> summer-candidate-count: 0;
     in-out property <string> summer-candidate-size-text: "";
     in-out property <bool> is-consolidating: false;
-    callback consolidate-summer-textures();
+    in-out property <bool> show-summer-dialog: false;
+    in property <[SummerCandidateItem]> summer-candidate-rows: [];
+    callback open-summer-dialog();
+    callback close-summer-dialog();
+    callback confirm-consolidate-summer();
     callback pick-folder();
     callback start-audit(string);
     callback open-source-file(int);
@@ -1335,7 +1346,7 @@ export component FolderAuditorWindow inherits Window {
             Button {
                 text: summer-candidate-count > 0 ? "Оптимизировать лето (" + summer-candidate-count + " шт, " + summer-candidate-size-text + ")" : "Оптимизация лета";
                 enabled: summer-candidate-count > 0 && !is-consolidating;
-                clicked => { root.consolidate-summer-textures(); }
+                clicked => { root.open-summer-dialog(); }
             }
             Button {
                 text: @tr("Открыть папку файла-источника");
@@ -1359,6 +1370,95 @@ export component FolderAuditorWindow inherits Window {
             }
         }
         Text { text: root.editor-status; color: #a1a1aa; font-size: 12px; }
+    }
+
+    if show-summer-dialog: Rectangle {
+        background: #000000a0;
+
+        TouchArea {}
+
+        Rectangle {
+            width: 850px;
+            height: 520px;
+            background: #1f1f1f;
+            border-color: #383838;
+            border-width: 1px;
+            border-radius: 8px;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000080;
+
+            VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+
+                HorizontalLayout {
+                    Text {
+                        text: "Консолидация летних текстур";
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: #ffffff;
+                    }
+                    Text {
+                        text: "(" + summer-candidate-count + " шт., " + summer-candidate-size-text + ")";
+                        font-size: 14px;
+                        color: #00a86b;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: "Летние варианты (_Su) будут скопированы поверх базовых текстур, а сами файлы _Su удалены. В игре графика останется прежней.";
+                    font-size: 12px;
+                    color: #a0a0a0;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {
+                    height: 28px;
+                    background: #282828;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        Text { width: 220px; text: "Удаляемый файл (_Su)"; font-size: 12px; font-weight: 600; color: #cccccc; vertical-alignment: center; }
+                        Text { width: 180px; text: "Базовая текстура"; font-size: 12px; font-weight: 600; color: #cccccc; vertical-alignment: center; }
+                        Text { width: 90px; text: "Размер"; font-size: 12px; font-weight: 600; color: #cccccc; vertical-alignment: center; }
+                        Text { horizontal-stretch: 1; text: "Папка"; font-size: 12px; font-weight: 600; color: #cccccc; vertical-alignment: center; }
+                    }
+                }
+
+                ListView {
+                    for item in summer-candidate-rows: Rectangle {
+                        height: 26px;
+                        background: transparent;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            Text { width: 220px; text: item.summer-name; font-size: 12px; color: #e0e0e0; overflow: elide; vertical-alignment: center; }
+                            Text { width: 180px; text: item.base-name; font-size: 12px; color: #88bbff; overflow: elide; vertical-alignment: center; }
+                            Text { width: 90px; text: item.size-text; font-size: 12px; color: #aaaaaa; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; text: item.folder; font-size: 11px; color: #777777; overflow: elide; vertical-alignment: center; }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: end;
+
+                    Button {
+                        text: "Отмена";
+                        clicked => { root.close-summer-dialog(); }
+                    }
+
+                    Button {
+                        text: "Применить и удалить дубликаты";
+                        primary: true;
+                        enabled: !is-consolidating;
+                        clicked => { root.confirm-consolidate-summer(); }
+                    }
+                }
+            }
+        }
     }
 }
 

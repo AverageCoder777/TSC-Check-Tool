@@ -443,19 +443,41 @@ impl AuditorController {
             let handle = self.weak.clone();
             let state = self.state.clone();
 
-            self.window.on_consolidate_summer_textures(move || {
-                let Some(w) = handle.upgrade() else { return };
-                let candidates = state
+            let h = handle.clone();
+            let s = state.clone();
+            self.window.on_open_summer_dialog(move || {
+                if let Some(w) = h.upgrade() {
+                    if let Ok(st) = s.lock() {
+                        sync_summer_candidates_to_ui(&w, &st.summer_candidates);
+                    }
+                    w.set_show_summer_dialog(true);
+                }
+            });
+
+            let h = handle.clone();
+            self.window.on_close_summer_dialog(move || {
+                if let Some(w) = h.upgrade() {
+                    w.set_show_summer_dialog(false);
+                }
+            });
+
+            let h = handle.clone();
+            let s = state.clone();
+            self.window.on_confirm_consolidate_summer(move || {
+                let Some(w) = h.upgrade() else { return };
+                let candidates = s
                     .lock()
-                    .map(|s| s.summer_candidates.clone())
+                    .map(|st| st.summer_candidates.clone())
                     .unwrap_or_default();
                 if candidates.is_empty() {
+                    w.set_show_summer_dialog(false);
                     return;
                 }
+                w.set_show_summer_dialog(false);
                 w.set_is_consolidating(true);
 
-                let ui_weak_async = handle.clone();
-                let state_async = state.clone();
+                let ui_weak_async = h.clone();
+                let state_async = s.clone();
 
                 std::thread::spawn(move || {
                     let mut succeeded = 0usize;
@@ -483,10 +505,52 @@ impl AuditorController {
                         }
                     });
 
-                    if let Ok(mut s) = state_async.lock() {
-                        s.summer_candidates.clear();
+                    if let Ok(mut st) = state_async.lock() {
+                        st.summer_candidates.clear();
                     }
                 });
             });
         }
     }}
+fn sync_summer_candidates_to_ui(window: &FolderAuditorWindow, candidates: &[crate::auditor::SummerConsolidationCandidate]) {
+    let rows: Vec<crate::SummerCandidateItem> = candidates
+        .iter()
+        .map(|c| {
+            let summer_name = c
+                .summer_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let base_name = c
+                .base_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let folder = c
+                .summer_path
+                .parent()
+                .unwrap_or(std::path::Path::new(""))
+                .to_string_lossy()
+                .to_string();
+
+            let size_kb = c.size_bytes as f64 / 1024.0;
+            let size_text = if size_kb >= 1024.0 {
+                format!("{:.1} МБ", size_kb / 1024.0)
+            } else {
+                format!("{:.0} КБ", size_kb)
+            };
+
+            crate::SummerCandidateItem {
+                summer_name: summer_name.into(),
+                base_name: base_name.into(),
+                folder: folder.into(),
+                size_text: size_text.into(),
+            }
+        })
+        .collect();
+
+    let model = std::rc::Rc::new(slint::VecModel::from(rows));
+    window.set_summer_candidate_rows(model.into());
+}
