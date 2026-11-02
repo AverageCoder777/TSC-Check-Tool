@@ -479,19 +479,42 @@ pub fn extract_geo_texture_references(xml: &str) -> Vec<String> {
     out
 }
 
-#[allow(dead_code)]
 pub fn extract_xsec_texture_references(xml: &str) -> Vec<String> {
-    extract_geo_texture_references(xml)
+    static RE_XSEC_TEXTURE_BLOCK: OnceLock<Regex> = OnceLock::new();
+    let re_block = RE_XSEC_TEXTURE_BLOCK.get_or_init(|| {
+        Regex::new(r"(?s)<Texture\b[^>]*>(.*?)</Texture>").unwrap()
+    });
+
+    static RE_E_TAG_XSEC: OnceLock<Regex> = OnceLock::new();
+    let re_e = RE_E_TAG_XSEC.get_or_init(|| {
+        Regex::new(r"<e\b[^>]*>([^<]+)</e>").unwrap()
+    });
+
+    let mut out = Vec::new();
+    for block in re_block.captures_iter(xml) {
+        if let Some(content) = block.get(1) {
+            for cap in re_e.captures_iter(content.as_str()) {
+                if let Some(val) = cap.get(1) {
+                    let raw = unescape_xml_entities(strip_tags(val.as_str()).trim());
+                    if raw.is_empty() || raw == "[00]" || is_numeric_token(&raw) {
+                        continue;
+                    }
+                    out.push(raw);
+                }
+            }
+        }
+    }
+    out
 }
 
 #[allow(dead_code)]
 pub fn extract_xsec_references(xml: &str) -> Vec<String> {
-    extract_geo_texture_references(xml)
+    extract_xsec_texture_references(xml)
 }
 
 #[allow(dead_code)]
 pub fn extract_xsec_textures(xml: &str) -> Vec<String> {
-    extract_geo_texture_references(xml)
+    extract_xsec_texture_references(xml)
 }
 
 pub fn normalize_texture_reference(raw: &str) -> String {
@@ -900,6 +923,16 @@ fn audit_one_file(
                 || ap_exists(&raw, parent, &product_root, assets_root, ap_cache, kind);
             let target = cands.iter().find(|p| loose_path_exists(p)).unwrap_or(&expected);
             outgoing.push(crate::fs_utils::normalize_path(target));
+            if kind == AssetResourceKind::Texture && loose_path_exists(target) {
+                if let (Some(dir), Some(stem)) = (target.parent(), target.file_stem()) {
+                    for suf in ["_Au", "_Sp", "_Wi"] {
+                        let seasonal = dir.join(format!("{}{}.TgPcDx", stem.to_string_lossy(), suf));
+                        if loose_path_exists(&seasonal) {
+                            outgoing.push(crate::fs_utils::normalize_path(&seasonal));
+                        }
+                    }
+                }
+            }
             if !exists {
                 let key = (kind, expected.clone(), parent_file.clone());
                 if let Some(&idx) = seen.get(&key) {
@@ -915,7 +948,7 @@ fn audit_one_file(
                 }
             }
         }
-    } else if ext == "geopcdx" || ext == "xsec" {
+    } else if ext == "geopcdx" {
         for raw in extract_geo_texture_references(&xml) {
             let cands = candidate_paths(
                 &raw,
@@ -936,6 +969,66 @@ fn audit_one_file(
                 );
             let target = cands.iter().find(|p| loose_path_exists(p)).unwrap_or(&expected);
             outgoing.push(crate::fs_utils::normalize_path(target));
+
+            if loose_path_exists(target) {
+                if let (Some(dir), Some(stem)) = (target.parent(), target.file_stem()) {
+                    for suf in ["_Au", "_Sp", "_Wi"] {
+                        let seasonal = dir.join(format!("{}{}.TgPcDx", stem.to_string_lossy(), suf));
+                        if loose_path_exists(&seasonal) {
+                            outgoing.push(crate::fs_utils::normalize_path(&seasonal));
+                        }
+                    }
+                }
+            }
+
+            if !exists {
+                let key = (AssetResourceKind::Texture, expected.clone(), parent_file.clone());
+                if let Some(&idx) = seen.get(&key) {
+                    out[idx].count += 1;
+                } else {
+                    seen.insert(key, out.len());
+                    out.push(BrokenResourceRef {
+                        parent_file: parent_file.clone(),
+                        expected_path: expected,
+                        kind: AssetResourceKind::Texture,
+                        count: 1,
+                    });
+                }
+            }
+        }
+    } else if ext == "xsec" {
+        for raw in extract_xsec_texture_references(&xml) {
+            let cands = candidate_paths(
+                &raw,
+                parent,
+                &product_root,
+                assets_root,
+                AssetResourceKind::Texture,
+            );
+            let expected = cands.first().cloned().unwrap_or_else(|| parent.join(&raw));
+            let exists = loose_exists(&cands)
+                || ap_exists(
+                    &raw,
+                    parent,
+                    &product_root,
+                    assets_root,
+                    ap_cache,
+                    AssetResourceKind::Texture,
+                );
+            let target = cands.iter().find(|p| loose_path_exists(p)).unwrap_or(&expected);
+            outgoing.push(crate::fs_utils::normalize_path(target));
+
+            if loose_path_exists(target) {
+                if let (Some(dir), Some(stem)) = (target.parent(), target.file_stem()) {
+                    for suf in ["_Au", "_Sp", "_Wi"] {
+                        let seasonal = dir.join(format!("{}{}.TgPcDx", stem.to_string_lossy(), suf));
+                        if loose_path_exists(&seasonal) {
+                            outgoing.push(crate::fs_utils::normalize_path(&seasonal));
+                        }
+                    }
+                }
+            }
+
             if !exists {
                 let key = (AssetResourceKind::Texture, expected.clone(), parent_file.clone());
                 if let Some(&idx) = seen.get(&key) {
