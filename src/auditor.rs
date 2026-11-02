@@ -311,6 +311,55 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
         }
     }
 
+    // Terrain textures (cMixTexDescriptor + Wang tiles)
+    {
+        static RE_MIX_TEX: OnceLock<Regex> = OnceLock::new();
+        let re_mix_tex = RE_MIX_TEX.get_or_init(|| {
+            Regex::new(r"(?s)<cMixTexDescriptor[\s>].*?</cMixTexDescriptor>").unwrap()
+        });
+
+        static RE_TERRAIN_BASE_TEX: OnceLock<Regex> = OnceLock::new();
+        let re_terrain_base_tex = RE_TERRAIN_BASE_TEX.get_or_init(|| {
+            Regex::new(r"<(?:BaseTextureName|BaseSpringTextureName|BaseSummerTextureName|BaseAutumnTextureName|BaseWinterTextureName)[^>]*>([^<]+)</").unwrap()
+        });
+
+        for desc in re_mix_tex.captures_iter(xml).filter_map(|c| c.get(0)) {
+            let desc = desc.as_str();
+            let is_wang = desc.contains(">eTrue<") || desc.contains(">true<");
+            for cap in re_terrain_base_tex.captures_iter(desc) {
+                if let Some(val) = cap.get(1) {
+                    let raw = unescape_xml_entities(strip_tags(val.as_str()).trim());
+                    if raw.is_empty() || is_numeric_token(&raw) {
+                        continue;
+                    }
+                    if is_wang {
+                        for suffix in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] {
+                            out.push((AssetResourceKind::Texture, format!("{}_{}", raw, suffix)));
+                        }
+                    } else {
+                        out.push((AssetResourceKind::Texture, raw));
+                    }
+                }
+            }
+        }
+    }
+
+    // Procedural flora textures
+    {
+        static RE_FLORA_TEX: OnceLock<Regex> = OnceLock::new();
+        let re_flora = RE_FLORA_TEX.get_or_init(|| {
+            Regex::new(r"<ProceduralFloraTextureID[^>]*>([^<]+)</").unwrap()
+        });
+        for cap in re_flora.captures_iter(xml) {
+            if let Some(val) = cap.get(1) {
+                let raw = unescape_xml_entities(strip_tags(val.as_str()).trim());
+                if !raw.is_empty() && !is_numeric_token(&raw) {
+                    out.push((AssetResourceKind::Texture, raw));
+                }
+            }
+        }
+    }
+
     out
 }
 
