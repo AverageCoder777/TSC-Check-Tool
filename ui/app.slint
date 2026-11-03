@@ -1236,25 +1236,86 @@ export component SettingsWindow inherits Window {
     }
 }
 
+component FilterBadge inherits Rectangle {
+    in property <int> count: 0;
+    in property <bool> is_active: false;
+
+    background: is_active ? #047857 : #374151;
+    border-radius: 9px;
+    height: 18px;
+    min-width: 18px;
+    horizontal-stretch: 0;
+
+    HorizontalLayout {
+        padding-left: 5px;
+        padding-right: 5px;
+        alignment: center;
+
+        Text {
+            text: root.count;
+            font-size: 11px;
+            font-weight: 600;
+            color: #f3f4f6;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}
+
 component FilterTabButton inherits Rectangle {
     in property <string> text;
     in property <int> count: 0;
     in property <bool> active: false;
     callback clicked();
-    background: active ? #059669 : #333333;
-    border-radius: 4px;
-    min-width: 70px;
-    height: 28px;
-    TouchArea { clicked => { root.clicked(); } }
+
+    background: active ? #10b981 : #252932;
+    border-radius: 6px;
+    height: 32px;
+    horizontal-stretch: 1;
+
     HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
         alignment: center;
-        spacing: 4px;
-        Text { text: root.text; color: #ffffff; vertical-alignment: center; }
-        Rectangle {
-            background: #1f2937;
-            border-radius: 8px;
-            min-width: 20px;
-            Text { text: root.count; color: #e5e7eb; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+
+        Text {
+            text: root.text;
+            font-size: 12px;
+            font-weight: root.active ? 600 : 400;
+            color: root.active ? #ffffff : #d1d5db;
+            vertical-alignment: center;
+        }
+
+        FilterBadge {
+            count: root.count;
+            is_active: root.active;
+        }
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+        mouse-cursor: pointer;
+    }
+}
+
+component ColumnSplitter inherits Rectangle {
+    callback moved(length);
+    width: 8px;
+    background: transparent;
+
+    Rectangle {
+        x: 3px;
+        width: 2px;
+        background: #2e3440;
+    }
+
+    TouchArea {
+        mouse-cursor: col-resize;
+        moved => {
+            if (self.pressed) {
+                root.moved(self.mouse-x - self.pressed-x);
+            }
         }
     }
 }
@@ -1267,6 +1328,10 @@ export component FolderAuditorWindow inherits Window {
     in-out property <string> folder-path: "";
     in-out property <string> current-filter: "all";
     in-out property <int> selected-row-index: -1;
+
+    // Resizable column widths
+    in-out property <length> col-kind-width: 140px;
+    in-out property <length> col-missing-width: 380px;
     in-out property <int> sort-col: 0;
     in-out property <bool> sort-ascending: true;
     in property <float> scan-progress: 0.0;
@@ -1360,30 +1425,51 @@ export component FolderAuditorWindow inherits Window {
             FilterTabButton { text: @tr("Мёртвые ресурсы"); count: root.count-dead; active: root.current-filter == "orphans"; clicked => { root.current-filter = "orphans"; root.filter-changed("orphans"); } }
         }
 
-        HorizontalBox {
-            padding-left: 8px;
-            padding-right: 8px;
-            spacing: 12px;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 0px;
 
             Text {
                 text: sort-col == 0 ? (sort-ascending ? @tr("Тип ↑") : @tr("Тип ↓")) : @tr("Тип");
-                width: 140px;
+                width: root.col-kind-width;
+                horizontal-alignment: left;
+                vertical-alignment: center;
                 color: #9ca3af;
                 font-size: 12px;
                 TouchArea { clicked => { root.sort-column(0); } }
             }
 
-            if root.current-filter != "orphans" : Text {
-                text: sort-col == 1 ? (sort-ascending ? @tr("Отсутствующий файл ↑") : @tr("Отсутствующий файл ↓")) : @tr("Отсутствующий файл");
-                horizontal-stretch: 1;
-                color: #9ca3af;
-                font-size: 12px;
-                TouchArea { clicked => { root.sort-column(1); } }
+            ColumnSplitter {
+                moved(delta) => {
+                    root.col-kind-width = max(80px, root.col-kind-width + delta);
+                }
+            }
+
+            if root.current-filter != "orphans" : HorizontalLayout {
+                spacing: 0px;
+                Text {
+                    text: sort-col == 1 ? (sort-ascending ? @tr("Отсутствующий файл ↑") : @tr("Отсутствующий файл ↓")) : @tr("Отсутствующий файл");
+                    width: root.col-missing-width;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    color: #9ca3af;
+                    font-size: 12px;
+                    TouchArea { clicked => { root.sort-column(1); } }
+                }
+
+                ColumnSplitter {
+                    moved(delta) => {
+                        root.col-missing-width = max(120px, root.col-missing-width + delta);
+                    }
+                }
             }
 
             Text {
                 text: root.current-filter == "orphans" ? (sort-col == 2 ? (sort-ascending ? @tr("Неиспользуемый файл на диске ↑") : @tr("Неиспользуемый файл на диске ↓")) : @tr("Неиспользуемый файл на диске")) : (sort-col == 2 ? (sort-ascending ? @tr("Файл-источник ↑") : @tr("Файл-источник ↓")) : @tr("Файл-источник"));
-                horizontal-stretch: root.current-filter == "orphans" ? 2 : 1;
+                horizontal-alignment: left;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
                 color: #9ca3af;
                 font-size: 12px;
                 TouchArea { clicked => { root.sort-column(2); } }
@@ -1412,33 +1498,42 @@ export component FolderAuditorWindow inherits Window {
                     background: idx == root.selected-row-index ? #2b313c : (Math.mod(idx, 2) == 0 ? #181b20 : #1c2026);
                     height: 28px;
 
-                    HorizontalBox {
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        spacing: 12px;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 0px;
 
                         Text {
                             text: item.kind_text;
-                            width: 140px;
+                            width: root.col-kind-width;
+                            horizontal-alignment: left;
+                            vertical-alignment: center;
                             color: item.is_dead_resource ? #eab308 : #ef4444;
                             overflow: elide;
-                            vertical-alignment: center;
                         }
 
-                        if root.current-filter != "orphans" : Text {
-                            text: item.missing_file;
-                            horizontal-stretch: 1;
-                            color: #f3f4f6;
-                            overflow: elide;
-                            vertical-alignment: center;
+                        Rectangle { width: 8px; background: transparent; }
+
+                        if root.current-filter != "orphans" : HorizontalLayout {
+                            spacing: 0px;
+                            Text {
+                                text: item.missing_file;
+                                width: root.col-missing-width;
+                                horizontal-alignment: left;
+                                vertical-alignment: center;
+                                color: #f3f4f6;
+                                overflow: elide;
+                            }
+                            Rectangle { width: 8px; background: transparent; }
                         }
 
                         Text {
                             text: item.source_file;
-                            horizontal-stretch: root.current-filter == "orphans" ? 2 : 1;
+                            horizontal-alignment: left;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
                             color: item.is_dead_resource ? #f3f4f6 : #9ca3af;
                             overflow: elide;
-                            vertical-alignment: center;
                         }
                     }
 
