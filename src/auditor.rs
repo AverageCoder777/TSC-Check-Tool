@@ -894,31 +894,51 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
     };
     let stem = stem_os.to_string_lossy();
 
-    const SEASONAL_SUFFIXES: [&str; 4] = ["_Au", "_Sp", "_Wi", "_Su"];
-    let is_seasonal = SEASONAL_SUFFIXES.iter().any(|suf| stem.ends_with(suf));
+    // Strip a trailing seasonal suffix (any case) to derive the base stem.
+    const SEASON_SUFFIXES_LOWER: [&str; 4] = ["_wi", "_su", "_sp", "_au"];
+    let base: &str = if SEASON_SUFFIXES_LOWER
+        .iter()
+        .any(|suf| stem.to_lowercase().ends_with(suf))
+    {
+        &stem[..stem.len().saturating_sub(3)]
+    } else {
+        &stem
+    };
 
-    if !is_seasonal {
-        for suf in SEASONAL_SUFFIXES {
-            let seasonal = dir.join(format!("{}{}.TgPcDx", stem, suf));
-            if loose_path_exists(&seasonal) {
-                outgoing.push(crate::fs_utils::normalize_path(&seasonal));
+    // All seasonal suffix variants, covering every case convention used by assets.
+    const SEASONAL_VARIANTS: [&str; 12] = [
+        "_Wi", "_wi", "_WI", "_Su", "_su", "_SU", "_Sp", "_sp", "_SP", "_Au", "_au", "_AU",
+    ];
+
+    for suf in SEASONAL_VARIANTS {
+        let seasonal = dir.join(format!("{}{}.TgPcDx", base, suf));
+        if loose_path_exists(&seasonal) {
+            let norm = crate::fs_utils::normalize_path(&seasonal);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
             }
         }
     }
 
-    if stem.ends_with("_nm") {
-        if let Some(base) = stem.strip_suffix("_nm") {
-            let nmc = dir.join(format!("{}_nmc.TgPcDx", base));
-            if loose_path_exists(&nmc) {
-                outgoing.push(crate::fs_utils::normalize_path(&nmc));
+    // Normal-map companions.
+    let lower_stem = stem.to_lowercase();
+    if lower_stem.ends_with("_nm") {
+        let base_nm = &stem[..stem.len().saturating_sub(3)];
+        let nmc = dir.join(format!("{}_nmc.TgPcDx", base_nm));
+        if loose_path_exists(&nmc) {
+            let norm = crate::fs_utils::normalize_path(&nmc);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
             }
         }
-    } else if stem.ends_with("_nmc")
-        && let Some(base) = stem.strip_suffix("_nmc")
-    {
-        let nm = dir.join(format!("{}_nm.TgPcDx", base));
+    } else if lower_stem.ends_with("_nmc") {
+        let base_nmc = &stem[..stem.len().saturating_sub(4)];
+        let nm = dir.join(format!("{}_nm.TgPcDx", base_nmc));
         if loose_path_exists(&nm) {
-            outgoing.push(crate::fs_utils::normalize_path(&nm));
+            let norm = crate::fs_utils::normalize_path(&nm);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
+            }
         }
     }
 }
@@ -946,7 +966,6 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
         if loose_path_exists(&paired) {
             let norm = crate::fs_utils::normalize_path(&paired);
             if !outgoing.contains(&norm) {
-                register_texture_siblings(&norm, outgoing);
                 outgoing.push(norm);
             }
         }
@@ -964,7 +983,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
         Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\.(?:geopcdx|tgpcdx|xsec|bin|xml)").unwrap()
     });
     let re_lod = RE_LOD.get_or_init(|| {
-        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[[a-zA-Z0-9]{2}\][a-zA-Z0-9_\-]+").unwrap()
+        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[[0-9a-fA-F]{2}\][a-zA-Z0-9_\-]+").unwrap()
     });
 
     let mut try_register = |rel_str: &str| {
@@ -972,17 +991,30 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
             .trim_matches(|c| c == '\0' || c == '"' || c == '\'')
             .replace('/', "\\");
         let clean = clean.trim_start_matches('\\');
+        // Strip any [xx] hex seasonal/LOD bitmask prefixes.
+        static RE_HEX_BRACKET: OnceLock<Regex> = OnceLock::new();
+        let re_hex = RE_HEX_BRACKET.get_or_init(|| Regex::new(r"\[[0-9a-fA-F]{2}\]").unwrap());
+        let clean = re_hex.replace_all(clean, "").to_string();
         if clean.is_empty() {
             return;
         }
 
+        let is_tgpcdx = clean
+            .rsplit(['\\', '/'])
+            .next()
+            .and_then(|name| name.rsplit_once('.'))
+            .map(|(_, ext)| ext.eq_ignore_ascii_case("tgpcdx"))
+            .unwrap_or(false);
+
         // Test relative to Assets root
         if let Some(root) = &assets_root {
-            let candidate = root.join(clean);
+            let candidate = root.join(&clean);
             if loose_path_exists(&candidate) {
+                if is_tgpcdx {
+                    register_texture_siblings(&candidate, outgoing);
+                }
                 let norm = crate::fs_utils::normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
-                    register_texture_siblings(&candidate, outgoing);
                     outgoing.push(norm);
                 }
                 return;
@@ -991,11 +1023,13 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
 
         // Test relative to parent directory
         if let Some(dir) = parent_dir {
-            let candidate = dir.join(clean);
+            let candidate = dir.join(&clean);
             if loose_path_exists(&candidate) {
+                if is_tgpcdx {
+                    register_texture_siblings(&candidate, outgoing);
+                }
                 let norm = crate::fs_utils::normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
-                    register_texture_siblings(&candidate, outgoing);
                     outgoing.push(norm);
                 }
             }
@@ -1036,8 +1070,13 @@ pub fn extract_xml_texture_id_refs(
     let parent_dir = current_file_path.parent();
 
     static RE_TEXTURE_ID: OnceLock<Regex> = OnceLock::new();
-    let re_tex = RE_TEXTURE_ID
-        .get_or_init(|| Regex::new(r"<[a-zA-Z0-9_]*TextureID[^>]*>([^<]+)</").unwrap());
+    let re_tex = RE_TEXTURE_ID.get_or_init(|| {
+        Regex::new(r"(?i)<[a-z0-9_]*(?:TextureID|TextureNormalID|NormalMapID|NormalID|TextureSlot)[^>]*>([^<]+)</")
+            .unwrap()
+    });
+
+    static RE_HEX_BRACKET: OnceLock<Regex> = OnceLock::new();
+    let re_hex = RE_HEX_BRACKET.get_or_init(|| Regex::new(r"\[[0-9a-fA-F]{2}\]").unwrap());
 
     for cap in re_tex.captures_iter(xml) {
         let raw = cap[1].trim().replace('/', "\\");
@@ -1046,16 +1085,8 @@ pub fn extract_xml_texture_id_refs(
             continue;
         }
 
-        // Strip [00], [0f], or any [xx] prefix
-        let clean_rel = if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']')) {
-            if b_close >= b_open {
-                format!("{}{}", &raw[..b_open], &raw[b_close + 1..])
-            } else {
-                raw.to_string()
-            }
-        } else {
-            raw.to_string()
-        };
+        // Strip any [xx] hex seasonal/LOD bitmask prefixes.
+        let clean_rel = re_hex.replace_all(&raw, "").to_string();
 
         let file_rel = if clean_rel.to_ascii_lowercase().ends_with(".tgpcdx") {
             clean_rel
@@ -1065,9 +1096,9 @@ pub fn extract_xml_texture_id_refs(
 
         let mut check_and_add = |candidate: PathBuf| {
             if loose_path_exists(&candidate) {
+                register_texture_siblings(&candidate, outgoing);
                 let norm = crate::fs_utils::normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
-                    register_texture_siblings(&candidate, outgoing);
                     outgoing.push(norm);
                 }
             }
