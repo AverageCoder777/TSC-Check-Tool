@@ -1399,11 +1399,13 @@ export component FolderAuditorWindow inherits Window {
         VerticalBox {
             spacing: 4px;
             padding: 0px;
+            vertical-stretch: 0;
             if root.is-scanning : Rectangle {
                 height: 4px;
                 background: #333333;
                 Rectangle {
-                    width: parent.width * root.scan-progress;
+                    x: 0px;
+                    width: max(0px, root.scan-progress * parent.width);
                     height: 100%;
                     background: #3b82f6;
                 }
@@ -1418,6 +1420,7 @@ export component FolderAuditorWindow inherits Window {
         if !root.is-scanning && root.count-all > 0 : HorizontalBox {
             spacing: 6px;
             padding: 0px;
+            vertical-stretch: 0;
 
             FilterTabButton {
                 text: @tr("Всё");
