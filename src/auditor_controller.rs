@@ -1,7 +1,8 @@
+
 use slint::ComponentHandle;
 use slint::Weak;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::{AuditorState, FolderAuditorWindow};
@@ -11,6 +12,7 @@ pub struct AuditorController {
     pub state: Arc<Mutex<AuditorState>>,
     pub weak: Weak<FolderAuditorWindow>,
     pub audit_generation: Arc<AtomicU64>,
+    pub is_busy: Arc<AtomicBool>,
 }
 
 impl AuditorController {
@@ -23,17 +25,18 @@ impl AuditorController {
             state,
             weak,
             audit_generation: Arc::new(AtomicU64::new(0)),
+            is_busy: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn bind(&self, _ui_weak: Weak<crate::MainWindow>) {
-        // Выбор папки для аудита
+        // Pick folder
         {
             let handle = self.weak.clone();
             self.window.on_pick_folder(move || {
                 let Some(w) = handle.upgrade() else { return };
                 let current = w.get_folder_path().to_string();
-                let mut dialog = rfd::FileDialog::new().set_title("Выберите папку для аудита");
+                let mut dialog = rfd::FileDialog::new().set_title(crate::gettext!("Выберите папку для аудита"));
                 if !current.is_empty() {
                     let p = PathBuf::from(&current);
                     if p.is_dir() {
@@ -46,29 +49,33 @@ impl AuditorController {
             });
         }
 
-        // Запуск аудита
+        // Start audit
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
             let audit_generation = self.audit_generation.clone();
+            let is_busy = self.is_busy.clone();
 
             self.window.on_start_audit(move |folder_path| {
-                println!("[Auditor] start-audit callback: {}", folder_path);
-                let path = PathBuf::from(folder_path.as_str());
-                if !path.is_dir() {
-                    eprintln!("[Auditor] Invalid folder path: {:?}", path);
+                if is_busy.swap(true, Ordering::SeqCst) {
                     return;
                 }
 
-                // Сбрасываем UI в исходное состояние
-                if let Some(w) = handle.upgrade() {
-                    w.set_audit_progress(0.0);
-                    w.set_audit_status("Подготовка к аудиту...".into());
-                    w.set_broken_rows(slint::ModelRc::new(slint::VecModel::default()));
-                    w.set_selected_row(-1);
+                let path = PathBuf::from(folder_path.as_str());
+                if !path.is_dir() {
+                    eprintln!("[Auditor] Invalid folder path: {:?}", path);
+                    is_busy.store(false, Ordering::SeqCst);
+                    return;
                 }
 
-                // Получаем параметры игры под единой блокировкой
+                if let Some(w) = handle.upgrade() {
+                    w.set_scan_progress(0.0);
+                    w.set_scan_status_text(crate::gettext!("Подготовка к аудиту...").into());
+                    w.set_filtered_rows(slint::ModelRc::new(slint::VecModel::default()));
+                    w.set_selected_row_index(-1);
+                    w.set_is_scanning(true);
+                }
+
                 let (rw_path, max_threads) = crate::app_state()
                     .lock()
                     .map(|a| (a.clean_rw_path(), a.serz_process_limit.max(1)))
@@ -76,7 +83,6 @@ impl AuditorController {
 
                 let serz_path = crate::assets::preferred_serz_path(&rw_path);
 
-                // Определение корня Assets
                 let assets_root = path
                     .ancestors()
                     .find(|p| {
@@ -99,27 +105,39 @@ impl AuditorController {
 
                 let filter = handle
                     .upgrade()
-                    .map(|w| w.get_active_filter().to_string())
+                    .map(|w| w.get_current_filter().to_string())
                     .unwrap_or_else(|| "all".to_string());
 
                 let generation_id = audit_generation.fetch_add(1, Ordering::SeqCst) + 1;
                 let generation = audit_generation.clone();
                 let thread_handle = handle.clone();
                 let thread_state = state.clone();
+                let is_busy_thread = is_busy.clone();
                 let ap_cache = crate::auditor::ApArchiveCache::new();
 
                 std::thread::spawn(move || {
-                    println!("[Auditor] Starting audit for: {:?}", path);
-
                     let progress_handle = thread_handle.clone();
+                    let progress_gen = generation.clone();
                     let progress_cb: Arc<dyn Fn(usize, usize) + Send + Sync> =
                         Arc::new(move |done, total| {
+                            if progress_gen.load(Ordering::Relaxed) != generation_id {
+                                return;
+                            }
                             let h = progress_handle.clone();
+                            let progress_gen2 = progress_gen.clone();
                             let _ = slint::invoke_from_event_loop(move || {
+                                if progress_gen2.load(Ordering::Relaxed) != generation_id {
+                                    return;
+                                }
                                 if let Some(w) = h.upgrade() {
-                                    w.set_audit_progress(done as f32 / total as f32);
-                                    w.set_audit_status(
-                                        format!("Сканирование: {} / {} файлов...", done, total).into(),
+                                    let progress = if total > 0 { done as f32 / total as f32 } else { 0.0 };
+                                    w.set_scan_progress(progress);
+                                    let template = crate::gettext!("Сканирование: {} / {} файлов...");
+                                    w.set_scan_status_text(
+                                        template
+                                            .replacen("{}", &done.to_string(), 1)
+                                            .replacen("{}", &total.to_string(), 1)
+                                            .into()
                                     );
                                 }
                             });
@@ -134,27 +152,31 @@ impl AuditorController {
                         Some(progress_cb),
                     );
 
-                    println!(
-                        "[Auditor] Audit done, broken: {}",
-                        report.broken_references.len()
-                    );
-
-                    // Проверяем, не был ли запущен новый аудит, пока этот завершался
                     if generation.load(Ordering::SeqCst) != generation_id {
                         return;
                     }
 
+                    let total_issues = report.broken_references.len();
+
                     let mut items = report.broken_references;
                     let graph = report.dependency_graph;
-                    let summer_candidates = report.summer_candidates;
                     let (col, asc) = if let Ok(mut s) = thread_state.lock() {
                         s.all_items = items.clone();
                         s.dependency_graph = graph;
-                        s.summer_candidates = summer_candidates.clone();
                         (s.sort_col, s.sort_asc)
                     } else {
                         (0, true)
                     };
+
+                    // counts from all items (before filter) need recompute; store all_items already
+                    let all_for_counts = thread_state.lock().map(|s| s.all_items.clone()).unwrap_or_default();
+                    let count_all = all_for_counts.len() as i32;
+                    let count_geometry = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Geometry).count() as i32;
+                    let count_textures = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Texture).count() as i32;
+                    let count_scripts = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Script).count() as i32;
+                    let count_sounds = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Sound).count() as i32;
+                    let count_children = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::ChildBlueprint).count() as i32;
+                    let count_dead = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Unused).count() as i32;
 
                     crate::auditor::filter_items(&mut items, &filter);
                     crate::auditor::sort_items(&mut items, col, asc);
@@ -167,34 +189,39 @@ impl AuditorController {
                         return;
                     }
 
-                    let total_bytes: u64 = summer_candidates.iter().map(|c| c.size_bytes).sum();
-                    let size_mb = total_bytes as f64 / (1024.0 * 1024.0);
-                    let size_text = if summer_candidates.is_empty() {
-                        String::new()
-                    } else if size_mb >= 1.0 {
-                        format!("{:.1} МБ", size_mb)
-                    } else {
-                        format!("{:.0} КБ", total_bytes as f64 / 1024.0)
-                    };
-                    let cand_count = summer_candidates.len() as i32;
-
                     let h = thread_handle;
                     let _ = slint::invoke_from_event_loop(move || {
+                        if generation.load(Ordering::Relaxed) != generation_id {
+                            return;
+                        }
                         if let Some(w) = h.upgrade() {
-                            w.set_broken_rows(crate::map_broken_resources_to_ui(&items));
-                            w.set_audit_progress(1.0);
-                            w.set_audit_status(format!("Готово: {} проблем", items.len()).into());
-                            w.set_selected_row(-1);
-                            w.set_summer_candidate_count(cand_count);
-                            w.set_summer_candidate_size_text(slint::SharedString::from(size_text));
+                            w.set_filtered_rows(crate::map_broken_resources_to_ui(&items));
+                            w.set_scan_progress(1.0);
+                            let final_msg = if total_issues == 0 {
+                                crate::gettext!("Проверка завершена: повреждённых или отсутствующих файлов не обнаружено.").to_string()
+                            } else {
+                                crate::gettext!("Проверка завершена. Найдено проблем: {}.").replace("{}", &total_issues.to_string())
+                            };
+                            w.set_scan_status_text(final_msg.into());
+                            w.set_selected_row_index(-1);
+                            w.set_count_all(count_all);
+                            w.set_count_geometry(count_geometry);
+                            w.set_count_textures(count_textures);
+                            w.set_count_scripts(count_scripts);
+                            w.set_count_sounds(count_sounds);
+                            w.set_count_children(count_children);
+                            w.set_count_dead(count_dead);
                             w.set_is_consolidating(false);
+                            w.set_is_scanning(false);
                         }
                     });
+
+                    is_busy_thread.store(false, Ordering::SeqCst);
                 });
             });
         }
 
-        // Изменение фильтра
+        // Filter changed
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
@@ -218,13 +245,13 @@ impl AuditorController {
                     s.display_items = items.clone();
                 }
 
-                w.set_active_filter(filter);
-                w.set_broken_rows(crate::map_broken_resources_to_ui(&items));
-                w.set_selected_row(-1);
+                w.set_current_filter(filter);
+                w.set_filtered_rows(crate::map_broken_resources_to_ui(&items));
+                w.set_selected_row_index(-1);
             });
         }
 
-        // Обновление панели зависимостей при выборе строки
+        // Row selected
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
@@ -287,42 +314,36 @@ impl AuditorController {
                 }
             });
         }
+
+        // Open source file folder
         {
             let state = self.state.clone();
             self.window.on_open_source_file(move |row| {
-                if row < 0 {
-                    return;
-                }
+                if row < 0 { return; }
                 let target_path = state.lock().ok().and_then(|s| {
                     s.display_items.get(row as usize).map(|item| item.parent_file.clone())
                 });
-
                 if let Some(path) = target_path {
-                    println!("[Auditor] Opening path: {:?}", path);
                     let _ = crate::windows::open_in_explorer(&path);
                 }
             });
         }
 
-        // Открыть ожидаемую целевую папку в проводнике
+        // Open missing target folder
         {
             let state = self.state.clone();
             self.window.on_open_missing_target_folder(move |row| {
-                if row < 0 {
-                    return;
-                }
+                if row < 0 { return; }
                 let target_path = state.lock().ok().and_then(|s| {
                     s.display_items.get(row as usize).map(|item| item.expected_path.clone())
                 });
-
                 if let Some(path) = target_path {
-                    println!("[Auditor] Opening target path: {:?}", path);
                     let _ = crate::windows::open_in_explorer(&path);
                 }
             });
         }
 
-        // Сортировка по колонкам (in-place без повторного клонирования всей базы)
+        // Sort
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
@@ -343,36 +364,29 @@ impl AuditorController {
                 let col_now = s.sort_col;
                 let asc_now = s.sort_asc;
 
-                // Сортируем текущую выборку на месте
                 crate::auditor::sort_items(&mut s.display_items, col_now, asc_now);
                 let rows_model = crate::map_broken_resources_to_ui(&s.display_items);
 
                 w.set_sort_col(col_now as i32);
                 w.set_sort_ascending(asc_now);
-                w.set_broken_rows(rows_model);
-                w.set_selected_row(-1);
+                w.set_filtered_rows(rows_model);
+                w.set_selected_row_index(-1);
             });
         }
 
-        // Редактирование в VS Code
+        // Edit in VS Code
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
 
             self.window.on_edit_in_vscode(move |row| {
-                if row < 0 {
-                    return;
-                }
-
+                if row < 0 { return; }
                 let item_paths = state.lock().ok().and_then(|s| {
                     s.display_items
                         .get(row as usize)
                         .map(|i| (i.parent_file.clone(), i.expected_path.clone()))
                 });
-
-                let Some((parent_file, expected_path)) = item_paths else {
-                    return;
-                };
+                let Some((parent_file, expected_path)) = item_paths else { return; };
 
                 let is_editable = |p: &PathBuf| {
                     p.extension()
@@ -386,7 +400,7 @@ impl AuditorController {
                     expected_path
                 } else {
                     if let Some(win) = handle.upgrade() {
-                        win.set_editor_status("Выбранный элемент не является .bin/.GeoPcDx/.XSec".into());
+                        win.set_editor_status(crate::gettext!("Выбранный элемент не является .bin/.GeoPcDx/.XSec").into());
                     }
                     return;
                 };
@@ -399,11 +413,7 @@ impl AuditorController {
                 let serz_path = crate::assets::find_serz_path(&asset_path)
                     .or_else(|| {
                         let p = crate::assets::preferred_serz_path(&rw_path);
-                        if p.is_file() {
-                            Some(p)
-                        } else {
-                            None
-                        }
+                        if p.is_file() { Some(p) } else { None }
                     })
                     .unwrap_or_else(|| PathBuf::from("serz.exe"));
 
@@ -413,7 +423,7 @@ impl AuditorController {
                     let callback = move |res: Result<String, String>| {
                         let msg = match res {
                             Ok(s) => s,
-                            Err(e) => format!("✗ {e}"),
+                            Err(e) => format!("x {e}"),
                         };
                         let h = cb_handle.clone();
                         let _ = slint::invoke_from_event_loop(move || {
@@ -430,127 +440,12 @@ impl AuditorController {
                     ) {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(win) = thread_handle.upgrade() {
-                                win.set_editor_status(format!("✗ {e}").into());
+                                win.set_editor_status(format!("x {e}").into());
                             }
                         });
                     }
                 });
             });
         }
-
-        // Консолидация летних текстур
-        {
-            let handle = self.weak.clone();
-            let state = self.state.clone();
-
-            let h = handle.clone();
-            let s = state.clone();
-            self.window.on_open_summer_dialog(move || {
-                if let Some(w) = h.upgrade() {
-                    if let Ok(st) = s.lock() {
-                        sync_summer_candidates_to_ui(&w, &st.summer_candidates);
-                    }
-                    w.set_show_summer_dialog(true);
-                }
-            });
-
-            let h = handle.clone();
-            self.window.on_close_summer_dialog(move || {
-                if let Some(w) = h.upgrade() {
-                    w.set_show_summer_dialog(false);
-                }
-            });
-
-            let h = handle.clone();
-            let s = state.clone();
-            self.window.on_confirm_consolidate_summer(move || {
-                let Some(w) = h.upgrade() else { return };
-                let candidates = s
-                    .lock()
-                    .map(|st| st.summer_candidates.clone())
-                    .unwrap_or_default();
-                if candidates.is_empty() {
-                    w.set_show_summer_dialog(false);
-                    return;
-                }
-                w.set_show_summer_dialog(false);
-                w.set_is_consolidating(true);
-
-                let ui_weak_async = h.clone();
-                let state_async = s.clone();
-
-                std::thread::spawn(move || {
-                    let mut succeeded = 0usize;
-                    let mut freed_bytes: u64 = 0;
-
-                    for cand in &candidates {
-                        if crate::auditor::apply_summer_consolidation(cand).is_ok() {
-                            succeeded += 1;
-                            freed_bytes += cand.size_bytes;
-                        }
-                    }
-
-                    let freed_mb = freed_bytes as f64 / (1024.0 * 1024.0);
-
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(w) = ui_weak_async.upgrade() {
-                            w.set_is_consolidating(false);
-                            w.set_summer_candidate_count(0);
-                            w.set_summer_candidate_size_text(slint::SharedString::from(""));
-                            let msg = format!(
-                                "Оптимизировано {} текстур, освобождено {:.1} МБ",
-                                succeeded, freed_mb
-                            );
-                            w.set_audit_status(slint::SharedString::from(msg));
-                        }
-                    });
-
-                    if let Ok(mut st) = state_async.lock() {
-                        st.summer_candidates.clear();
-                    }
-                });
-            });
-        }
-    }}
-fn sync_summer_candidates_to_ui(window: &FolderAuditorWindow, candidates: &[crate::auditor::SummerConsolidationCandidate]) {
-    let rows: Vec<crate::SummerCandidateItem> = candidates
-        .iter()
-        .map(|c| {
-            let summer_name = c
-                .summer_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let base_name = c
-                .base_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let folder = c
-                .summer_path
-                .parent()
-                .unwrap_or(std::path::Path::new(""))
-                .to_string_lossy()
-                .to_string();
-
-            let size_kb = c.size_bytes as f64 / 1024.0;
-            let size_text = if size_kb >= 1024.0 {
-                format!("{:.1} МБ", size_kb / 1024.0)
-            } else {
-                format!("{:.0} КБ", size_kb)
-            };
-
-            crate::SummerCandidateItem {
-                summer_name: summer_name.into(),
-                base_name: base_name.into(),
-                folder: folder.into(),
-                size_text: size_text.into(),
-            }
-        })
-        .collect();
-
-    let model = std::rc::Rc::new(slint::VecModel::from(rows));
-    window.set_summer_candidate_rows(model.into());
+    }
 }

@@ -12,11 +12,11 @@ export struct ScenarioItem {
     scenario-type: string,
 }
 
-export struct SummerCandidateItem {
-    base-name: string,
-    summer-name: string,
-    folder: string,
-    size-text: string,
+export struct IssueRowData {
+    kind_text: string,
+    missing_file: string,
+    source_file: string,
+    is_dead_resource: bool,
 }
 
 export component MainWindow inherits Window {
@@ -1236,139 +1236,248 @@ export component SettingsWindow inherits Window {
     }
 }
 
+component FilterTabButton inherits Rectangle {
+    in property <string> text;
+    in property <int> count: 0;
+    in property <bool> active: false;
+    callback clicked();
+    background: active ? #059669 : #333333;
+    border-radius: 4px;
+    min-width: 70px;
+    height: 28px;
+    TouchArea { clicked => { root.clicked(); } }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 4px;
+        Text { text: root.text; color: #ffffff; vertical-alignment: center; }
+        Rectangle {
+            background: #1f2937;
+            border-radius: 8px;
+            min-width: 20px;
+            Text { text: root.count; color: #e5e7eb; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+}
+
 export component FolderAuditorWindow inherits Window {
     title: @tr("Проверка ресурсов папки");
-    min-width: 860px;
-    min-height: 560px;
+    min-width: 900px;
+    min-height: 620px;
 
     in-out property <string> folder-path: "";
-    in-out property <string> active-filter: "all";
-    in-out property <int> selected-row: -1;
+    in-out property <string> current-filter: "all";
+    in-out property <int> selected-row-index: -1;
     in-out property <int> sort-col: 0;
     in-out property <bool> sort-ascending: true;
-    in property <float> audit-progress: 0.0;
-    in property <string> audit-status: "";
+    in property <float> scan-progress: 0.0;
+    in property <string> scan-status-text: @tr("Готов к проверке");
+    in-out property <bool> is-scanning: false;
     in property <string> editor-status: "";
-    in property <[ [StandardListViewItem] ]> broken-rows;
+    in property <[IssueRowData]> filtered-rows: [];
     in property <string> incoming-text: "";
     in property <string> outgoing-text: "";
+
+    in-out property <int> count-all: 0;
+    in-out property <int> count-geometry: 0;
+    in-out property <int> count-textures: 0;
+    in-out property <int> count-scripts: 0;
+    in-out property <int> count-sounds: 0;
+    in-out property <int> count-children: 0;
+    in-out property <int> count-dead: 0;
+
     in-out property <int> summer-candidate-count: 0;
     in-out property <string> summer-candidate-size-text: "";
     in-out property <bool> is-consolidating: false;
     in-out property <bool> show-summer-dialog: false;
-    in property <[SummerCandidateItem]> summer-candidate-rows: [];
-    callback open-summer-dialog();
-    callback close-summer-dialog();
-    callback confirm-consolidate-summer();
+
     callback pick-folder();
     callback start-audit(string);
+    callback filter-changed(string);
+    callback row-selected(int);
     callback open-source-file(int);
     callback open-missing-target-folder(int);
     callback edit-in-vscode(int);
     callback preview-texture(int);
-    callback filter-changed(string);
     callback sort-column(int);
-    callback row-selected(int);
+    callback open-summer-dialog();
+    callback close-summer-dialog();
+    callback confirm-consolidate-summer();
 
     VerticalBox {
+        padding: 16px;
+        spacing: 12px;
+
         HorizontalBox {
-            LineEdit {
+            spacing: 8px;
+            path_input := LineEdit {
                 horizontal-stretch: 1;
                 text <=> folder-path;
                 placeholder-text: @tr("Папка для проверки...");
+                enabled: !root.is-scanning;
             }
             Button {
                 text: @tr("Обзор");
+                enabled: !root.is-scanning;
                 clicked => { root.pick-folder(); }
             }
             Button {
-                text: @tr("Начать проверку");
+                text: root.is-scanning ? @tr("Проверка...") : @tr("Начать проверку");
+                primary: true;
+                enabled: !root.is-scanning && path_input.text != "";
                 clicked => { root.start-audit(root.folder-path); }
             }
         }
-        Rectangle {
-            height: 8px;
-            background: #333333;
-            Rectangle {
-                width: parent.width * audit-progress;
-                height: 100%;
-                background: #3b82f6;
+
+        VerticalBox {
+            spacing: 4px;
+            padding: 0px;
+            if root.is-scanning : Rectangle {
+                height: 4px;
+                background: #333333;
+                Rectangle {
+                    width: parent.width * root.scan-progress;
+                    height: 100%;
+                    background: #3b82f6;
+                }
+            }
+            Text {
+                text: root.scan-status-text;
+                font-size: 12px;
+                color: root.is-scanning ? #60a5fa : #9ca3af;
             }
         }
-        Text { text: audit-status; }
+
         HorizontalBox {
-            Rectangle { property <string> f: "all"; background: root.active-filter == f ? #059669 : #333333; border-radius: 4px; min-width: 70px; height: 28px;
-                TouchArea { clicked => { root.active-filter = "all"; root.filter-changed("all"); } }
-                Text { text: @tr("Всё"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+            spacing: 6px;
+            padding: 0px;
+
+            FilterTabButton { text: @tr("Всё"); count: root.count-all; active: root.current-filter == "all"; clicked => { root.current-filter = "all"; root.filter-changed("all"); } }
+            FilterTabButton { text: @tr("Геометрия"); count: root.count-geometry; active: root.current-filter == "geometry"; clicked => { root.current-filter = "geometry"; root.filter-changed("geometry"); } }
+            FilterTabButton { text: @tr("Текстуры"); count: root.count-textures; active: root.current-filter == "texture"; clicked => { root.current-filter = "texture"; root.filter-changed("texture"); } }
+            FilterTabButton { text: @tr("Скрипты"); count: root.count-scripts; active: root.current-filter == "script"; clicked => { root.current-filter = "script"; root.filter-changed("script"); } }
+            FilterTabButton { text: @tr("Звуки"); count: root.count-sounds; active: root.current-filter == "sound"; clicked => { root.current-filter = "sound"; root.filter-changed("sound"); } }
+            FilterTabButton { text: @tr("Дочерние объекты"); count: root.count-children; active: root.current-filter == "child"; clicked => { root.current-filter = "child"; root.filter-changed("child"); } }
+            FilterTabButton { text: @tr("Мёртвые ресурсы"); count: root.count-dead; active: root.current-filter == "orphans"; clicked => { root.current-filter = "orphans"; root.filter-changed("orphans"); } }
+        }
+
+        HorizontalBox {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 12px;
+
+            Text {
+                text: sort-col == 0 ? (sort-ascending ? @tr("Тип ↑") : @tr("Тип ↓")) : @tr("Тип");
+                width: 140px;
+                color: #9ca3af;
+                font-size: 12px;
+                TouchArea { clicked => { root.sort-column(0); } }
             }
-            Rectangle { background: root.active-filter == "geometry" ? #059669 : #333333; border-radius: 4px; min-width: 90px; height: 28px;
-                TouchArea { clicked => { root.active-filter = "geometry"; root.filter-changed("geometry"); } }
-                Text { text: @tr("Геометрия"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+
+            if root.current-filter != "orphans" : Text {
+                text: sort-col == 1 ? (sort-ascending ? @tr("Отсутствующий файл ↑") : @tr("Отсутствующий файл ↓")) : @tr("Отсутствующий файл");
+                horizontal-stretch: 1;
+                color: #9ca3af;
+                font-size: 12px;
+                TouchArea { clicked => { root.sort-column(1); } }
             }
-            Rectangle { background: root.active-filter == "texture" ? #059669 : #333333; border-radius: 4px; min-width: 90px; height: 28px;
-                TouchArea { clicked => { root.active-filter = "texture"; root.filter-changed("texture"); } }
-                Text { text: @tr("Текстуры"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
-            }
-            Rectangle { background: root.active-filter == "script" ? #059669 : #333333; border-radius: 4px; min-width: 80px; height: 28px;
-                TouchArea { clicked => { root.active-filter = "script"; root.filter-changed("script"); } }
-                Text { text: @tr("Скрипты"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
-            }
-            Rectangle { background: root.active-filter == "sound" ? #059669 : #333333; border-radius: 4px; min-width: 70px; height: 28px;
-                TouchArea { clicked => { root.active-filter = "sound"; root.filter-changed("sound"); } }
-                Text { text: @tr("Звуки"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
-            }
-            Rectangle { background: root.active-filter == "child" ? #059669 : #333333; border-radius: 4px; min-width: 120px; height: 28px;
-                TouchArea { clicked => { root.active-filter = "child"; root.filter-changed("child"); } }
-                Text { text: @tr("Дочерние объекты"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
-            }
-            Rectangle { background: root.active-filter == "orphans" ? #059669 : #333333; border-radius: 4px; min-width: 120px; height: 28px;
-                TouchArea { clicked => { root.active-filter = "orphans"; root.filter-changed("orphans"); } }
-                Text { text: @tr("Мёртвые ресурсы"); color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+
+            Text {
+                text: root.current-filter == "orphans" ? (sort-col == 2 ? (sort-ascending ? @tr("Неиспользуемый файл на диске ↑") : @tr("Неиспользуемый файл на диске ↓")) : @tr("Неиспользуемый файл на диске")) : (sort-col == 2 ? (sort-ascending ? @tr("Файл-источник ↑") : @tr("Файл-источник ↓")) : @tr("Файл-источник"));
+                horizontal-stretch: root.current-filter == "orphans" ? 2 : 1;
+                color: #9ca3af;
+                font-size: 12px;
+                TouchArea { clicked => { root.sort-column(2); } }
             }
         }
-        StandardTableView {
-            columns: [
-                { title: sort-col == 0 ? (sort-ascending ? @tr("Тип ↑") : @tr("Тип ↓")) : @tr("Тип"), min-width: 120px },
-                { title: sort-col == 1 ? (sort-ascending ? @tr("Отсутствующий файл ↑") : @tr("Отсутствующий файл ↓")) : @tr("Отсутствующий файл"), min-width: 300px, horizontal-stretch: 2 },
-                { title: sort-col == 2 ? (sort-ascending ? @tr("Файл-источник ↑") : @tr("Файл-источник ↓")) : @tr("Файл-источник"), min-width: 300px, horizontal-stretch: 2 },
-            ];
-            rows: broken-rows;
-            current-row-changed(row) => {
-                root.selected-row = row;
-                root.row-selected(row);
+
+        Rectangle {
+            background: #181b20;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #282c34;
+            vertical-stretch: 1;
+
+            if root.filtered-rows.length == 0 : VerticalBox {
+                alignment: center;
+                Text {
+                    text: @tr("Проблем не обнаружено");
+                    color: #6b7280;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                }
             }
-            sort-ascending(col) => { root.sort-column(col); }
-            sort-descending(col) => { root.sort-column(col); }
+
+            ListView {
+                for item[idx] in root.filtered-rows : Rectangle {
+                    background: idx == root.selected-row-index ? #2b313c : (Math.mod(idx, 2) == 0 ? #181b20 : #1c2026);
+                    height: 28px;
+
+                    HorizontalBox {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 12px;
+
+                        Text {
+                            text: item.kind_text;
+                            width: 140px;
+                            color: item.is_dead_resource ? #eab308 : #ef4444;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+
+                        if root.current-filter != "orphans" : Text {
+                            text: item.missing_file;
+                            horizontal-stretch: 1;
+                            color: #f3f4f6;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            text: item.source_file;
+                            horizontal-stretch: root.current-filter == "orphans" ? 2 : 1;
+                            color: item.is_dead_resource ? #f3f4f6 : #9ca3af;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    TouchArea {
+                        clicked => { root.selected-row-index = idx; root.row-selected(idx); }
+                    }
+                }
+            }
         }
+
         Text { text: @tr("Входящие ссылки: {}", incoming-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
         Text { text: @tr("Исходящие ссылки: {}", outgoing-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
+
         HorizontalBox {
-            Button {
-                text: summer-candidate-count > 0 ? "Оптимизировать лето (" + summer-candidate-count + " шт, " + summer-candidate-size-text + ")" : "Оптимизация лета";
-                enabled: summer-candidate-count > 0 && !is-consolidating;
-                clicked => { root.open-summer-dialog(); }
-            }
+            spacing: 8px;
+            padding: 0px;
+            
             Button {
                 text: @tr("Открыть папку файла-источника");
-                enabled: root.selected-row >= 0;
-                clicked => { root.open-source-file(root.selected-row); }
+                enabled: root.selected-row-index >= 0 && !root.is-scanning;
+                clicked => { root.open-source-file(root.selected-row-index); }
             }
             Button {
                 text: @tr("Открыть папку отсутствующего файла");
-                enabled: root.selected-row >= 0;
-                clicked => { root.open-missing-target-folder(root.selected-row); }
+                enabled: root.selected-row-index >= 0 && !root.is-scanning;
+                clicked => { root.open-missing-target-folder(root.selected-row-index); }
             }
             Button {
                 text: @tr("Открыть файл-источник");
-                enabled: root.selected-row >= 0;
-                clicked => { root.edit-in-vscode(root.selected-row); }
+                enabled: root.selected-row-index >= 0 && !root.is-scanning;
+                clicked => { root.edit-in-vscode(root.selected-row-index); }
             }
             Button {
                 text: @tr("Просмотр текстуры");
-                enabled: root.selected-row >= 0;
-                clicked => { root.preview-texture(root.selected-row); }
+                enabled: root.selected-row-index >= 0 && !root.is-scanning;
+                clicked => { root.preview-texture(root.selected-row-index); }
             }
         }
+
         Text { text: root.editor-status; color: #a1a1aa; font-size: 12px; }
     }
 
@@ -1426,21 +1535,6 @@ export component FolderAuditorWindow inherits Window {
                     }
                 }
 
-                ListView {
-                    for item in summer-candidate-rows: Rectangle {
-                        height: 26px;
-                        background: transparent;
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            Text { width: 220px; text: item.summer-name; font-size: 12px; color: #e0e0e0; overflow: elide; vertical-alignment: center; }
-                            Text { width: 180px; text: item.base-name; font-size: 12px; color: #88bbff; overflow: elide; vertical-alignment: center; }
-                            Text { width: 90px; text: item.size-text; font-size: 12px; color: #aaaaaa; vertical-alignment: center; }
-                            Text { horizontal-stretch: 1; text: item.folder; font-size: 11px; color: #777777; overflow: elide; vertical-alignment: center; }
-                        }
-                    }
-                }
-
                 HorizontalLayout {
                     spacing: 12px;
                     alignment: end;
@@ -1461,5 +1555,3 @@ export component FolderAuditorWindow inherits Window {
         }
     }
 }
-
-

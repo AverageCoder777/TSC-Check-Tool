@@ -54,8 +54,7 @@ pub struct FileAuditOutcome {
 #[derive(Debug, Default)]
 pub struct AuditReport {
     pub broken_references: Vec<BrokenResourceRef>,
-    pub dependency_graph: DependencyGraph,
-    pub summer_candidates: Vec<SummerConsolidationCandidate>,
+    pub dependency_graph: DependencyGraph
 }
 
 pub use crate::archive::ApArchiveCache;
@@ -517,16 +516,6 @@ pub fn extract_xsec_texture_references(xml: &str) -> Vec<String> {
         }
     }
     out
-}
-
-#[allow(dead_code)]
-pub fn extract_xsec_references(xml: &str) -> Vec<String> {
-    extract_xsec_texture_references(xml)
-}
-
-#[allow(dead_code)]
-pub fn extract_xsec_textures(xml: &str) -> Vec<String> {
-    extract_xsec_texture_references(xml)
 }
 
 pub fn normalize_texture_reference(raw: &str) -> String {
@@ -1744,16 +1733,12 @@ pub fn audit_folder_with_progress(
         }
     }
 
-    // Consolidation candidates
-    let summer_candidates = find_summer_consolidation_candidates(&incoming_map);
-
     AuditReport {
         broken_references: deduped,
         dependency_graph: DependencyGraph {
             outgoing: outgoing_map,
             incoming: incoming_map,
-        },
-        summer_candidates,
+        }
     }
 }
 
@@ -1841,82 +1826,3 @@ pub fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
     });
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Default)]
-pub struct SummerConsolidationCandidate {
-    pub base_path: PathBuf,
-    pub summer_path: PathBuf,
-    pub size_bytes: u64,
-}
-
-#[allow(dead_code)]
-pub fn find_summer_consolidation_candidates(
-    incoming_map: &HashMap<PathBuf, HashSet<PathBuf>>,
-) -> Vec<SummerConsolidationCandidate> {
-    let mut candidates = Vec::new();
-
-    for (target, incoming) in incoming_map {
-        if incoming.is_empty() {
-            continue;
-        }
-
-        let ext = target.extension().and_then(|s| s.to_str()).unwrap_or("");
-        if !ext.eq_ignore_ascii_case("tgpcdx") {
-            continue;
-        }
-
-        let Some(stem_os) = target.file_stem() else {
-            continue;
-        };
-        let stem = stem_os.to_string_lossy();
-        let stem_lower = stem.to_ascii_lowercase();
-
-        const SEASONS: [&str; 4] = ["_au", "_sp", "_wi", "_su"];
-        if SEASONS.iter().any(|suf| stem_lower.ends_with(suf)) {
-            continue;
-        }
-
-        let Some(dir) = target.parent() else {
-            continue;
-        };
-        let summer_path = dir.join(format!("{}_Su.TgPcDx", stem));
-
-        if let Ok(meta) = std::fs::metadata(&summer_path) {
-            if meta.is_file() {
-                candidates.push(SummerConsolidationCandidate {
-                    base_path: target.clone(),
-                    summer_path,
-                    size_bytes: meta.len(),
-                });
-            }
-        }
-    }
-
-    candidates.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
-    candidates
-}
-
-#[allow(dead_code)]
-pub fn apply_summer_consolidation(
-    candidate: &SummerConsolidationCandidate,
-) -> Result<(), std::io::Error> {
-    if let Ok(meta) = std::fs::metadata(&candidate.base_path) {
-        let mut perms = meta.permissions();
-        if perms.readonly() {
-            perms.set_readonly(false);
-            let _ = std::fs::set_permissions(&candidate.base_path, perms);
-        }
-    }
-    if let Ok(meta) = std::fs::metadata(&candidate.summer_path) {
-        let mut perms = meta.permissions();
-        if perms.readonly() {
-            perms.set_readonly(false);
-            let _ = std::fs::set_permissions(&candidate.summer_path, perms);
-        }
-    }
-
-    std::fs::copy(&candidate.summer_path, &candidate.base_path)?;
-    std::fs::remove_file(&candidate.summer_path)?;
-
-    Ok(())
-}

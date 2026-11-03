@@ -72,22 +72,26 @@ fn load_route_icon_image(icon_path: &Path) -> slint::Image {
 
 pub(crate) fn map_broken_resources_to_ui(
     items: &[auditor::BrokenResourceRef],
-) -> slint::ModelRc<slint::ModelRc<slint::StandardListViewItem>> {
-    let rows: Vec<slint::ModelRc<slint::StandardListViewItem>> = items
+) -> slint::ModelRc<IssueRowData> {
+    let rows: Vec<IssueRowData> = items
         .iter()
         .map(|b| {
+            let is_dead = b.kind == auditor::AssetResourceKind::Unused;
             let kind = if b.count > 1 {
                 format!("{} (×{})", b.kind.label(), b.count)
             } else {
                 b.kind.label().to_string()
             };
-            let mut item0 = slint::StandardListViewItem::default();
-            item0.text = kind.into();
-            let mut item1 = slint::StandardListViewItem::default();
-            item1.text = b.expected_path.to_string_lossy().to_string().into();
-            let mut item2 = slint::StandardListViewItem::default();
-            item2.text = b.parent_file.to_string_lossy().to_string().into();
-            slint::ModelRc::new(slint::VecModel::from(vec![item0, item1, item2]))
+            IssueRowData {
+                kind_text: kind.into(),
+                missing_file: if is_dead {
+                    "".into()
+                } else {
+                    b.expected_path.to_string_lossy().to_string().into()
+                },
+                source_file: b.parent_file.to_string_lossy().to_string().into(),
+                is_dead_resource: is_dead,
+            }
         })
         .collect();
     slint::ModelRc::new(slint::VecModel::from(rows))
@@ -325,13 +329,26 @@ fn handle_cli_args() {
     }
 }
 
+#[macro_export]
+macro_rules! gettext {
+    ($s:expr) => {
+        $s
+    };
+}
+
+#[macro_export]
+macro_rules! ngettext {
+    ($singular:expr, $plural:expr, $n:expr) => {
+        if $n == 1 { $singular } else { $plural }
+    };
+}
+
 pub(crate) struct AuditorState {
     all_items: Vec<auditor::BrokenResourceRef>,
     display_items: Vec<auditor::BrokenResourceRef>,
     sort_col: usize,
     sort_asc: bool,
     dependency_graph: auditor::DependencyGraph,
-    summer_candidates: Vec<auditor::SummerConsolidationCandidate>,
 }
 
 impl Default for AuditorState {
@@ -342,7 +359,6 @@ impl Default for AuditorState {
             sort_col: 0,
             sort_asc: true,
             dependency_graph: auditor::DependencyGraph::default(),
-            summer_candidates: Vec::new(),
         }
     }
 }
