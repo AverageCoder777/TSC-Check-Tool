@@ -359,6 +359,8 @@ pub(crate) struct AuditorState {
     sort_col: usize,
     sort_asc: bool,
     dependency_graph: auditor::DependencyGraph,
+    full_asset_graph: auditor::FullAssetGraph,
+    is_scan_completed: bool,
 }
 
 impl Default for AuditorState {
@@ -369,6 +371,8 @@ impl Default for AuditorState {
             sort_col: 0,
             sort_asc: true,
             dependency_graph: auditor::DependencyGraph::default(),
+            full_asset_graph: auditor::FullAssetGraph::default(),
+            is_scan_completed: false,
         }
     }
 }

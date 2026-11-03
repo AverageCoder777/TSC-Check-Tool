@@ -78,6 +78,7 @@ impl AuditorController {
                     w.set_incoming_refs_preview("".into());
                     w.set_outgoing_refs_preview("".into());
                     w.set_is_scanning(true);
+                    w.set_is_scan_completed(false);
                 }
 
                 let (rw_path, max_threads) = crate::app_state()
@@ -160,13 +161,16 @@ impl AuditorController {
                         return;
                     }
 
+                    let (report, full_graph) = report;
                     let total_issues = report.broken_references.len();
 
                     let mut items = report.broken_references;
                     let graph = report.dependency_graph;
                     let (col, asc) = if let Ok(mut s) = thread_state.lock() {
                         s.all_items = items.clone();
-                        s.dependency_graph = graph;
+                        s.dependency_graph = graph.clone();
+                        s.full_asset_graph = full_graph.clone();
+                        s.is_scan_completed = true;
                         (s.sort_col, s.sort_asc)
                     } else {
                         (0, true)
@@ -286,7 +290,7 @@ impl AuditorController {
                 let (is_tex, has_missing) = selected_item
                     .as_ref()
                     .map(|item| {
-                        let is_tex = item
+                        let is_tex_ext = item
                             .parent_file
                             .to_string_lossy()
                             .to_ascii_lowercase()
@@ -306,6 +310,11 @@ impl AuditorController {
                                 .to_string_lossy()
                                 .to_ascii_lowercase()
                                 .ends_with(".dds");
+                        // Texture preview only meaningful if the file physically exists on disk.
+                        let target_exists = (item.kind == crate::auditor::AssetResourceKind::Unused && item.parent_file.is_file())
+                            || (item.parent_file.is_file() && is_tex_ext)
+                            || (item.expected_path.is_file() && is_tex_ext);
+                        let is_tex = is_tex_ext && target_exists;
                         let has_missing = item.kind != crate::auditor::AssetResourceKind::Unused
                             && !item.expected_path.to_string_lossy().trim().is_empty();
                         (is_tex, has_missing)
@@ -469,6 +478,38 @@ impl AuditorController {
             });
         }
 
+        // Show full directory graph (all scanned files) in browser
+        {
+            let state = self.state.clone();
+            let handle = self.weak.clone();
+
+            self.window.on_open_full_graph_clicked(move || {
+                let thread_handle = handle.clone();
+                let state_clone = state.clone();
+                std::thread::spawn(move || {
+                    let extracted = state_clone.lock().ok().map(|s| {
+                        (s.full_asset_graph.clone(), s.is_scan_completed)
+                    });
+                    let Some((full_graph, completed)) = extracted else { return; };
+                    if !completed {
+                        return;
+                    }
+                    if let Err(e) =
+                        crate::graph_view::generate_full_directory_graph(&full_graph, std::path::Path::new(""))
+                    {
+                        let template =
+                            crate::gettext!("Не удалось построить полный граф каталога: {}");
+                        let msg = template.replace("{}", &e.to_string());
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = thread_handle.upgrade() {
+                                w.set_editor_status(msg.into());
+                            }
+                        });
+                    }
+                });
+            });
+        }
+
         // Open source file folder
         {
             let state = self.state.clone();
@@ -498,9 +539,18 @@ impl AuditorController {
                         .map(|item| item.expected_path.clone())
                 });
                 if let Some(path) = target_path {
-                    println!("[Auditor] Opening target path: {:?}", path);
-                    #[cfg(windows)]
-                    let _ = crate::windows::open_in_explorer(&path);
+                    // Walk up directory ancestors until an existing folder is found,
+                    // then open that folder directly (no /select on a non-existent file).
+                    let mut dir = path.parent();
+                    while let Some(d) = dir {
+                        if d.is_dir() {
+                            println!("[Auditor] Opening existing parent folder: {:?}", d);
+                            #[cfg(windows)]
+                            let _ = crate::windows::open_in_explorer(d);
+                            break;
+                        }
+                        dir = d.parent();
+                    }
                 }
             });
         }

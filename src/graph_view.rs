@@ -14,6 +14,7 @@ const VIS_NETWORK_CDN: &str =
 
 const GRAPH_HTML_NAME: &str = "tsc_graph_view.html";
 const GLOBAL_GRAPH_HTML_NAME: &str = "tsc_global_graph.html";
+const FULL_GRAPH_HTML_NAME: &str = "tsc_full_graph.html";
 
 /// Visual categories for graph nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -609,6 +610,399 @@ pub fn generate_global_issues_graph(
     let html = build_global_html(&nodes_json, &edges_json, nodes.len(), edge_count);
 
     let out_path = std::env::temp_dir().join(GLOBAL_GRAPH_HTML_NAME);
+    std::fs::write(&out_path, html)?;
+    open::that(&out_path)?;
+    Ok(())
+}
+
+/// Determine the visual style for a full-directory-graph node based on extension
+/// and dead/missing status.
+fn full_graph_node_style(
+    path: &Path,
+    is_dead: bool,
+    is_missing: bool,
+) -> NodeStyle {
+    if is_missing {
+        return NodeStyle {
+            color: "#ef4444",
+            shape: "box",
+            border_dash: Some([5, 2]),
+            label_prefix: Some("[MISSING] "),
+        };
+    }
+    if is_dead {
+        return NodeStyle {
+            color: "#64748b",
+            shape: "box",
+            border_dash: None,
+            label_prefix: Some("[DEAD] "),
+        };
+    }
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "bin" | "xml" => NodeStyle {
+            color: "#3b82f6",
+            shape: "box",
+            border_dash: None,
+            label_prefix: None,
+        },
+        "geopcdx" | "xsec" => NodeStyle {
+            color: "#10b981",
+            shape: "ellipse",
+            border_dash: None,
+            label_prefix: None,
+        },
+        "tgpcdx" => NodeStyle {
+            color: "#f59e0b",
+            shape: "ellipse",
+            border_dash: None,
+            label_prefix: None,
+        },
+        _ => NodeStyle {
+            color: "#8b5cf6",
+            shape: "ellipse",
+            border_dash: None,
+            label_prefix: None,
+        },
+    }
+}
+
+/// Serialized node payload for the full directory graph.
+#[derive(Serialize)]
+struct FullGraphNode {
+    id: usize,
+    label: String,
+    title: String,
+    color: String,
+    shape: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    border_dash: Option<[usize; 2]>,
+}
+
+/// Serialized edge payload for the full directory graph.
+#[derive(Serialize)]
+struct FullGraphEdge {
+    from: usize,
+    to: usize,
+}
+
+/// Build the standalone HTML document for the full directory graph.
+fn build_full_html(
+    nodes_json: &str,
+    edges_json: &str,
+    total_files: usize,
+    active_files: usize,
+    dead_files: usize,
+    missing_files: usize,
+) -> String
+{
+    let mut html = r##"<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Полный граф каталога зависимостей</title>
+<script src="__VIS_CDN__"></script>
+<style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0f172a; color: #e5e7eb; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #network { width: 100vw; height: 100vh; background: #0f172a; display: block; }
+    .controls {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 50;
+        background: rgba(15, 23, 42, 0.9);
+        backdrop-filter: blur(8px);
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        user-select: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: flex-start;
+        min-width: 260px;
+    }
+    .controls-title { font-weight: 700; font-size: 13px; color: #fbbf24; margin: 0; }
+    .badge-row { display: flex; gap: 8px; font-size: 12px; color: #cbd5e1; flex-wrap: wrap; }
+    .badge { background: #1e293b; border: 1px solid #475569; border-radius: 6px; padding: 2px 8px; color: #e5e7eb; font-weight: 600; white-space: nowrap; }
+    .badge .num { color: #60a5fa; }
+    .search-box { width: 100%; display: flex; gap: 6px; margin-top: 4px; }
+    .search-box input { flex: 1; background: #0f172a; border: 1px solid #475569; border-radius: 6px; padding: 6px 8px; color: #e5e7eb; font-size: 12px; outline: none; }
+    .search-box input:focus { border-color: #3b82f6; }
+    .search-box button { background: #3b82f6; border: none; border-radius: 6px; padding: 6px 10px; color: #ffffff; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .search-box button:hover { background: #60a5fa; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 4px; }
+    .filter-label { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .filter-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #e5e7eb; cursor: pointer; }
+    .filter-item input { accent-color: #3b82f6; width: 14px; height: 14px; }
+    .physics-toggle { width: 100%; background: #10b981; border: none; border-radius: 6px; padding: 6px 10px; color: #ffffff; font-size: 12px; font-weight: 600; cursor: pointer; margin-top: 2px; }
+    .physics-toggle:hover { background: #34d399; }
+    .physics-toggle.paused { background: #ef4444; }
+    .physics-toggle.paused:hover { background: #f87171; }
+    .cluster-info { font-size: 12px; color: #94a3b8; margin-top: 2px; line-height: 1.4; }
+    .hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="controls">
+    <div class="controls-title">Полный граф каталога</div>
+    <div class="badge-row">
+        <span>Всего файлов: <span class="badge"><span class="num" id="total-count">__TOTAL__</span></span></span>
+        <span>Активных: <span class="badge"><span class="num" id="active-count">__ACTIVE__</span></span></span>
+        <span>Мёртвых: <span class="badge"><span class="num" id="dead-count">__DEAD__</span></span></span>
+        <span>Ошибок: <span class="badge"><span class="num" id="missing-count">__MISSING__</span></span></span>
+    </div>
+    <div class="search-box">
+        <input type="text" id="graph-search" placeholder="Поиск файла...">
+        <button id="graph-center">Центр</button>
+    </div>
+    <div class="filter-group">
+        <div class="filter-label">Фильтры:</div>
+        <label class="filter-item"><input type="checkbox" id="filter-bin" checked><span>Чертежи (.bin, .xml)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-mesh" checked><span>Меши (.GeoPcDx, .XSec)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-tex" checked><span>Текстуры (.TgPcDx)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Только изолированные (мёртвые)</span></label>
+    </div>
+    <button class="physics-toggle" id="graph-pause">Приостановить физику</button>
+    <div class="cluster-info">Все сканированные файлы каталога. Компоненты расставляются автоматически (Barnes-Hut). Наведите на узел для полного пути.</div>
+    <div class="hint">Введите часть имени файла и нажмите Enter или "Центр" для камеры на узле.</div>
+</div>
+<div id="network"></div>
+<script>
+    const nodes = new vis.DataSet(__NODES_JSON__);
+    const edges = new vis.DataSet(__EDGES_JSON__);
+    const container = document.getElementById("network");
+    const data = { nodes, edges };
+    const options = {
+        nodes: {
+            font: { color: "#e5e7eb", size: 12, strokeWidth: 0, strokeColor: "#0f172a" },
+            borderWidth: 2,
+            shadow: { enabled: true, color: "rgba(0,0,0,0.7)", size: 10, x: 2, y: 2 },
+        },
+        edges: {
+            arrows: { to: { enabled: true, scaleFactor: 0.4 } },
+            smooth: false,
+            color: { color: "#475569", highlight: "#94a3b8", hover: "#94a3b8" },
+            width: 1.0,
+            shadow: false,
+        },
+        layout: { improvedLayout: true },
+        physics: {
+            enabled: true,
+            solver: "barnesHut",
+            barnesHut: {
+                gravitationalConstant: -5000,
+                centralGravity: 0.08,
+                springLength: 95,
+                springConstant: 0.04,
+                damping: 0.12,
+                avoidOverlap: 0.9,
+            },
+            stabilization: { enabled: true, iterations: 150, updateInterval: 25 },
+        },
+        interaction: {
+            hover: true,
+            tooltipDelay: 100,
+            hideEdgesOnDrag: false,
+            selectable: true,
+            navigationButtons: true,
+            keyboard: { enabled: true },
+        },
+        configure: { enabled: false },
+    };
+    const network = new vis.Network(container, data, options);
+
+    // Freeze physics after initial layout for large-graph performance.
+    network.once("stabilizationIterationsDone", function() {
+        network.setOptions({ physics: false });
+    });
+
+    const searchInput = document.getElementById("graph-search");
+    const centerBtn = document.getElementById("graph-center");
+    const pauseBtn = document.getElementById("graph-pause");
+    const filterBin = document.getElementById("filter-bin");
+    const filterMesh = document.getElementById("filter-mesh");
+    const filterTex = document.getElementById("filter-tex");
+    const filterDead = document.getElementById("filter-dead");
+    let physicsPaused = false;
+
+    function extOf(label) {
+        const parts = label.split(".");
+        return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
+    }
+
+    function isMissing(label) { return label.startsWith("[MISSING] "); }
+    function isDead(label) { return label.startsWith("[DEAD] "); }
+
+    function applyFilters() {
+        const showBin = filterBin.checked;
+        const showMesh = filterMesh.checked;
+        const showTex = filterTex.checked;
+        const showDeadOnly = filterDead.checked;
+
+        const updates = [];
+        nodes.forEach(n => {
+            const label = n.label;
+            const missing = isMissing(label);
+            const dead = isDead(label);
+            const e = extOf(label.replace(/^\[(MISSING|DEAD)\] /, ""));
+
+            let visible = true;
+            if (showDeadOnly) {
+                visible = dead;
+            } else if (missing) {
+                visible = true; // Missing nodes always visible unless dead-only mode
+            } else if (dead) {
+                visible = false; // Dead nodes hidden in regular mode
+            } else {
+                if (e === "bin" || e === "xml") visible = showBin;
+                else if (e === "geopcdx" || e === "xsec") visible = showMesh;
+                else if (e === "tgpcdx") visible = showTex;
+                else visible = true;
+            }
+
+            updates.push({ id: n.id, hidden: !visible });
+        });
+        nodes.update(updates);
+    }
+
+    function centerOnNode(query) {
+        if (!query.trim()) return;
+        const q = query.toLowerCase();
+        const matching = nodes.get().filter(n => n.label.toLowerCase().includes(q));
+        if (matching.length === 0) return;
+        const target = matching[0];
+        network.focus(target.id, { scale: 1.5, animation: { duration: 800 } });
+        network.selectNodes([target.id]);
+    }
+
+    centerBtn.addEventListener("click", () => centerOnNode(searchInput.value));
+    searchInput.addEventListener("keypress", (e) => { if (e.key === "Enter") centerOnNode(searchInput.value); });
+
+    pauseBtn.addEventListener("click", () => {
+        physicsPaused = !physicsPaused;
+        network.setOptions({ physics: { enabled: !physicsPaused } });
+        pauseBtn.textContent = physicsPaused ? "Возобновить физику" : "Приостановить физику";
+        pauseBtn.classList.toggle("paused", physicsPaused);
+    });
+
+    [filterBin, filterMesh, filterTex, filterDead].forEach(cb => {
+        cb.addEventListener("change", applyFilters);
+    });
+</script>
+</body>
+</html>"##
+    .to_string();
+
+    html = html.replace("__VIS_CDN__", VIS_NETWORK_CDN);
+    html = html.replace("__TOTAL__", &total_files.to_string());
+    html = html.replace("__ACTIVE__", &active_files.to_string());
+    html = html.replace("__DEAD__", &dead_files.to_string());
+    html = html.replace("__MISSING__", &missing_files.to_string());
+    html = html.replace("__NODES_JSON__", nodes_json);
+    html = html.replace("__EDGES_JSON__", edges_json);
+    html
+}
+
+/// Generate a full directory asset dependency graph containing ALL scanned files
+/// (healthy, orphan, and broken) and open it in the default browser.
+pub fn generate_full_directory_graph(
+    graph: &crate::auditor::FullAssetGraph,
+    _target_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>>
+{
+    // 1. Assign indices and build nodes.
+    let mut path_to_idx: std::collections::HashMap<PathBuf, usize> = std::collections::HashMap::new();
+    let mut nodes: Vec<FullGraphNode> = Vec::new();
+
+    for path in &graph.files_on_disk {
+        let idx = nodes.len();
+        path_to_idx.insert(path.clone(), idx);
+
+        let is_dead = graph.dead_files.contains(path);
+        let is_missing = graph.missing_files.contains(path);
+        let style = full_graph_node_style(path, is_dead, is_missing);
+
+        let label = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        let label = match style.label_prefix {
+            Some(prefix) => format!("{prefix}{label}"),
+            None => label,
+        };
+        let title = crate::fs_utils::to_assets_relative_display(path);
+
+        nodes.push(FullGraphNode {
+            id: idx,
+            label,
+            title,
+            color: style.color.to_string(),
+            shape: style.shape,
+            border_dash: style.border_dash,
+        });
+    }
+
+    // 2. Add missing-file nodes (not on disk).
+    for path in &graph.missing_files {
+        if path_to_idx.contains_key(path) {
+            continue;
+        }
+        let idx = nodes.len();
+        path_to_idx.insert(path.clone(), idx);
+
+        let style = full_graph_node_style(path, false, true);
+        let label = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        let label = format!("[MISSING] {label}");
+        let title = crate::fs_utils::to_assets_relative_display(path);
+
+        nodes.push(FullGraphNode {
+            id: idx,
+            label,
+            title,
+            color: style.color.to_string(),
+            shape: style.shape,
+            border_dash: style.border_dash,
+        });
+    }
+
+    // 3. Build edges from forward_edges.
+    let mut edges: Vec<FullGraphEdge> = Vec::new();
+    for (src, dsts) in &graph.forward_edges {
+        if let Some(&src_idx) = path_to_idx.get(src) {
+            for dst in dsts {
+                if let Some(&dst_idx) = path_to_idx.get(dst) {
+                    edges.push(FullGraphEdge { from: src_idx, to: dst_idx });
+                }
+            }
+        }
+    }
+
+    // 4. Deduplicate edges.
+    let mut seen_edges: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    edges.retain(|e| seen_edges.insert((e.from, e.to)));
+
+    let total_files = graph.files_on_disk.len();
+    let dead_count = graph.dead_files.len();
+    let missing_count = graph.missing_files.len();
+    let active_files = total_files.saturating_sub(dead_count);
+
+    let _edge_count = edges.len();
+
+    let nodes_json = serde_json::to_string(&nodes).expect("nodes serialize");
+    let edges_json = serde_json::to_string(&edges).expect("edges serialize");
+    let html = build_full_html(&nodes_json, &edges_json, total_files, active_files, dead_count, missing_count);
+
+    let out_path = std::env::temp_dir().join(FULL_GRAPH_HTML_NAME);
     std::fs::write(&out_path, html)?;
     open::that(&out_path)?;
     Ok(())

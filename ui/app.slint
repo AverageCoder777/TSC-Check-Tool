@@ -1342,6 +1342,7 @@ export component FolderAuditorWindow inherits Window {
     in property <float> scan-progress: 0.0;
     in property <string> scan-status-text: @tr("Готов к проверке");
     in-out property <bool> is-scanning: false;
+    in-out property <bool> is-scan-completed: false;
     in property <string> editor-status: "";
     in property <[IssueRowData]> filtered-rows: [];
 
@@ -1369,6 +1370,7 @@ export component FolderAuditorWindow inherits Window {
     callback sort-column(int);
     callback show-graph-clicked();
     callback show-all-graphs-clicked();
+    callback open-full-graph-clicked();
     callback open-summer-dialog();
     callback close-summer-dialog();
     callback confirm-consolidate-summer();
@@ -1509,6 +1511,13 @@ export component FolderAuditorWindow inherits Window {
                 text: @tr("Граф всех связей");
                 clicked => { root.show-all-graphs-clicked(); }
                 min-width: 150px;
+                preferred-height: 32px;
+            }
+            Button {
+                text: @tr("Полный граф каталога");
+                enabled: !root.is-scanning && root.is-scan-completed;
+                clicked => { root.open-full-graph-clicked(); }
+                min-width: 170px;
                 preferred-height: 32px;
             }
         }

@@ -57,6 +57,19 @@ pub struct AuditReport {
     pub dependency_graph: DependencyGraph
 }
 
+/// Complete directory-wide asset dependency graph produced by an audit run.
+#[derive(Debug, Clone, Default)]
+pub struct FullAssetGraph {
+    /// Every file found on disk during the scan (normalized, lowercase).
+    pub files_on_disk: HashSet<PathBuf>,
+    /// Forward dependency edges: source file -> set of files it depends on.
+    pub forward_edges: HashMap<PathBuf, HashSet<PathBuf>>,
+    /// Referenced files that do not exist on disk.
+    pub missing_files: HashSet<PathBuf>,
+    /// Files present on disk but unused by anything (orphans).
+    pub dead_files: HashSet<PathBuf>,
+}
+
 pub use crate::archive::ApArchiveCache;
 pub use crate::fs_utils::normalize_path;
 
@@ -980,7 +993,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
     static RE_LOD: OnceLock<Regex> = OnceLock::new();
 
     let re_ext = RE_EXT.get_or_init(|| {
-        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\.(?:geopcdx|tgpcdx|xsec|bin|xml)").unwrap()
+        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/\[\]]+?\.(?:geopcdx|tgpcdx|xsec|bin|xml)").unwrap()
     });
     let re_lod = RE_LOD.get_or_init(|| {
         Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[[0-9a-fA-F]{2}\][a-zA-Z0-9_\-]+").unwrap()
@@ -1065,9 +1078,14 @@ pub fn extract_xml_texture_id_refs(
     xml: &str,
     current_file_path: &Path,
     outgoing: &mut Vec<PathBuf>,
+    broken: &mut Vec<BrokenResourceRef>,
+    seen: &mut HashMap<(AssetResourceKind, PathBuf, PathBuf), usize>,
+    parent_file: &Path,
+    ap_cache: &ApArchiveCache,
 ) {
     let assets_root = find_assets_root(current_file_path);
     let parent_dir = current_file_path.parent();
+    let product_root = product_root_for(current_file_path, assets_root.as_deref().unwrap_or(Path::new("")));
 
     static RE_TEXTURE_ID: OnceLock<Regex> = OnceLock::new();
     let re_tex = RE_TEXTURE_ID.get_or_init(|| {
@@ -1094,24 +1112,56 @@ pub fn extract_xml_texture_id_refs(
             format!("{}.TgPcDx", clean_rel)
         };
 
-        let mut check_and_add = |candidate: PathBuf| {
-            if loose_path_exists(&candidate) {
-                register_texture_siblings(&candidate, outgoing);
-                let norm = crate::fs_utils::normalize_path(&candidate);
-                if !outgoing.contains(&norm) {
-                    outgoing.push(norm);
-                }
-            }
-        };
-
-        // 1. Check relative to Assets root
+        // Build candidate paths: relative to Assets root and relative to blueprint directory.
+        let mut candidates: Vec<PathBuf> = Vec::new();
         if let Some(root) = &assets_root {
-            check_and_add(root.join(&file_rel));
+            candidates.push(root.join(&file_rel));
+        }
+        if let Some(p_dir) = parent_dir {
+            candidates.push(p_dir.join(&file_rel));
         }
 
-        // 2. Check relative to current blueprint directory
-        if let Some(p_dir) = parent_dir {
-            check_and_add(p_dir.join(&file_rel));
+        let expected = assets_root
+            .as_ref()
+            .map(|r| r.join(&file_rel))
+            .unwrap_or_else(|| PathBuf::from(&file_rel));
+
+        let exists = loose_exists(&candidates)
+            || ap_exists(
+                &file_rel,
+                parent_dir.unwrap_or(Path::new("")),
+                &product_root,
+                assets_root.as_deref().unwrap_or(Path::new("")),
+                ap_cache,
+                AssetResourceKind::Texture,
+            );
+
+        if exists {
+            for candidate in &candidates {
+                if loose_path_exists(candidate) {
+                    register_texture_siblings(candidate, outgoing);
+                    let norm = crate::fs_utils::normalize_path(candidate);
+                    if !outgoing.contains(&norm) {
+                        outgoing.push(norm);
+                    }
+                    break;
+                }
+            }
+        } else {
+            // Texture missing on disk and not in AP archive -> BrokenResourceRef.
+            let kind = AssetResourceKind::Texture;
+            let key = (kind, expected.clone(), parent_file.to_path_buf());
+            if let Some(&idx) = seen.get(&key) {
+                broken[idx].count += 1;
+            } else {
+                seen.insert(key, broken.len());
+                broken.push(BrokenResourceRef {
+                    parent_file: parent_file.to_path_buf(),
+                    expected_path: expected,
+                    kind,
+                    count: 1,
+                });
+            }
         }
     }
 }
@@ -1384,7 +1434,7 @@ fn audit_one_file(
         .to_lowercase();
 
     if ext == "bin" {
-        extract_xml_texture_id_refs(&xml, file, &mut outgoing);
+        extract_xml_texture_id_refs(&xml, file, &mut outgoing, &mut out, &mut seen, &parent_file, ap_cache);
         for (kind, raw) in extract_bin_references(&xml, &product_root) {
             let cands = candidate_paths(&raw, parent, &product_root, assets_root, kind);
             let expected = cands
@@ -1528,7 +1578,7 @@ pub fn audit_folder_with_progress(
     max_concurrent: usize,
     ap_cache: &ApArchiveCache,
     progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
-) -> AuditReport {
+) -> (AuditReport, FullAssetGraph) {
     let mut files = Vec::new();
     let mut texture_files = Vec::new();
     let mut scripted_component_roots: std::collections::HashSet<PathBuf> =
@@ -1770,13 +1820,45 @@ pub fn audit_folder_with_progress(
         }
     }
 
-    AuditReport {
+    // Build full directory asset graph.
+    let mut files_on_disk: HashSet<PathBuf> = HashSet::new();
+    for f in files.iter().chain(texture_files.iter()).chain(extra_files.iter()) {
+        files_on_disk.insert(std::path::PathBuf::from(
+            crate::fs_utils::normalize_path(f)
+                .to_string_lossy()
+                .to_lowercase(),
+        ));
+    }
+
+    let mut missing_files: HashSet<PathBuf> = HashSet::new();
+    let mut dead_files: HashSet<PathBuf> = HashSet::new();
+    for b in &deduped {
+        let ep = std::path::PathBuf::from(
+            crate::fs_utils::normalize_path(&b.expected_path)
+                .to_string_lossy()
+                .to_lowercase(),
+        );
+        if b.kind == AssetResourceKind::Unused {
+            dead_files.insert(ep);
+        } else {
+            missing_files.insert(ep);
+        }
+    }
+
+    let full_graph = FullAssetGraph {
+        files_on_disk,
+        forward_edges: outgoing_map.clone(),
+        missing_files,
+        dead_files,
+    };
+
+    (AuditReport {
         broken_references: deduped,
         dependency_graph: DependencyGraph {
             outgoing: outgoing_map,
             incoming: incoming_map,
         }
-    }
+    }, full_graph)
 }
 
 fn collect_files(
