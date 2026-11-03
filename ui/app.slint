@@ -1368,6 +1368,7 @@ export component FolderAuditorWindow inherits Window {
     callback preview-texture(int);
     callback sort-column(int);
     callback show-graph-clicked();
+    callback show-all-graphs-clicked();
     callback open-summer-dialog();
     callback close-summer-dialog();
     callback confirm-consolidate-summer();
@@ -1498,6 +1499,17 @@ export component FolderAuditorWindow inherits Window {
                     root.current-filter = "orphans";
                     root.filter-changed("orphans");
                 }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            Button {
+                text: @tr("Граф всех связей");
+                clicked => { root.show-all-graphs-clicked(); }
+                min-width: 150px;
+                preferred-height: 32px;
             }
         }
 
