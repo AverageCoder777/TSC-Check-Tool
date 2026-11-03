@@ -1086,7 +1086,7 @@ pub fn extract_xml_texture_id_refs(
         }
 
         // Strip any [xx] hex seasonal/LOD bitmask prefixes.
-        let clean_rel = re_hex.replace_all(&raw, "").to_string();
+        let clean_rel = re_hex.replace_all(raw, "").to_string();
 
         let file_rel = if clean_rel.to_ascii_lowercase().ends_with(".tgpcdx") {
             clean_rel

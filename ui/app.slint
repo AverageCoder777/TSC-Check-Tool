@@ -1329,6 +1329,11 @@ export component FolderAuditorWindow inherits Window {
     in-out property <string> current-filter: "all";
     in-out property <int> selected-row-index: -1;
 
+    in-out property <bool> is-selected-texture: false;
+    in-out property <bool> has-missing-file-selected: false;
+    in-out property <string> incoming-refs-preview: "";
+    in-out property <string> outgoing-refs-preview: "";
+
     // Resizable column widths
     in-out property <length> col-kind-width: 140px;
     in-out property <length> col-missing-width: 380px;
@@ -1339,8 +1344,6 @@ export component FolderAuditorWindow inherits Window {
     in-out property <bool> is-scanning: false;
     in property <string> editor-status: "";
     in property <[IssueRowData]> filtered-rows: [];
-    in property <string> incoming-text: "";
-    in property <string> outgoing-text: "";
 
     in-out property <int> count-all: 0;
     in-out property <int> count-geometry: 0;
@@ -1412,17 +1415,86 @@ export component FolderAuditorWindow inherits Window {
             }
         }
 
-        HorizontalBox {
+        if !root.is-scanning && root.count-all > 0 : HorizontalBox {
             spacing: 6px;
             padding: 0px;
 
-            FilterTabButton { text: @tr("Всё"); count: root.count-all; active: root.current-filter == "all"; clicked => { root.current-filter = "all"; root.filter-changed("all"); } }
-            FilterTabButton { text: @tr("Геометрия"); count: root.count-geometry; active: root.current-filter == "geometry"; clicked => { root.current-filter = "geometry"; root.filter-changed("geometry"); } }
-            FilterTabButton { text: @tr("Текстуры"); count: root.count-textures; active: root.current-filter == "texture"; clicked => { root.current-filter = "texture"; root.filter-changed("texture"); } }
-            FilterTabButton { text: @tr("Скрипты"); count: root.count-scripts; active: root.current-filter == "script"; clicked => { root.current-filter = "script"; root.filter-changed("script"); } }
-            FilterTabButton { text: @tr("Звуки"); count: root.count-sounds; active: root.current-filter == "sound"; clicked => { root.current-filter = "sound"; root.filter-changed("sound"); } }
-            FilterTabButton { text: @tr("Дочерние объекты"); count: root.count-children; active: root.current-filter == "child"; clicked => { root.current-filter = "child"; root.filter-changed("child"); } }
-            FilterTabButton { text: @tr("Мёртвые ресурсы"); count: root.count-dead; active: root.current-filter == "orphans"; clicked => { root.current-filter = "orphans"; root.filter-changed("orphans"); } }
+            FilterTabButton {
+                text: @tr("Всё");
+                count: root.count-all;
+                active: root.current-filter == "all";
+                clicked => {
+                    root.selected-row-index = -1;
+                    root.current-filter = "all";
+                    root.filter-changed("all");
+                }
+            }
+
+            if root.count-geometry > 0 : FilterTabButton {
+                text: @tr("Геометрия");
+                count: root.count-geometry;
+                active: root.current-filter == "geometry";
+                clicked => {
+                    root.selected-row-index = -1;
+                    root.current-filter = "geometry";
+                    root.filter-changed("geometry");
+                }
+            }
+
+            if root.count-textures > 0 : FilterTabButton {
+                text: @tr("Текстуры");
+                count: root.count-textures;
+                active: root.current-filter == "texture";
+                clicked => {
+                    root.selected-row-index = -1;
+                    root.current-filter = "texture";
+                    root.filter-changed("texture");
+                }
+            }
+
+            if root.count-scripts > 0 : FilterTabButton {
+                text: @tr("Скрипты");
+                count: root.count-scripts;
+                active: root.current-filter == "script";
+                clicked => {
+                    root.selected-row-index = -1;
+                    root.current-filter = "script";
+                    root.filter-changed("script");
+                }
+            }
+
+            if root.count-sounds > 0 : FilterTabButton {
+                text: @tr("Звуки");
+                count: root.count-sounds;
+                active: root.current-filter == "sound";
+                clicked => {
+                    root.selected-row-index = -1;
+                    root.current-filter = "sound";
+                    root.filter-changed("sound");
+                }
+            }
+
+            if root.count-children > 0 : FilterTabButton {
+                text: @tr("Дочерние объекты");
+                count: root.count-children;
+                active: root.current-filter == "child";
+                clicked => {
+                    root.selected-row-index = -1;
+                    root.current-filter = "child";
+                    root.filter-changed("child");
+                }
+            }
+
+            if root.count-dead > 0 : FilterTabButton {
+                text: @tr("Мёртвые ресурсы");
+                count: root.count-dead;
+                active: root.current-filter == "orphans";
+                clicked => {
+                    root.selected-row-index = -1;
+                    root.current-filter = "orphans";
+                    root.filter-changed("orphans");
+                }
+            }
         }
 
         HorizontalLayout {
@@ -1544,32 +1616,51 @@ export component FolderAuditorWindow inherits Window {
             }
         }
 
-        Text { text: @tr("Входящие ссылки: {}", incoming-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
-        Text { text: @tr("Исходящие ссылки: {}", outgoing-text); font-size: 12px; color: #a1a1aa; wrap: TextWrap.word-wrap; }
-
-        HorizontalBox {
-            spacing: 8px;
+        if root.selected-row-index >= 0 : VerticalBox {
             padding: 0px;
-            
-            Button {
-                text: @tr("Открыть папку файла-источника");
-                enabled: root.selected-row-index >= 0 && !root.is-scanning;
-                clicked => { root.open-source-file(root.selected-row-index); }
+            spacing: 8px;
+
+            HorizontalBox {
+                padding: 0px;
+                spacing: 16px;
+                Text {
+                    text: @tr("Входящие ссылки: ") + root.incoming-refs-preview;
+                    font-size: 11px;
+                    color: #9ca3af;
+                    overflow: elide;
+                }
+                Text {
+                    text: @tr("Исходящие ссылки: ") + root.outgoing-refs-preview;
+                    font-size: 11px;
+                    color: #9ca3af;
+                    overflow: elide;
+                }
             }
-            Button {
-                text: @tr("Открыть папку отсутствующего файла");
-                enabled: root.selected-row-index >= 0 && !root.is-scanning;
-                clicked => { root.open-missing-target-folder(root.selected-row-index); }
-            }
-            Button {
-                text: @tr("Открыть файл-источник");
-                enabled: root.selected-row-index >= 0 && !root.is-scanning;
-                clicked => { root.edit-in-vscode(root.selected-row-index); }
-            }
-            Button {
-                text: @tr("Просмотр текстуры");
-                enabled: root.selected-row-index >= 0 && !root.is-scanning;
-                clicked => { root.preview-texture(root.selected-row-index); }
+
+            HorizontalBox {
+                padding: 0px;
+                spacing: 8px;
+
+                Button {
+                    text: @tr("Открыть папку файла-источника");
+                    enabled: !root.is-scanning;
+                    clicked => { root.open-source-file(root.selected-row-index); }
+                }
+                Button {
+                    text: @tr("Открыть файл-источник");
+                    enabled: !root.is-scanning;
+                    clicked => { root.edit-in-vscode(root.selected-row-index); }
+                }
+                if root.has-missing-file-selected : Button {
+                    text: @tr("Открыть папку отсутствующего файла");
+                    enabled: !root.is-scanning;
+                    clicked => { root.open-missing-target-folder(root.selected-row-index); }
+                }
+                if root.is-selected-texture : Button {
+                    text: @tr("Просмотр текстуры");
+                    enabled: !root.is-scanning;
+                    clicked => { root.preview-texture(root.selected-row-index); }
+                }
             }
         }
 

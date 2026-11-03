@@ -73,6 +73,10 @@ impl AuditorController {
                     w.set_scan_status_text(crate::gettext!("Подготовка к аудиту...").into());
                     w.set_filtered_rows(slint::ModelRc::new(slint::VecModel::default()));
                     w.set_selected_row_index(-1);
+                    w.set_is_selected_texture(false);
+                    w.set_has_missing_file_selected(false);
+                    w.set_incoming_refs_preview("".into());
+                    w.set_outgoing_refs_preview("".into());
                     w.set_is_scanning(true);
                 }
 
@@ -204,6 +208,10 @@ impl AuditorController {
                             };
                             w.set_scan_status_text(final_msg.into());
                             w.set_selected_row_index(-1);
+                            w.set_is_selected_texture(false);
+                            w.set_has_missing_file_selected(false);
+                            w.set_incoming_refs_preview("".into());
+                            w.set_outgoing_refs_preview("".into());
                             w.set_count_all(count_all);
                             w.set_count_geometry(count_geometry);
                             w.set_count_textures(count_textures);
@@ -248,6 +256,10 @@ impl AuditorController {
                 w.set_current_filter(filter);
                 w.set_filtered_rows(crate::map_broken_resources_to_ui(&items));
                 w.set_selected_row_index(-1);
+                w.set_is_selected_texture(false);
+                w.set_has_missing_file_selected(false);
+                w.set_incoming_refs_preview("".into());
+                w.set_outgoing_refs_preview("".into());
             });
         }
 
@@ -258,11 +270,48 @@ impl AuditorController {
             self.window.on_row_selected(move |row| {
                 if row < 0 {
                     if let Some(w) = handle.upgrade() {
-                        w.set_incoming_text("".into());
-                        w.set_outgoing_text("".into());
+                        w.set_incoming_refs_preview("".into());
+                        w.set_outgoing_refs_preview("".into());
+                        w.set_is_selected_texture(false);
+                        w.set_has_missing_file_selected(false);
                     }
                     return;
                 }
+
+                let selected_item = state
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.display_items.get(row as usize).cloned());
+
+                let (is_tex, has_missing) = selected_item
+                    .as_ref()
+                    .map(|item| {
+                        let is_tex = item
+                            .parent_file
+                            .to_string_lossy()
+                            .to_ascii_lowercase()
+                            .ends_with(".tgpcdx")
+                            || item
+                                .parent_file
+                                .to_string_lossy()
+                                .to_ascii_lowercase()
+                                .ends_with(".dds")
+                            || item
+                                .expected_path
+                                .to_string_lossy()
+                                .to_ascii_lowercase()
+                                .ends_with(".tgpcdx")
+                            || item
+                                .expected_path
+                                .to_string_lossy()
+                                .to_ascii_lowercase()
+                                .ends_with(".dds");
+                        let has_missing = item.kind != crate::auditor::AssetResourceKind::Unused
+                            && !item.expected_path.to_string_lossy().trim().is_empty();
+                        (is_tex, has_missing)
+                    })
+                    .unwrap_or((false, false));
+
                 let (incoming, outgoing) = state.lock().ok().map(|s| {
                     let item = s.display_items.get(row as usize);
                     let path = item.map(|i| {
@@ -309,8 +358,11 @@ impl AuditorController {
                     (incoming_str, outgoing_str)
                 }).unwrap_or_else(|| ("Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте".to_string(), "Нет зависимостей".to_string()));
                 if let Some(w) = handle.upgrade() {
-                    w.set_incoming_text(incoming.into());
-                    w.set_outgoing_text(outgoing.into());
+                    w.set_selected_row_index(row);
+                    w.set_incoming_refs_preview(incoming.into());
+                    w.set_outgoing_refs_preview(outgoing.into());
+                    w.set_is_selected_texture(is_tex);
+                    w.set_has_missing_file_selected(has_missing);
                 }
             });
         }
@@ -379,6 +431,10 @@ impl AuditorController {
                 w.set_sort_ascending(asc_now);
                 w.set_filtered_rows(rows_model);
                 w.set_selected_row_index(-1);
+                w.set_is_selected_texture(false);
+                w.set_has_missing_file_selected(false);
+                w.set_incoming_refs_preview("".into());
+                w.set_outgoing_refs_preview("".into());
             });
         }
 
