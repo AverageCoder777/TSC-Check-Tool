@@ -217,7 +217,7 @@ pub(crate) fn replace_missing_asset(
         let file_path = source_file.materialize(temp.path())?;
         let xml_path = temp.path().join("source.xml");
         if is_binary {
-let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
+            let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
             conversion.map_err(|error| {
                 format!(
                     "Не удалось прочитать {} перед заменой: {error}",
@@ -284,7 +284,7 @@ let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
 
         let converted_path = if is_binary {
             let converted_path = temp.path().join("replacement.bin");
-let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path);
+            let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path);
             conversion.map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
@@ -310,16 +310,16 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path)
     let mut transaction = FileTransaction::new();
     let mut replaced_files = 0;
     for (source_file, _temp, converted_path) in staged {
-    match install_route_file(route_path, &source_file, &converted_path) {
-        Ok(backup) => {
-            if let Some(backup_path) = &backup {
-                transaction.record(source_file.install_target(route_path), backup_path.clone());
+        match install_route_file(route_path, &source_file, &converted_path) {
+            Ok(backup) => {
+                if let Some(backup_path) = &backup {
+                    transaction.record(source_file.install_target(route_path), backup_path.clone());
+                }
+                replaced_files += 1;
+                if let Some(backup) = backup {
+                    backups.push(backup);
+                }
             }
-            replaced_files += 1;
-            if let Some(backup) = backup {
-                backups.push(backup);
-            }
-        }
             Err(error) => {
                 transaction.rollback();
                 return Err(format!(
@@ -344,4 +344,3 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path)
         log_error: None,
     })
 }
-

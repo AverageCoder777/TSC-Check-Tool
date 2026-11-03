@@ -30,7 +30,11 @@ pub(crate) struct FileStamp {
 
 impl FileStamp {
     pub(crate) fn new(modified: u64, size: u64, hash: u64) -> Self {
-        Self { modified, size, hash }
+        Self {
+            modified,
+            size,
+            hash,
+        }
     }
 
     pub(crate) fn of(path: &Path) -> Option<Self> {

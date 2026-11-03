@@ -128,13 +128,13 @@ pub fn find_vscode_path() -> Option<PathBuf> {
     }
 
     // 3. Поиск в PATH
-    if let Ok(output) = Command::new("cmd").args(["/C", "where", "code"]).output() {
-        if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines() {
-                let p = PathBuf::from(line.trim());
-                if p.is_file() {
-                    return Some(p);
-                }
+    if let Ok(output) = Command::new("cmd").args(["/C", "where", "code"]).output()
+        && output.status.success()
+    {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let p = PathBuf::from(line.trim());
+            if p.is_file() {
+                return Some(p);
             }
         }
     }
@@ -158,7 +158,14 @@ pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<std::process::Child,
             // Запуск .cmd пакета через cmd.exe с защитой от разрыва кавычек пробелами
             let mut c = Command::new("cmd.exe");
             let wait_flag = if wait { "--wait " } else { "" };
+            #[cfg(windows)]
             c.raw_arg(format!(
+                "/S /C \"\"{}\" {wait_flag}-r -g \"{}\"\"",
+                editor_path.display(),
+                xml_path.display()
+            ));
+            #[cfg(not(windows))]
+            c.arg(format!(
                 "/S /C \"\"{}\" {wait_flag}-r -g \"{}\"\"",
                 editor_path.display(),
                 xml_path.display()

@@ -1,28 +1,28 @@
-﻿//! Serz conversion and asset-reference checks.
+//! Serz conversion and asset-reference checks.
 
 use super::*;
 
-mod fuzzy;
-mod types;
-mod serz;
-mod scanner;
 mod checker;
-mod resolver;
-mod xml_reference;
+mod fuzzy;
 mod replacement;
-mod umlaut;
+mod resolver;
+mod scanner;
+mod serz;
 mod transaction;
+mod types;
+mod umlaut;
+mod xml_reference;
 
-pub(crate) use fuzzy::*;
-pub(crate) use types::*;
-pub(crate) use serz::*;
-pub(crate) use scanner::*;
 pub(crate) use checker::*;
-pub(crate) use resolver::*;
-pub(crate) use xml_reference::*;
+pub(crate) use fuzzy::*;
 pub(crate) use replacement::*;
-pub(crate) use umlaut::*;
+pub(crate) use resolver::*;
+pub(crate) use scanner::*;
+pub(crate) use serz::*;
 pub(crate) use transaction::*;
+pub(crate) use types::*;
+pub(crate) use umlaut::*;
+pub(crate) use xml_reference::*;
 
 #[cfg(test)]
 #[path = "../tests/assets.rs"]

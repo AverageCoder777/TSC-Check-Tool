@@ -221,4 +221,3 @@ pub(crate) fn leftover_temporary_work_directories(
     leftovers.sort();
     Ok(leftovers)
 }
-

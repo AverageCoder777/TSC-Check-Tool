@@ -100,14 +100,20 @@ impl ApArchiveCache {
         let target_stripped = normalize_member(&crate::fs_utils::strip_shader_prefix(relative));
         set.iter().any(|v| v.eq_ignore_ascii_case(&target))
             || set.iter().any(|v| v.eq_ignore_ascii_case(&target_stripped))
-            || set.iter().any(|v| v.eq_ignore_ascii_case(target.trim_start_matches('\\')))
+            || set
+                .iter()
+                .any(|v| v.eq_ignore_ascii_case(target.trim_start_matches('\\')))
             || set
                 .iter()
                 .any(|v| v.eq_ignore_ascii_case(target_stripped.trim_start_matches('\\')))
     }
 }
 
-pub fn extract_archive_member(archive_path: &Path, member: &str, dest: &Path) -> Result<(), String> {
+pub fn extract_archive_member(
+    archive_path: &Path,
+    member: &str,
+    dest: &Path,
+) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Не удалось создать папку {}: {e}", parent.display()))?;
@@ -134,13 +140,19 @@ pub fn extract_archive_member(archive_path: &Path, member: &str, dest: &Path) ->
             break;
         }
     }
-    let idx = idx.ok_or_else(|| format!("Не удалось найти {member} в архиве {}", archive_path.display()))?;
+    let idx = idx.ok_or_else(|| {
+        format!(
+            "Не удалось найти {member} в архиве {}",
+            archive_path.display()
+        )
+    })?;
 
     let mut entry = zip
         .by_index(idx)
         .map_err(|e| format!("Не удалось прочитать {member} из архива: {e}"))?;
     let mut output = BufWriter::new(
-        File::create(dest).map_err(|e| format!("Не удалось создать файл {}: {e}", dest.display()))?,
+        File::create(dest)
+            .map_err(|e| format!("Не удалось создать файл {}: {e}", dest.display()))?,
     );
     std::io::copy(&mut entry, &mut output)
         .map_err(|e| format!("Не удалось распаковать {member}: {e}"))?;

@@ -1,4 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![deny(clippy::all)]
+#![allow(clippy::type_complexity, reason = "required for syme essecntial types")]
 slint::include_modules!();
 
 use rayon::prelude::*;
@@ -19,9 +21,9 @@ const DEFAULT_CONCURRENT_SERZ: usize = 8;
 
 thread_local! {
     static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
-    static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = RefCell::new(None);
-    static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = RefCell::new(None);
-    static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = RefCell::new(None);
+    static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = const { RefCell::new(None) };
+    static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = const { RefCell::new(None) };
+    static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn clear_route_icon_cache() {
@@ -32,8 +34,6 @@ mod analysis_cache;
 mod ap_picker_controller;
 mod archive;
 
-mod fs_utils;
-mod xml_scan;
 mod app;
 mod assets;
 mod auditor;
@@ -41,6 +41,7 @@ mod auditor_controller;
 mod blueprint;
 mod domain;
 mod external_editor;
+mod fs_utils;
 mod inventory_controller;
 mod inventory_ui;
 mod missing_assets_controller;
@@ -54,6 +55,7 @@ mod texture;
 mod texture_controller;
 mod translit;
 mod windows;
+mod xml_scan;
 
 fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     if let Ok(data) = std::fs::read(icon_path) {
@@ -148,7 +150,7 @@ fn sync_ui(ui: &MainWindow) {
                             if !cache.contains_key(path) {
                                 cache.insert(path.clone(), load_route_icon_image(path));
                             }
-    });
+                        });
                     }
                 }
             }
@@ -159,12 +161,14 @@ fn sync_ui(ui: &MainWindow) {
                 .iter()
                 .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
                 .collect();
-            let filtered_selected_idx = app.selected_route.and_then(|sel_idx| {
-                let sel_path = &app.routes.get(sel_idx)?.path;
-                filtered_routes.iter().position(|r| &r.path == sel_path)
-            })
-            .map(|i| i as i32)
-            .unwrap_or(-1);
+            let filtered_selected_idx = app
+                .selected_route
+                .and_then(|sel_idx| {
+                    let sel_path = &app.routes.get(sel_idx)?.path;
+                    filtered_routes.iter().position(|r| &r.path == sel_path)
+                })
+                .map(|i| i as i32)
+                .unwrap_or(-1);
             let items: Vec<RouteItem> = filtered_routes
                 .iter()
                 .map(|r| {
@@ -310,7 +314,11 @@ fn handle_cli_args() {
             && path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("geopcdx") || e.eq_ignore_ascii_case("xsec"))
+                .map(|e| {
+                    e.eq_ignore_ascii_case("bin")
+                        || e.eq_ignore_ascii_case("geopcdx")
+                        || e.eq_ignore_ascii_case("xsec")
+                })
                 .unwrap_or(false);
         if is_asset {
             println!("[ExternalEditor] Запуск синхронизации для: {:?}", path);
@@ -464,15 +472,18 @@ fn main() {
     let scenario = scenario_controller::ScenarioController::new(app_for_controllers.clone());
     scenario.bind(&ui);
 
-    let app = app_for_controllers.clone();
-    ui.on_open_route_folder(move || {
-        if let Ok(app) = app.lock()
-            && let Some(idx) = app.selected_route
-            && let Some(route) = app.routes.get(idx)
-        {
-            let _ = windows::open_in_file_explorer(&route.path);
-        }
-    });
+    #[cfg(windows)]
+    {
+        let app = app_for_controllers.clone();
+        ui.on_open_route_folder(move || {
+            if let Ok(app) = app.lock()
+                && let Some(idx) = app.selected_route
+                && let Some(route) = app.routes.get(idx)
+            {
+                let _ = windows::open_in_file_explorer(&route.path);
+            }
+        });
+    }
 
     let app = app_for_controllers.clone();
     ui.on_show_inventory(move || {

@@ -82,7 +82,7 @@ pub fn build_inventory_rows(
             if state.sort.descending {
                 matched.sort_by(|(_, count_a), (_, count_b)| count_b.cmp(count_a));
             } else {
-                matched.sort_by(|(_, count_a), (_, count_b)| count_a.cmp(count_b));
+                matched.sort_by_key(|(_, count_a)| *count_a);
             }
         }
     }

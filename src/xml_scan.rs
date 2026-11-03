@@ -23,9 +23,13 @@ pub fn unescape_xml_entities(input: &str) -> String {
             "quot" => Some('"'),
             "apos" => Some('\''),
             value if value.starts_with("#x") || value.starts_with("#X") => {
-                u32::from_str_radix(&value[2..], 16).ok().and_then(char::from_u32)
+                u32::from_str_radix(&value[2..], 16)
+                    .ok()
+                    .and_then(char::from_u32)
             }
-            value if value.starts_with('#') => value[1..].parse::<u32>().ok().and_then(char::from_u32),
+            value if value.starts_with('#') => {
+                value[1..].parse::<u32>().ok().and_then(char::from_u32)
+            }
             _ => None,
         };
         if let Some(ch) = character {

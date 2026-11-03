@@ -33,9 +33,9 @@ pub(crate) fn find_ignore_ascii_case(haystack: &[u8], needle: &[u8], from: usize
     let last = haystack.len() - needle.len();
     let mut index = from;
     while index <= last {
-    let offset = haystack[index..=last]
-        .iter()
-        .position(|byte| byte.eq_ignore_ascii_case(&first))?;
+        let offset = haystack[index..=last]
+            .iter()
+            .position(|byte| byte.eq_ignore_ascii_case(&first))?;
         let start = index + offset;
         if haystack[start..start + needle.len()].eq_ignore_ascii_case(needle) {
             return Some(start);
@@ -393,15 +393,15 @@ fn kind_from_context_state(
     if let Some(index) = vehicle {
         best = Some((*index, crate::domain::AssetKind::Vehicle));
     }
-    if let Some(index) = scenery {
-        if best.map_or(true, |(current, _)| *index > current) {
-            best = Some((*index, crate::domain::AssetKind::Scenery));
-        }
+    if let Some(index) = scenery
+        && best.is_none_or(|(current, _)| *index > current)
+    {
+        best = Some((*index, crate::domain::AssetKind::Scenery));
     }
-    if let Some(index) = loft {
-        if best.map_or(true, |(current, _)| *index > current) {
-            best = Some((*index, crate::domain::AssetKind::Loft));
-        }
+    if let Some(index) = loft
+        && best.is_none_or(|(current, _)| *index > current)
+    {
+        best = Some((*index, crate::domain::AssetKind::Loft));
     }
     best.map(|(_, kind)| kind)
         .unwrap_or(crate::domain::AssetKind::Other)

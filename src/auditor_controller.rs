@@ -119,7 +119,8 @@ impl AuditorController {
                                 if let Some(w) = h.upgrade() {
                                     w.set_audit_progress(done as f32 / total as f32);
                                     w.set_audit_status(
-                                        format!("Сканирование: {} / {} файлов...", done, total).into(),
+                                        format!("Сканирование: {} / {} файлов...", done, total)
+                                            .into(),
                                     );
                                 }
                             });
@@ -294,11 +295,14 @@ impl AuditorController {
                     return;
                 }
                 let target_path = state.lock().ok().and_then(|s| {
-                    s.display_items.get(row as usize).map(|item| item.parent_file.clone())
+                    s.display_items
+                        .get(row as usize)
+                        .map(|item| item.parent_file.clone())
                 });
 
                 if let Some(path) = target_path {
                     println!("[Auditor] Opening path: {:?}", path);
+                    #[cfg(windows)]
                     let _ = crate::windows::open_in_explorer(&path);
                 }
             });
@@ -312,11 +316,14 @@ impl AuditorController {
                     return;
                 }
                 let target_path = state.lock().ok().and_then(|s| {
-                    s.display_items.get(row as usize).map(|item| item.expected_path.clone())
+                    s.display_items
+                        .get(row as usize)
+                        .map(|item| item.expected_path.clone())
                 });
 
                 if let Some(path) = target_path {
                     println!("[Auditor] Opening target path: {:?}", path);
+                    #[cfg(windows)]
                     let _ = crate::windows::open_in_explorer(&path);
                 }
             });
@@ -376,7 +383,11 @@ impl AuditorController {
 
                 let is_editable = |p: &PathBuf| {
                     p.extension()
-                        .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("geopcdx") || e.eq_ignore_ascii_case("xsec"))
+                        .map(|e| {
+                            e.eq_ignore_ascii_case("bin")
+                                || e.eq_ignore_ascii_case("geopcdx")
+                                || e.eq_ignore_ascii_case("xsec")
+                        })
                         .unwrap_or(false)
                 };
 
@@ -386,7 +397,9 @@ impl AuditorController {
                     expected_path
                 } else {
                     if let Some(win) = handle.upgrade() {
-                        win.set_editor_status("Выбранный элемент не является .bin/.GeoPcDx/.XSec".into());
+                        win.set_editor_status(
+                            "Выбранный элемент не является .bin/.GeoPcDx/.XSec".into(),
+                        );
                     }
                     return;
                 };
@@ -399,11 +412,7 @@ impl AuditorController {
                 let serz_path = crate::assets::find_serz_path(&asset_path)
                     .or_else(|| {
                         let p = crate::assets::preferred_serz_path(&rw_path);
-                        if p.is_file() {
-                            Some(p)
-                        } else {
-                            None
-                        }
+                        if p.is_file() { Some(p) } else { None }
                     })
                     .unwrap_or_else(|| PathBuf::from("serz.exe"));
 
@@ -511,8 +520,12 @@ impl AuditorController {
                 });
             });
         }
-    }}
-fn sync_summer_candidates_to_ui(window: &FolderAuditorWindow, candidates: &[crate::auditor::SummerConsolidationCandidate]) {
+    }
+}
+fn sync_summer_candidates_to_ui(
+    window: &FolderAuditorWindow,
+    candidates: &[crate::auditor::SummerConsolidationCandidate],
+) {
     let rows: Vec<crate::SummerCandidateItem> = candidates
         .iter()
         .map(|c| {

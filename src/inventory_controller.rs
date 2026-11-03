@@ -158,12 +158,20 @@ impl InventoryController {
                     return;
                 }
 
-                let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
-                if full.exists() {
-                    let _ = crate::windows::open_in_explorer(&full);
-                } else if let Some(target) = crate::inventory_ui::existing_directory_upwards(&full) {
-                    let _ = crate::windows::open_in_file_explorer(&target);
+                #[cfg(windows)]
+                {
+                    let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
+                    if full.exists() {
+                        let _ = crate::windows::open_in_explorer(&full);
+                    } else if let Some(target) =
+                        crate::inventory_ui::existing_directory_upwards(&full)
+                    {
+                        let _ = crate::windows::open_in_file_explorer(&target);
+                    }
                 }
+                // Чтобы клиппи не ругался на "пустой" для не винды return; выше
+                #[cfg(not(windows))]
+                {}
             });
         }
 

@@ -106,7 +106,7 @@ impl RouteFile {
                 Some(relative.to_string_lossy().replace('\\', "/"))
             }
             RouteFile::Archive { name, .. } => {
-                let clean = name.trim_start_matches(|c| c == '/' || c == '\\');
+                let clean = name.trim_start_matches(['/', '\\']);
                 Some(clean.replace('\\', "/"))
             }
         }
@@ -140,7 +140,7 @@ impl RouteFile {
         match self {
             RouteFile::Path(path) => path.clone(),
             RouteFile::Archive { name, .. } => {
-                let clean = name.trim_start_matches(|c| c == '/' || c == '\\');
+                let clean = name.trim_start_matches(['/', '\\']);
                 route_path.join(clean.replace('\\', "/"))
             }
         }
@@ -155,7 +155,7 @@ impl RouteFile {
         };
 
         // Защита от сброса temp_dir до корня диска на Windows
-        let clean_name = name.trim_start_matches(|c| c == '/' || c == '\\');
+        let clean_name = name.trim_start_matches(['/', '\\']);
         let relative = Path::new(clean_name);
         if relative.components().any(|component| {
             matches!(
@@ -179,7 +179,6 @@ impl RouteFile {
         crate::archive::extract_archive_member(archive, name, &target)?;
 
         Ok(target)
-
     }
 
     /// Расширение файла без аллокации строки в куче.

@@ -89,9 +89,11 @@ pub(crate) fn has_umlauts_in_xml(xml: &str) -> bool {
         };
         let entity = &remaining[..semicolon];
         let character = if entity.starts_with("#x") || entity.starts_with("#X") {
-            u32::from_str_radix(&entity[2..], 16).ok().and_then(char::from_u32)
-        } else if entity.starts_with('#') {
-            entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+            u32::from_str_radix(&entity[2..], 16)
+                .ok()
+                .and_then(char::from_u32)
+        } else if let Some(stripped_entity) = entity.strip_prefix('#') {
+            stripped_entity.parse::<u32>().ok().and_then(char::from_u32)
         } else {
             None
         };
