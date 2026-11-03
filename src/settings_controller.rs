@@ -44,21 +44,26 @@ impl SettingsController {
 
         self.window.set_serz_process_limit(current as i32);
         self.window.set_serz_process_limit_max(available as i32);
-        self.window.set_serz_presets(slint::ModelRc::new(slint::VecModel::from(presets)));
+        self.window
+            .set_serz_presets(slint::ModelRc::new(slint::VecModel::from(presets)));
         self.window.set_serz_process_limit_index(index as i32);
-        self.window.set_locoswap_path(app.locoswap_path.clone().into());
-        self.window.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
+        self.window
+            .set_locoswap_path(app.locoswap_path.clone().into());
+        self.window
+            .set_route_thumbnails_enabled(app.route_thumbnails_enabled);
         self.window.set_route_scan_on_hdd(app.route_scan_on_hdd);
-        self.window.set_hide_quick_drive_free_roam(app.hide_quick_drive_free_roam);
+        self.window
+            .set_hide_quick_drive_free_roam(app.hide_quick_drive_free_roam);
         self.window.set_game_path(app.rw_path.clone().into());
 
         let langs = ["ru", "en", "de"];
-        self.window.set_language_options(slint::ModelRc::new(slint::VecModel::from(
-            langs
-                .iter()
-                .map(|s| (*s).to_string().into())
-                .collect::<Vec<slint::SharedString>>(),
-        )));
+        self.window
+            .set_language_options(slint::ModelRc::new(slint::VecModel::from(
+                langs
+                    .iter()
+                    .map(|s| (*s).to_string().into())
+                    .collect::<Vec<slint::SharedString>>(),
+            )));
         let lang_idx = langs.iter().position(|&l| l == app.language).unwrap_or(0);
         self.window.set_language_index(lang_idx as i32);
     }
@@ -80,7 +85,9 @@ impl SettingsController {
 
         // Выбор пути к LocoSwap
         self.window.on_pick_locoswap(move || {
-            let Some(sw) = settings_handle.upgrade() else { return };
+            let Some(sw) = settings_handle.upgrade() else {
+                return;
+            };
             let current = sw.get_locoswap_path().to_string();
             let mut dialog = rfd::FileDialog::new()
                 .set_title("Выберите LocoSwap.exe")
@@ -98,7 +105,9 @@ impl SettingsController {
 
         // Выбор папки с игрой RailWorks
         self.window.on_pick_game(move || {
-            let Some(sw) = settings_handle3.upgrade() else { return };
+            let Some(sw) = settings_handle3.upgrade() else {
+                return;
+            };
             let current = sw.get_game_path().to_string();
             let mut dialog = rfd::FileDialog::new().set_title("Выберите папку с игрой RailWorks");
             if !current.is_empty() {
@@ -133,7 +142,9 @@ impl SettingsController {
         // Выбор пресета процессов serz
         let app = self.app.clone();
         self.window.on_serz_preset_selected(move |i| {
-            let Some(sw) = settings_handle4.upgrade() else { return };
+            let Some(sw) = settings_handle4.upgrade() else {
+                return;
+            };
             let presets = sw.get_serz_presets();
             if let Some(item) = presets.row_data(i as usize)
                 && let Ok(limit) = item.to_string().parse::<usize>()
@@ -148,7 +159,9 @@ impl SettingsController {
         // Сохранение настроек и автоматическое закрытие окна
         let app = self.app.clone();
         self.window.on_save_settings(move || {
-            let Some(sw) = settings_handle2.upgrade() else { return };
+            let Some(sw) = settings_handle2.upgrade() else {
+                return;
+            };
             let limit = sw.get_serz_process_limit() as usize;
             let path = sw.get_locoswap_path().to_string();
             let game_path = sw.get_game_path().to_string();

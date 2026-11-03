@@ -321,9 +321,13 @@ impl AuditorController {
             self.window.on_open_source_file(move |row| {
                 if row < 0 { return; }
                 let target_path = state.lock().ok().and_then(|s| {
-                    s.display_items.get(row as usize).map(|item| item.parent_file.clone())
+                    s.display_items
+                        .get(row as usize)
+                        .map(|item| item.parent_file.clone())
                 });
                 if let Some(path) = target_path {
+                    println!("[Auditor] Opening path: {:?}", path);
+                    #[cfg(windows)]
                     let _ = crate::windows::open_in_explorer(&path);
                 }
             });
@@ -335,9 +339,13 @@ impl AuditorController {
             self.window.on_open_missing_target_folder(move |row| {
                 if row < 0 { return; }
                 let target_path = state.lock().ok().and_then(|s| {
-                    s.display_items.get(row as usize).map(|item| item.expected_path.clone())
+                    s.display_items
+                        .get(row as usize)
+                        .map(|item| item.expected_path.clone())
                 });
                 if let Some(path) = target_path {
+                    println!("[Auditor] Opening target path: {:?}", path);
+                    #[cfg(windows)]
                     let _ = crate::windows::open_in_explorer(&path);
                 }
             });
@@ -390,7 +398,11 @@ impl AuditorController {
 
                 let is_editable = |p: &PathBuf| {
                     p.extension()
-                        .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("geopcdx") || e.eq_ignore_ascii_case("xsec"))
+                        .map(|e| {
+                            e.eq_ignore_ascii_case("bin")
+                                || e.eq_ignore_ascii_case("geopcdx")
+                                || e.eq_ignore_ascii_case("xsec")
+                        })
                         .unwrap_or(false)
                 };
 
@@ -400,7 +412,9 @@ impl AuditorController {
                     expected_path
                 } else {
                     if let Some(win) = handle.upgrade() {
-                        win.set_editor_status(crate::gettext!("Выбранный элемент не является .bin/.GeoPcDx/.XSec").into());
+                        win.set_editor_status(
+                            "Выбранный элемент не является .bin/.GeoPcDx/.XSec".into(),
+                        );
                     }
                     return;
                 };

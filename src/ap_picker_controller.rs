@@ -122,14 +122,15 @@ impl ApPickerController {
                 let entry = selected_entry;
 
                 std::thread::spawn(move || {
-                    let assets_path =
-                        crate::app::clean_rw_path(&rw_path)
-                            .join("Assets");
+                    let assets_path = crate::app::clean_rw_path(&rw_path).join("Assets");
                     let target_file_path =
                         resolve_extraction_path(&assets_path, &archive_path, &entry);
 
-                    let extract_result =
-                        crate::archive::extract_archive_member(&archive_path, &entry, &target_file_path);
+                    let extract_result = crate::archive::extract_archive_member(
+                        &archive_path,
+                        &entry,
+                        &target_file_path,
+                    );
 
                     match extract_result {
                         Ok(()) => {

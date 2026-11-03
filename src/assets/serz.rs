@@ -23,10 +23,7 @@ pub(crate) fn fallback_serz_path(serz_path: &Path) -> Option<PathBuf> {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SerzError {
     #[error("serz.exe process failed (exit code {code:?}): {message}")]
-    Process {
-        code: Option<i32>,
-        message: String,
-    },
+    Process { code: Option<i32>, message: String },
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("Serz timeout: process hung")]
@@ -34,8 +31,6 @@ pub(crate) enum SerzError {
     #[error("Invalid output: {0}")]
     InvalidOutput(String),
 }
-
-
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AssetError {
@@ -70,37 +65,37 @@ impl SerzTool {
     }
 
     pub(crate) fn bin_to_xml(&self, input: &Path, output: &Path) -> Result<(), SerzError> {
-    convert_bin_to_xml(&self.primary, input, output).or_else(|primary_error| {
-        let Some(fallback) = &self.fallback else {
-            return Err(primary_error);
-        };
-        convert_bin_to_xml(fallback, input, output).map_err(|fallback_error| {
-            SerzError::Process {
-                code: None,
-                message: format!(
-                    "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
-                    fallback.display()
-                ),
-            }
+        convert_bin_to_xml(&self.primary, input, output).or_else(|primary_error| {
+            let Some(fallback) = &self.fallback else {
+                return Err(primary_error);
+            };
+            convert_bin_to_xml(fallback, input, output).map_err(|fallback_error| {
+                SerzError::Process {
+                    code: None,
+                    message: format!(
+                        "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
+                        fallback.display()
+                    ),
+                }
+            })
         })
-    })
     }
 
     pub(crate) fn xml_to_bin(&self, input: &Path, output: &Path) -> Result<(), SerzError> {
-    convert_xml_to_bin(&self.primary, input, output).or_else(|primary_error| {
-        let Some(fallback) = &self.fallback else {
-            return Err(primary_error);
-        };
-        convert_xml_to_bin(fallback, input, output).map_err(|fallback_error| {
-            SerzError::Process {
-                code: None,
-                message: format!(
-                    "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
-                    fallback.display()
-                ),
-            }
+        convert_xml_to_bin(&self.primary, input, output).or_else(|primary_error| {
+            let Some(fallback) = &self.fallback else {
+                return Err(primary_error);
+            };
+            convert_xml_to_bin(fallback, input, output).map_err(|fallback_error| {
+                SerzError::Process {
+                    code: None,
+                    message: format!(
+                        "{primary_error}; повторная попытка через {} не удалась: {fallback_error}",
+                        fallback.display()
+                    ),
+                }
+            })
         })
-    })
     }
 }
 
@@ -145,12 +140,18 @@ pub(crate) fn find_serz_path(target: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn read_serz_xml(serz_path: &Path, asset_path: &Path) -> Result<String, SerzError> {
-    let temp = tempdir().map_err(|error| SerzError::InvalidOutput(format!("Не удалось создать временную папку: {error}")))?;
+    let temp = tempdir().map_err(|error| {
+        SerzError::InvalidOutput(format!("Не удалось создать временную папку: {error}"))
+    })?;
     let xml_path = temp.path().join("asset.xml");
-let conversion = SerzTool::new(serz_path).bin_to_xml(asset_path, &xml_path);
+    let conversion = SerzTool::new(serz_path).bin_to_xml(asset_path, &xml_path);
     conversion?;
-    let bytes = fs::read(&xml_path)
-        .map_err(|error| SerzError::InvalidOutput(format!("Не удалось прочитать XML {}: {error}", xml_path.display())))?;
+    let bytes = fs::read(&xml_path).map_err(|error| {
+        SerzError::InvalidOutput(format!(
+            "Не удалось прочитать XML {}: {error}",
+            xml_path.display()
+        ))
+    })?;
     Ok(decode_xml_bytes(&bytes))
 }
 
@@ -171,9 +172,9 @@ pub fn serz_output(serz_path: &Path, args: &[String]) -> Result<std::process::Ou
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    let parent = serz_path
-        .parent()
-        .ok_or_else(|| SerzError::InvalidOutput(format!("Некорректный путь к Serz: {}", serz_path.display())))?;
+    let parent = serz_path.parent().ok_or_else(|| {
+        SerzError::InvalidOutput(format!("Некорректный путь к Serz: {}", serz_path.display()))
+    })?;
     let mut cmd = Command::new(serz_path);
     cmd.current_dir(parent)
         .args(args)
@@ -318,9 +319,7 @@ pub(crate) fn convert_xml_to_bin(
     xml_path: &Path,
     target_asset_path: &Path,
 ) -> Result<(), SerzError> {
-    let staging_dir = xml_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let staging_dir = xml_path.parent().unwrap_or_else(|| Path::new("."));
     let staging_output = tempfile::Builder::new()
         .prefix("staging_output_")
         .suffix(".bin")
@@ -349,9 +348,8 @@ pub(crate) fn convert_xml_to_bin(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     println!("[Serz Output] stdout: {}, stderr: {}", stdout, stderr);
-    validate_serz_process(output.status, &stdout, &stderr).map_err(|error| {
+    validate_serz_process(output.status, &stdout, &stderr).inspect_err(|_| {
         let _ = fs::remove_file(&staging_output);
-        error
     })?;
 
     let metadata = fs::metadata(&staging_output).map_err(|error| {
@@ -427,5 +425,3 @@ pub(crate) fn legacy_windows_path(path: &Path) -> PathBuf {
     }
     path.to_path_buf()
 }
-
-

@@ -1,6 +1,9 @@
 use super::*;
 
-pub fn resolve_asset_path(assets_path: &Path, relative_asset: &str) -> Result<Option<PathBuf>, String> {
+pub fn resolve_asset_path(
+    assets_path: &Path,
+    relative_asset: &str,
+) -> Result<Option<PathBuf>, String> {
     let exact = assets_path.join(relative_asset.replace('/', "\\"));
     if exact.is_file() {
         return Ok(Some(exact));
@@ -226,7 +229,11 @@ pub fn find_entry_in_directory(
 }
 
 /// Разрешает путь ссылки, подбирая похожие имена файлов и папок.
-pub fn resolve_reference_path(base: &Path, relative: &str, extensions: &[String]) -> Option<PathBuf> {
+pub fn resolve_reference_path(
+    base: &Path,
+    relative: &str,
+    extensions: &[String],
+) -> Option<PathBuf> {
     let mut current = base.to_path_buf();
     let components: Vec<_> = relative
         .split(['\\', '/'])
@@ -246,4 +253,3 @@ pub fn resolve_reference_path(base: &Path, relative: &str, extensions: &[String]
     }
     None
 }
-

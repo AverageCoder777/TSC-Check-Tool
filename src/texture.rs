@@ -205,7 +205,10 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
 
     for (w, h, bytes) in &mips {
         s.push_str("\t\t\t\t\t\t<cHcImageDx d:id=\"4\">\n");
-        let _ = writeln!(s, "\t\t\t\t\t\t\t<Format d:type=\"cDeltaString\">{fmt_str}</Format>");
+        let _ = writeln!(
+            s,
+            "\t\t\t\t\t\t\t<Format d:type=\"cDeltaString\">{fmt_str}</Format>"
+        );
         s.push_str("\t\t\t\t\t\t\t<IsSwizzled d:type=\"bool\">0</IsSwizzled>\n");
         let _ = writeln!(s, "\t\t\t\t\t\t\t<Width d:type=\"sUInt16\">{w}</Width>");
         let _ = writeln!(s, "\t\t\t\t\t\t\t<Height d:type=\"sUInt16\">{h}</Height>");

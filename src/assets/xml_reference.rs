@@ -165,7 +165,6 @@ pub fn escape_xml_text(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-
 pub(crate) fn validate_xml_document(xml: &str) -> Result<(), String> {
     for event in xml::reader::EventReader::new(xml.as_bytes()) {
         event.map_err(|error| format!("Некорректный XML: {error}"))?;
@@ -173,14 +172,11 @@ pub(crate) fn validate_xml_document(xml: &str) -> Result<(), String> {
     Ok(())
 }
 
-
 pub fn first_blueprint_tag(xml: &str) -> Option<String> {
     static REGEX: OnceLock<Regex> = OnceLock::new();
-    let re = REGEX.get_or_init(|| {
-        Regex::new(r"<(c[A-Za-z0-9]+Blueprint)").expect("regex must be valid")
-    });
+    let re = REGEX
+        .get_or_init(|| Regex::new(r"<(c[A-Za-z0-9]+Blueprint)").expect("regex must be valid"));
     re.captures(xml)
         .and_then(|captures| captures.get(1))
         .map(|value| value.as_str().to_owned())
 }
-

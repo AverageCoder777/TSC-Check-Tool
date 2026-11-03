@@ -91,9 +91,7 @@ impl MissingAssetsController {
                 if let Some(missing) = missing
                     && let Some(repair) = missing.suggested_repair.clone()
                 {
-                    let clean_repair = repair
-                        .trim_start_matches(|c| c == '/' || c == '\\')
-                        .replace('/', "\\");
+                    let clean_repair = repair.trim_start_matches(['/', '\\']).replace('/', "\\");
                     let assets_path = app.clean_rw_path().join("Assets");
                     let replacement = assets_path.join(&clean_repair);
                     app.start_asset_replacement(
@@ -122,9 +120,7 @@ impl MissingAssetsController {
                             if repair.trim().is_empty() {
                                 return None;
                             }
-                            let clean = repair
-                                .trim_start_matches(|c| c == '/' || c == '\\')
-                                .replace('/', "\\");
+                            let clean = repair.trim_start_matches(['/', '\\']).replace('/', "\\");
                             let replacement = assets_path.join(clean);
                             Some((missing.clone(), replacement, repair.clone()))
                         })

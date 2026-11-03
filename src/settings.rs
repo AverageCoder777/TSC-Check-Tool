@@ -296,12 +296,7 @@ pub(crate) fn load_ignored_route_ids() -> Result<HashSet<String>, String> {
 pub(crate) fn load_last_game_path() -> String {
     last_game_path_file()
         .and_then(|path| fs::read_to_string(path).ok())
-        .map(|path| {
-            path.trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_owned()
-        })
+        .map(|path| path.trim().trim_matches('"').trim_matches('\'').to_owned())
         .filter(|path| !path.is_empty())
         .unwrap_or_else(|| r"C:\Program Files (x86)\Steam\steamapps\common\RailWorks".to_owned())
 }

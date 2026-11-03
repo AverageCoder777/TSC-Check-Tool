@@ -99,7 +99,7 @@ pub(crate) fn analyze_route_file(
             }
         }
     } else {
-         match fs::read(&file_path) {
+        match fs::read(&file_path) {
             Ok(data) => data,
             Err(error) => {
                 if is_archive {
@@ -158,7 +158,10 @@ pub fn count_asset_uses(
                 order.push(reference.path.clone());
                 map.insert(
                     reference.path,
-                    Entry { count: 1, kind: reference.kind },
+                    Entry {
+                        count: 1,
+                        kind: reference.kind,
+                    },
                 );
             }
         }
@@ -239,7 +242,8 @@ where
     report_progress("Сканирование файлов маршрута...");
     let collected_route_files = collect_route_files(route_path, ignore_scenarios)?;
 
-    let mut structure_issues = validate_route_structure(route_path, assets_path, &collected_route_files);
+    let mut structure_issues =
+        validate_route_structure(route_path, assets_path, &collected_route_files);
 
     // Основные файлы маршрута могут быть упакованы в .ap...
     let mut route_files: Vec<crate::domain::RouteFile> = collected_route_files
@@ -326,7 +330,12 @@ where
                             error: None,
                         };
                     }
-                    analyze_route_file(route_file, start_index + offset, temp_dir.path(), &serz_tool)
+                    analyze_route_file(
+                        route_file,
+                        start_index + offset,
+                        temp_dir.path(),
+                        &serz_tool,
+                    )
                 })
                 .collect()
         });
@@ -455,7 +464,13 @@ where
     // папки, и её продукт подключают к маршруту, даже если прямых ссылок на
     // него в файлах маршрута нет.
 
-    let (missing_assets, asset_inventory) = resolve_missing_and_corrupted(asset_uses, &asset_names, &ap_cache, assets_path, &mut structure_issues);
+    let (missing_assets, asset_inventory) = resolve_missing_and_corrupted(
+        asset_uses,
+        &asset_names,
+        &ap_cache,
+        assets_path,
+        &mut structure_issues,
+    );
 
     Ok(crate::domain::CheckResult {
         missing_assets,
@@ -465,8 +480,6 @@ where
         structure_issues,
     })
 }
-
-
 
 pub type ApCache = HashMap<PathBuf, HashSet<String>>;
 
@@ -508,10 +521,7 @@ pub(crate) fn scan_product_ap_archives(
     product_dirs: &HashSet<PathBuf>,
     pool: &rayon::ThreadPool,
 ) -> Result<(ApCache, Vec<String>), String> {
-    let dirs: Vec<PathBuf> = product_dirs
-        .iter()
-        .map(|path| path.clone())
-        .collect();
+    let dirs: Vec<PathBuf> = product_dirs.iter().cloned().collect();
 
     let results: Result<Vec<(PathBuf, HashSet<String>, Vec<String>)>, String> =
         pool.install(|| {
@@ -588,7 +598,10 @@ pub(crate) fn resolve_missing_and_corrupted(
     ap_cache: &ApCache,
     assets_path: &Path,
     structure_issues: &mut Vec<String>,
-) -> (Vec<crate::domain::MissingAsset>, Vec<crate::domain::ReferencedAsset>) {
+) -> (
+    Vec<crate::domain::MissingAsset>,
+    Vec<crate::domain::ReferencedAsset>,
+) {
     let mut asset_inventory = Vec::with_capacity(asset_uses.len());
     let mut missing_assets = Vec::new();
     for (relative_asset, uses) in asset_uses {

@@ -1,14 +1,10 @@
 //! Windows shell integrations such as Explorer and the Recycle Bin.
 
-use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::{os::windows::process::CommandExt, path::Path, process::Command};
 
 #[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
-use std::process::Command;
-
 pub(crate) fn open_in_explorer(target_path: &Path) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
     {
         if target_path.is_file() {
             Command::new("explorer")
@@ -43,4 +39,5 @@ pub(crate) fn open_in_explorer(target_path: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg(windows)]
 pub(crate) use open_in_explorer as open_in_file_explorer;

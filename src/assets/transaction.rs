@@ -41,8 +41,6 @@ impl Drop for FileTransaction {
     }
 }
 
-
-
 pub(crate) fn install_converted_asset(
     source_path: &Path,
     converted_path: &Path,
@@ -68,7 +66,6 @@ pub(crate) fn install_converted_asset(
     Ok(backup_path)
 }
 
-
 pub(crate) fn next_backup_path(source_path: &Path) -> Result<PathBuf, String> {
     let file_name = source_path
         .file_name()
@@ -87,7 +84,6 @@ pub(crate) fn next_backup_path(source_path: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-
 pub fn stage_serz_xml(
     source: &Path,
     target: &Path,
@@ -104,7 +100,7 @@ pub fn stage_serz_xml(
     // Serz собирает только .bin: файл геометрии приходится собирать тем же
     // форматом, а нужное расширение получит при переносе на место.
     let staged = temp.path().join("transliterated.bin");
-let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
+    let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
     conversion.map_err(|error| {
         format!(
             "Не удалось подготовить изменённый файл {}: {error}",
@@ -118,7 +114,6 @@ let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
         _temp: temp,
     })
 }
-
 
 pub fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFile, String> {
     let parent = source
@@ -162,7 +157,6 @@ pub fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
         }
     }
 }
-
 
 pub fn install_route_file(
     route_path: &Path,

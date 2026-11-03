@@ -68,13 +68,16 @@ pub(crate) fn names_match(expected: &str, candidate: &str) -> bool {
     if expected.chars().count() != candidate.chars().count() {
         return false;
     }
-    expected.chars().zip(candidate.chars()).all(|(left, right)| {
-        left == right
-            || left.eq_ignore_ascii_case(&right)
-            || crate::translit::BROKEN_CHARACTERS.contains(&left)
-            || crate::translit::BROKEN_CHARACTERS.contains(&right)
-            || is_homoglyph(left, right)
-    })
+    expected
+        .chars()
+        .zip(candidate.chars())
+        .all(|(left, right)| {
+            left == right
+                || left.eq_ignore_ascii_case(&right)
+                || crate::translit::BROKEN_CHARACTERS.contains(&left)
+                || crate::translit::BROKEN_CHARACTERS.contains(&right)
+                || is_homoglyph(left, right)
+        })
 }
 
 pub(crate) fn has_corrupted_or_nonascii(value: &str) -> bool {
@@ -195,7 +198,11 @@ pub(crate) fn fuzzy_match_name(query: &str, candidate: &str) -> bool {
     glitch_match(&left_chars, &right_raw_chars) || glitch_match(&left_chars, &right_folded_chars)
 }
 
-pub(crate) fn find_fuzzy_child(parent: &Path, query: &str, want_directory: bool) -> Option<PathBuf> {
+pub(crate) fn find_fuzzy_child(
+    parent: &Path,
+    query: &str,
+    want_directory: bool,
+) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(entries) = fs::read_dir(parent) {
         for entry in entries.flatten() {
@@ -225,7 +232,10 @@ pub(crate) fn find_fuzzy_child(parent: &Path, query: &str, want_directory: bool)
         .or_else(|| candidates.into_iter().next())
 }
 
-pub(crate) fn fuzzy_resolve_disk_path(assets_path: &Path, relative_asset: &str) -> Option<(PathBuf, String)> {
+pub(crate) fn fuzzy_resolve_disk_path(
+    assets_path: &Path,
+    relative_asset: &str,
+) -> Option<(PathBuf, String)> {
     let normalized = relative_asset.replace('\\', "/");
     let parts: Vec<&str> = normalized
         .split('/')

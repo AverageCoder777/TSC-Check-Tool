@@ -1,4 +1,3 @@
-
 #[derive(Clone)]
 pub struct RouteAssetItem {
     pub path: String,
@@ -131,6 +130,3 @@ pub fn is_protected_network_asset(asset: &RouteAssetItem) -> bool {
 
     false
 }
-
-
-

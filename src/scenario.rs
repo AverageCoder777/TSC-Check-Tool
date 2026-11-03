@@ -715,8 +715,7 @@ pub(crate) fn scenario_type_from_xml(xml: &str) -> String {
     {
         return "Quick Drive".to_owned();
     }
-    if contains_ignore_ascii_case(xml, "timetable")
-        || contains_ignore_ascii_case(xml, "etimetable")
+    if contains_ignore_ascii_case(xml, "timetable") || contains_ignore_ascii_case(xml, "etimetable")
     {
         return "Timetable (Standard)".to_owned();
     }

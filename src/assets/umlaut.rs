@@ -300,7 +300,6 @@ pub fn translated_reference(
     Ok(text)
 }
 
-
 pub(crate) fn repair_umlaut_asset_chain(
     route_path: &Path,
     assets_path: &Path,
@@ -688,7 +687,9 @@ pub(crate) fn repair_umlaut_asset_chain(
         let file_path = source.materialize(temp.path())?;
         let xml_path = temp.path().join("route.xml");
         if is_binary {
-            SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path).map_err(|e| e.to_string())?;
+            SerzTool::new(serz_path)
+                .bin_to_xml(&file_path, &xml_path)
+                .map_err(|e| e.to_string())?;
         } else {
             fs::copy(&file_path, &xml_path)
                 .map_err(|error| format!("Не удалось подготовить {}: {error}", source.display()))?;
@@ -725,7 +726,9 @@ pub(crate) fn repair_umlaut_asset_chain(
         let staged_path = if is_binary {
             let mut staged = temp.path().join("route-new");
             staged.set_extension(source.extension().unwrap());
-            SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged).map_err(|e| e.to_string())?;
+            SerzTool::new(serz_path)
+                .xml_to_bin(&xml_path, &staged)
+                .map_err(|e| e.to_string())?;
             staged
         } else {
             xml_path
@@ -788,7 +791,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                 let backup = match next_backup_path(original) {
                     Ok(path) => path,
                     Err(error) => {
-                        return Err(format!("{error}"));
+                        return Err(error);
                     }
                 };
                 if let Err(error) = fs::rename(original, &backup) {
@@ -825,8 +828,6 @@ pub(crate) fn repair_umlaut_asset_chain(
 ///
 /// Файл из архива .ap не переносится: вместо этого рядом с архивом кладётся
 /// изменённая копия, которую игра прочитает вместо записи архива.
-
-
 pub struct StagedUmlautFile {
     /// Исходный файл: запись архива .ap или файл на диске.
     pub source: crate::domain::RouteFile,
@@ -835,4 +836,3 @@ pub struct StagedUmlautFile {
     pub staged: PathBuf,
     pub _temp: tempfile::TempDir,
 }
-

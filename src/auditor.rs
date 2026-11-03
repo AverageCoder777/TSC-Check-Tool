@@ -140,15 +140,15 @@ fn is_blacklisted_sound_tag(tag: &str) -> bool {
 pub fn strip_lod_and_shader_prefix(raw: &str) -> String {
     if let Some(pos) = raw.rfind(['\\', '/']) {
         let (dir, file) = raw.split_at(pos + 1);
-        if file.starts_with('[') {
-            if let Some(end) = file.find(']') {
-                return format!("{}{}", dir, &file[end + 1..]);
-            }
+        if file.starts_with('[')
+            && let Some(end) = file.find(']')
+        {
+            return format!("{}{}", dir, &file[end + 1..]);
         }
-    } else if raw.starts_with('[') {
-        if let Some(end) = raw.find(']') {
-            return raw[end + 1..].to_string();
-        }
+    } else if raw.starts_with('[')
+        && let Some(end) = raw.find(']')
+    {
+        return raw[end + 1..].to_string();
     }
     raw.to_string()
 }
@@ -191,9 +191,7 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
                 continue;
             }
             let lower = raw.to_lowercase();
-            let raw = if lower.ends_with(".xsec") {
-                raw
-            } else if lower.contains('.') {
+            let raw = if lower.contains('.') || lower.ends_with(".xsec") {
                 raw
             } else {
                 format!("{raw}.xsec")
@@ -532,7 +530,7 @@ fn product_root_for(file: &Path, assets_root: &Path) -> PathBuf {
     if let Ok(rel) = file.strip_prefix(assets_root) {
         let comps: Vec<_> = rel.components().collect();
         if comps.len() >= 2 {
-            return assets_root.join(&comps[0]).join(&comps[1]);
+            return assets_root.join(comps[0]).join(comps[1]);
         }
     }
     file.parent().unwrap_or(assets_root).to_path_buf()
@@ -915,12 +913,12 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
                 outgoing.push(crate::fs_utils::normalize_path(&nmc));
             }
         }
-    } else if stem.ends_with("_nmc") {
-        if let Some(base) = stem.strip_suffix("_nmc") {
-            let nm = dir.join(format!("{}_nm.TgPcDx", base));
-            if loose_path_exists(&nm) {
-                outgoing.push(crate::fs_utils::normalize_path(&nm));
-            }
+    } else if stem.ends_with("_nmc")
+        && let Some(base) = stem.strip_suffix("_nmc")
+    {
+        let nm = dir.join(format!("{}_nm.TgPcDx", base));
+        if loose_path_exists(&nm) {
+            outgoing.push(crate::fs_utils::normalize_path(&nm));
         }
     }
 }
@@ -928,10 +926,10 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
 fn find_assets_root(start_path: &Path) -> Option<PathBuf> {
     let mut curr = start_path;
     loop {
-        if let Some(name) = curr.file_name().and_then(|n| n.to_str()) {
-            if name.eq_ignore_ascii_case("Assets") {
-                return Some(curr.to_path_buf());
-            }
+        if let Some(name) = curr.file_name().and_then(|n| n.to_str())
+            && name.eq_ignore_ascii_case("Assets")
+        {
+            return Some(curr.to_path_buf());
         }
         match curr.parent() {
             Some(p) => curr = p,
@@ -965,8 +963,9 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
     let re_ext = RE_EXT.get_or_init(|| {
         Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\.(?:geopcdx|tgpcdx|xsec|bin|xml)").unwrap()
     });
-    let re_lod = RE_LOD
-        .get_or_init(|| Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[[a-zA-Z0-9]{2}\][a-zA-Z0-9_\-]+").unwrap());
+    let re_lod = RE_LOD.get_or_init(|| {
+        Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[[a-zA-Z0-9]{2}\][a-zA-Z0-9_\-]+").unwrap()
+    });
 
     let mut try_register = |rel_str: &str| {
         let clean = rel_str
@@ -979,7 +978,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
 
         // Test relative to Assets root
         if let Some(root) = &assets_root {
-            let candidate = root.join(&clean);
+            let candidate = root.join(clean);
             if loose_path_exists(&candidate) {
                 let norm = crate::fs_utils::normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
@@ -992,7 +991,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
 
         // Test relative to parent directory
         if let Some(dir) = parent_dir {
-            let candidate = dir.join(&clean);
+            let candidate = dir.join(clean);
             if loose_path_exists(&candidate) {
                 let norm = crate::fs_utils::normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
@@ -1016,14 +1015,14 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
 
     for mat in re_lod.find_iter(&lossy_text) {
         let raw = mat.as_str();
-        if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']')) {
-            if b_close > b_open {
-                let prefix = &raw[..b_open];
-                let model = &raw[b_close + 1..];
+        if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']'))
+            && b_close > b_open
+        {
+            let prefix = &raw[..b_open];
+            let model = &raw[b_close + 1..];
             try_register(&format!("{}{}.GeoPcDx", prefix, model));
             try_register(&format!("{}{}.XSec", prefix, model));
             try_register(&format!("{}{}.TgPcDx", prefix, model)); // <-- ADD THIS
-            }
         }
     }
 }
@@ -1037,9 +1036,8 @@ pub fn extract_xml_texture_id_refs(
     let parent_dir = current_file_path.parent();
 
     static RE_TEXTURE_ID: OnceLock<Regex> = OnceLock::new();
-    let re_tex = RE_TEXTURE_ID.get_or_init(|| {
-        Regex::new(r"<[a-zA-Z0-9_]*TextureID[^>]*>([^<]+)</").unwrap()
-    });
+    let re_tex = RE_TEXTURE_ID
+        .get_or_init(|| Regex::new(r"<[a-zA-Z0-9_]*TextureID[^>]*>([^<]+)</").unwrap());
 
     for cap in re_tex.captures_iter(xml) {
         let raw = cap[1].trim().replace('/', "\\");
@@ -1166,36 +1164,41 @@ pub fn extract_absolute_blueprint_refs(
     let re_block = RE_BLOCK.get_or_init(|| {
         Regex::new(r"(?s)<iBlueprintLibrary-cAbsoluteBlueprintID>(.*?)</iBlueprintLibrary-cAbsoluteBlueprintID>").unwrap()
     });
-    let re_prov = RE_PROV.get_or_init(|| {
-        Regex::new(r"<Provider[^>]*>([^<]*)</Provider>").unwrap()
-    });
-    let re_prod = RE_PROD.get_or_init(|| {
-        Regex::new(r"<Product[^>]*>([^<]*)</Product>").unwrap()
-    });
-    let re_bp = RE_BP.get_or_init(|| {
-        Regex::new(r"<BlueprintID[^>]*>([^<]+)</BlueprintID>").unwrap()
-    });
+    let re_prov = RE_PROV.get_or_init(|| Regex::new(r"<Provider[^>]*>([^<]*)</Provider>").unwrap());
+    let re_prod = RE_PROD.get_or_init(|| Regex::new(r"<Product[^>]*>([^<]*)</Product>").unwrap());
+    let re_bp =
+        RE_BP.get_or_init(|| Regex::new(r"<BlueprintID[^>]*>([^<]+)</BlueprintID>").unwrap());
 
     for cap in re_block.captures_iter(xml) {
         let block = &cap[1];
-        let Some(bp_mat) = re_bp.captures(block) else { continue };
+        let Some(bp_mat) = re_bp.captures(block) else {
+            continue;
+        };
         let raw_bp = bp_mat[1].trim().replace('/', "\\");
         let raw_bp = raw_bp.trim_start_matches('\\');
         if raw_bp.is_empty() {
             continue;
         }
 
-        let provider = re_prov.captures(block).map(|c| c[1].trim().to_string()).unwrap_or_default();
-        let product = re_prod.captures(block).map(|c| c[1].trim().to_string()).unwrap_or_default();
+        let provider = re_prov
+            .captures(block)
+            .map(|c| c[1].trim().to_string())
+            .unwrap_or_default();
+        let product = re_prod
+            .captures(block)
+            .map(|c| c[1].trim().to_string())
+            .unwrap_or_default();
 
         let base_rel = if raw_bp.to_ascii_lowercase().ends_with(".xml") {
             &raw_bp[..raw_bp.len() - 4]
         } else {
-            &raw_bp
+            raw_bp
         };
 
         let base_dir = if !provider.is_empty() && !product.is_empty() {
-            assets_root.as_ref().map(|root| root.join(provider).join(product))
+            assets_root
+                .as_ref()
+                .map(|root| root.join(provider).join(product))
         } else {
             current_file_path.parent().map(|p| p.to_path_buf())
         };
@@ -1267,12 +1270,11 @@ pub fn find_scripted_component_root(script_path: &Path) -> Option<PathBuf> {
 
         // If direct parent is a recognized category folder (e.g. Elloks/<LocoFolder>),
         // then `dir` is the vehicle root.
-        if let Some(parent) = dir.parent() {
-            if let Some(p_name) = parent.file_name().and_then(|n| n.to_str()) {
-                if is_vehicle_category_folder(p_name) {
-                    return Some(dir.to_path_buf());
-                }
-            }
+        if let Some(parent) = dir.parent()
+            && let Some(p_name) = parent.file_name().and_then(|n| n.to_str())
+            && is_vehicle_category_folder(p_name)
+        {
+            return Some(dir.to_path_buf());
         }
 
         // Check if `dir` contains a controlling blueprint (.bin)
@@ -1280,7 +1282,7 @@ pub fn find_scripted_component_root(script_path: &Path) -> Option<PathBuf> {
             let has_blueprint = entries.flatten().any(|e| {
                 e.path()
                     .extension()
-                    .map_or(false, |ext| ext.eq_ignore_ascii_case("bin"))
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
             });
             if has_blueprint {
                 candidate_root = Some(dir.to_path_buf());
@@ -1539,7 +1541,12 @@ pub fn audit_folder_with_progress(
             }
         }
     } else {
-        collect_files(folder_path, &mut files, &mut texture_files, &mut scripted_component_roots);
+        collect_files(
+            folder_path,
+            &mut files,
+            &mut texture_files,
+            &mut scripted_component_roots,
+        );
     }
 
     let product_root = product_root_for(folder_path, assets_root);
@@ -1572,16 +1579,20 @@ pub fn audit_folder_with_progress(
                         && !path.starts_with(folder_path)
                     {
                         all_product_files.push(path.to_path_buf());
-                    } else if ext == "lua" || ext == "out" {
-                        if let Some(root) = find_scripted_component_root(path) {
-                            scripted_component_roots
-                                .insert(crate::fs_utils::normalize_path(&root));
-                        }
+                    } else if (ext == "lua" || ext == "out")
+                        && let Some(root) = find_scripted_component_root(path)
+                    {
+                        scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
                     }
                 }
             }
         } else {
-            collect_files(&product_root, &mut all_product_files, &mut dummy_textures, &mut scripted_component_roots);
+            collect_files(
+                &product_root,
+                &mut all_product_files,
+                &mut dummy_textures,
+                &mut scripted_component_roots,
+            );
             all_product_files.retain(|p| !p.starts_with(folder_path));
         }
         extra_files = all_product_files;
@@ -1699,7 +1710,7 @@ pub fn audit_folder_with_progress(
             .map(|p| p.to_string_lossy().replace('/', "\\"))
             .unwrap_or_else(|_| f.to_string_lossy().replace('/', "\\"));
         let in_ap = ap_cache.lookup(&product_root, &rel_product);
-        let has_incoming = incoming_map.get(&nf).map_or(false, |s| !s.is_empty()) || in_ap;
+        let has_incoming = incoming_map.get(&nf).is_some_and(|s| !s.is_empty()) || in_ap;
         if has_incoming {
             continue;
         }
@@ -1709,16 +1720,11 @@ pub fn audit_folder_with_progress(
             .unwrap_or("")
             .to_lowercase();
 
-        let is_orphan = match ext.as_str() {
-            "geopcdx" | "tgpcdx" | "xsec" => true,
-            _ => false,
-        };
+        let is_orphan = matches!(ext.as_str(), "geopcdx" | "tgpcdx" | "xsec");
         if is_orphan {
             let is_shielded = (ext == "geopcdx" || ext == "tgpcdx")
                 && scripted_component_roots.iter().any(|root| {
-                    nf.starts_with(&std::path::PathBuf::from(
-                        root.to_string_lossy().to_lowercase(),
-                    ))
+                    nf.starts_with(PathBuf::from(root.to_string_lossy().to_lowercase()))
                 });
             if is_shielded {
                 continue;
@@ -1742,7 +1748,12 @@ pub fn audit_folder_with_progress(
     }
 }
 
-fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, textures_out: &mut Vec<PathBuf>, scripted_roots: &mut std::collections::HashSet<PathBuf>) {
+fn collect_files(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    textures_out: &mut Vec<PathBuf>,
+    scripted_roots: &mut std::collections::HashSet<PathBuf>,
+) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -1825,4 +1836,3 @@ pub fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
         if asc { cmp } else { cmp.reverse() }
     });
 }
-
