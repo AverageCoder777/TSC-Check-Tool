@@ -199,7 +199,7 @@ impl AuditorController {
                             return;
                         }
                         if let Some(w) = h.upgrade() {
-                            w.set_filtered_rows(crate::map_broken_resources_to_ui(&items));
+                            w.set_filtered_rows(map_broken_resources_to_ui(&items));
                             w.set_scan_progress(1.0);
                             let final_msg = if total_issues == 0 {
                                 crate::gettext!("Проверка завершена: повреждённых или отсутствующих файлов не обнаружено.").to_string()
@@ -254,7 +254,7 @@ impl AuditorController {
                 }
 
                 w.set_current_filter(filter);
-                w.set_filtered_rows(crate::map_broken_resources_to_ui(&items));
+                w.set_filtered_rows(map_broken_resources_to_ui(&items));
                 w.set_selected_row_index(-1);
                 w.set_is_selected_texture(false);
                 w.set_has_missing_file_selected(false);
@@ -367,6 +367,79 @@ impl AuditorController {
             });
         }
 
+        // Show dependency graph in browser
+        {
+            let state = self.state.clone();
+            let handle = self.weak.clone();
+
+            self.window.on_show_graph_clicked(move || {
+                let Some(w) = handle.upgrade() else { return };
+                let row = w.get_selected_row_index();
+                if row < 0 {
+                    return;
+                }
+
+                let extracted = state.lock().ok().and_then(|s| {
+                    let item = s.display_items.get(row as usize).cloned()?;
+                    let path = if item.kind == crate::auditor::AssetResourceKind::Unused {
+                        &item.expected_path
+                    } else {
+                        &item.parent_file
+                    };
+                    let np = crate::fs_utils::normalize_path(path);
+                    let key = std::path::PathBuf::from(np.to_string_lossy().to_lowercase());
+                    let incoming = s
+                        .dependency_graph
+                        .incoming
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_default();
+                    let outgoing = s
+                        .dependency_graph
+                        .outgoing
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_default();
+                    let missing_refs: Vec<PathBuf> =
+                        if item.kind != crate::auditor::AssetResourceKind::Unused
+                            && !item.expected_path.as_os_str().is_empty()
+                            && !item.expected_path.is_file()
+                        {
+                            vec![item.expected_path.clone()]
+                        } else {
+                            Vec::new()
+                        };
+                    Some((np, incoming, outgoing, missing_refs))
+                });
+
+                let Some((selected_path, incoming, outgoing, missing_refs)) = extracted else {
+                    return;
+                };
+
+                let incoming: Vec<PathBuf> = incoming.into_iter().collect();
+                let outgoing: Vec<PathBuf> = outgoing.into_iter().collect();
+
+                let thread_handle = handle.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = crate::graph_view::open_dependency_graph_in_browser(
+                        &selected_path,
+                        &incoming,
+                        &outgoing,
+                        &missing_refs,
+                    ) {
+                        let template =
+                            crate::gettext!("Не удалось открыть граф зависимостей: {}");
+                        let msg = template.replace("{}", &e.to_string());
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = thread_handle.upgrade() {
+                                w.set_editor_status(msg.into());
+                            }
+                        });
+                    }
+                });
+            });
+        }
+
         // Open source file folder
         {
             let state = self.state.clone();
@@ -425,7 +498,7 @@ impl AuditorController {
                 let asc_now = s.sort_asc;
 
                 crate::auditor::sort_items(&mut s.display_items, col_now, asc_now);
-                let rows_model = crate::map_broken_resources_to_ui(&s.display_items);
+                let rows_model = map_broken_resources_to_ui(&s.display_items);
 
                 w.set_sort_col(col_now as i32);
                 w.set_sort_ascending(asc_now);
@@ -518,4 +591,31 @@ impl AuditorController {
             });
         }
     }
+}
+
+pub(crate) fn map_broken_resources_to_ui(
+    items: &[crate::auditor::BrokenResourceRef],
+) -> slint::ModelRc<crate::IssueRowData> {
+    let rows: Vec<crate::IssueRowData> = items
+        .iter()
+        .map(|b| {
+            let is_dead = b.kind == crate::auditor::AssetResourceKind::Unused;
+            let kind = if b.count > 1 {
+                format!("{} (×{})", b.kind.label(), b.count)
+            } else {
+                b.kind.label().to_string()
+            };
+            crate::IssueRowData {
+                kind_text: kind.into(),
+                missing_file: if is_dead {
+                    "".into()
+                } else {
+                    crate::fs_utils::to_assets_relative_display(&b.expected_path).into()
+                },
+                source_file: crate::fs_utils::to_assets_relative_display(&b.parent_file).into(),
+                is_dead_resource: is_dead,
+            }
+        })
+        .collect();
+    slint::ModelRc::new(slint::VecModel::from(rows))
 }

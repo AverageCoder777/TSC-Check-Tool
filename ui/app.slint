@@ -1367,6 +1367,7 @@ export component FolderAuditorWindow inherits Window {
     callback edit-in-vscode(int);
     callback preview-texture(int);
     callback sort-column(int);
+    callback show-graph-clicked();
     callback open-summer-dialog();
     callback close-summer-dialog();
     callback confirm-consolidate-summer();
@@ -1663,6 +1664,11 @@ export component FolderAuditorWindow inherits Window {
                     text: @tr("Просмотр текстуры");
                     enabled: !root.is-scanning;
                     clicked => { root.preview-texture(root.selected-row-index); }
+                }
+                Button {
+                    text: @tr("Граф связей");
+                    enabled: !root.is-scanning;
+                    clicked => { root.show-graph-clicked(); }
                 }
             }
         }

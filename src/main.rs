@@ -42,6 +42,7 @@ mod blueprint;
 mod domain;
 mod external_editor;
 mod fs_utils;
+mod graph_view;
 mod inventory_controller;
 mod inventory_ui;
 mod missing_assets_controller;
@@ -72,6 +73,7 @@ fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     slint::Image::load_from_path(icon_path).unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub(crate) fn map_broken_resources_to_ui(
     items: &[auditor::BrokenResourceRef],
 ) -> slint::ModelRc<IssueRowData> {
@@ -89,9 +91,9 @@ pub(crate) fn map_broken_resources_to_ui(
                 missing_file: if is_dead {
                     "".into()
                 } else {
-                    b.expected_path.to_string_lossy().to_string().into()
+                    crate::fs_utils::to_assets_relative_display(&b.expected_path).into()
                 },
-                source_file: b.parent_file.to_string_lossy().to_string().into(),
+                source_file: crate::fs_utils::to_assets_relative_display(&b.parent_file).into(),
                 is_dead_resource: is_dead,
             }
         })

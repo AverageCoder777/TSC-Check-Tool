@@ -46,3 +46,24 @@ pub fn strip_shader_prefix(raw: &str) -> String {
         re.replace(raw, "").to_string()
     }
 }
+
+pub fn to_assets_relative_display(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    let lower = s.to_lowercase();
+    let asset_pos = if lower.starts_with("assets\\") || lower.starts_with("assets/") {
+        Some(0usize)
+    } else {
+        let mut pos: Option<usize> = None;
+        for needle in [r"\assets\", "/assets/"] {
+            if let Some(i) = lower.find(needle) {
+                let candidate = i + 1;
+                pos = Some(pos.map_or(candidate, |p| p.min(candidate)));
+            }
+        }
+        pos
+    };
+    match asset_pos {
+        Some(p) => s[p..].replace('/', "\\"),
+        None => s.into_owned(),
+    }
+}
