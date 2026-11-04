@@ -148,14 +148,39 @@ impl AuditorController {
                             });
                         });
 
-                    let report = crate::auditor::audit_folder_with_progress(
-                        &path,
-                        &assets_root,
-                        &serz_path,
-                        max_threads,
-                        &ap_cache,
-                        Some(progress_cb),
-                    );
+                    let audit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        crate::auditor::audit_folder_with_progress(
+                            &path,
+                            &assets_root,
+                            &serz_path,
+                            max_threads,
+                            &ap_cache,
+                            Some(progress_cb),
+                        )
+                    }));
+
+                    let report = match audit_result {
+                        Ok(r) => r,
+                        Err(panic) => {
+                            let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                                (*s).to_string()
+                            } else if let Some(s) = panic.downcast_ref::<String>() {
+                                s.clone()
+                            } else {
+                                "unknown panic".to_string()
+                            };
+                            eprintln!("[Auditor] panic during audit: {}", msg);
+                            let h = thread_handle.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = h.upgrade() {
+                                    w.set_scan_status_text(format!("Ошибка аудита: {}", msg).into());
+                                    w.set_is_scanning(false);
+                                }
+                            });
+                            is_busy_thread.store(false, Ordering::SeqCst);
+                            return;
+                        }
+                    };
 
                     if generation.load(Ordering::SeqCst) != generation_id {
                         return;

@@ -1112,21 +1112,28 @@ pub fn extract_xml_texture_id_refs(
             format!("{}.TgPcDx", clean_rel)
         };
 
-        // Build candidate paths: relative to Assets root and relative to blueprint directory.
+        // Build candidate paths: relative to Assets root, product root, and blueprint directory.
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Some(root) = &assets_root {
-            candidates.push(root.join(&file_rel));
+            candidates.push(crate::fs_utils::normalize_path(&root.join(&file_rel)));
+        }
+        candidates.push(crate::fs_utils::normalize_path(&product_root.join(&file_rel)));
+        if !file_rel.to_ascii_lowercase().starts_with("textures\\") {
+            candidates.push(crate::fs_utils::normalize_path(&product_root.join("textures").join(&file_rel)));
         }
         if let Some(p_dir) = parent_dir {
-            candidates.push(p_dir.join(&file_rel));
+            candidates.push(crate::fs_utils::normalize_path(&p_dir.join(&file_rel)));
         }
+        let mut seen_cands = HashSet::new();
+        candidates.retain(|p| seen_cands.insert(p.clone()));
 
         let expected = assets_root
             .as_ref()
             .map(|r| r.join(&file_rel))
             .unwrap_or_else(|| PathBuf::from(&file_rel));
 
-        let exists = loose_exists(&candidates)
+        let matched_candidate = candidates.iter().find(|c| loose_path_exists(c)).cloned();
+        let exists = matched_candidate.is_some()
             || ap_exists(
                 &file_rel,
                 parent_dir.unwrap_or(Path::new("")),
@@ -1137,14 +1144,11 @@ pub fn extract_xml_texture_id_refs(
             );
 
         if exists {
-            for candidate in &candidates {
-                if loose_path_exists(candidate) {
-                    register_texture_siblings(candidate, outgoing);
-                    let norm = crate::fs_utils::normalize_path(candidate);
-                    if !outgoing.contains(&norm) {
-                        outgoing.push(norm);
-                    }
-                    break;
+            if let Some(candidate) = matched_candidate {
+                register_texture_siblings(&candidate, outgoing);
+                let norm = crate::fs_utils::normalize_path(&candidate);
+                if !outgoing.contains(&norm) {
+                    outgoing.push(norm);
                 }
             }
         } else {
