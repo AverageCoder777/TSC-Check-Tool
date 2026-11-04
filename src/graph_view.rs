@@ -809,26 +809,20 @@ fn build_full_html(
     const rawNodes = __NODES_JSON__;
     const rawEdges = __EDGES_JSON__;
 
-    // Build in-edge lookup to sort children close to parents
-    const inEdges = new Map();
-    rawEdges.forEach(e => {
-        if (!inEdges.has(e.to)) inEdges.set(e.to, []);
-        inEdges.get(e.to).push(e.from);
-    });
-
-    const bins = [];
+    const binSet = new Set();
+    const binsAll = [];
     const meshes = [];
     const textures = [];
     const dead = [];
 
     rawNodes.forEach(n => {
         const isDead = n.label.startsWith("[DEAD] ");
-        const isMissing = n.label.startsWith("[MISSING] ");
         const clean = n.label.replace(/^\\[(DEAD|MISSING)\\] /, "").toLowerCase();
         if (isDead) {
             dead.push(n);
         } else if (clean.endsWith(".bin") || clean.endsWith(".xml")) {
-            bins.push(n);
+            binsAll.push(n);
+            binSet.add(n.id);
         } else if (clean.endsWith(".geopcdx") || clean.endsWith(".xsec")) {
             meshes.push(n);
         } else {
@@ -836,40 +830,76 @@ fn build_full_html(
         }
     });
 
-    // Position Blueprints (2 columns)
-    const binCols = 2;
-    bins.forEach((n, i) => {
-        n.x = (i % binCols) * 230;
-        n.y = Math.floor(i / binCols) * 45;
+    // Build in-edge lookup maps
+    const inBinEdges = new Map();
+    const inEdges = new Map();
+    rawEdges.forEach(e => {
+        if (!inEdges.has(e.to)) inEdges.set(e.to, []);
+        inEdges.get(e.to).push(e.from);
+
+        if (binSet.has(e.from) && binSet.has(e.to)) {
+            if (!inBinEdges.has(e.to)) inBinEdges.set(e.to, []);
+            inBinEdges.get(e.to).push(e.from);
+        }
     });
 
-    // Position Meshes (3 columns, sorted by parent)
+    // Split blueprints into Root (inDegreeFromBins == 0) and Sub/Child (inDegreeFromBins > 0)
+    const rootBins = [];
+    const subBins = [];
+    binsAll.forEach(b => {
+        if ((inBinEdges.get(b.id)?.length || 0) === 0) {
+            rootBins.push(b);
+        } else {
+            subBins.push(b);
+        }
+    });
+
+    // 1. Position Root Blueprints (3 columns)
+    const rootCols = 3;
+    rootBins.forEach((n, i) => {
+        n.x = (i % rootCols) * 200;
+        n.y = Math.floor(i / rootCols) * 44;
+    });
+
+    // 2. Position Sub/Child Blueprints (3 columns, sorted near parent root bin)
+    subBins.sort((a, b) => (inBinEdges.get(a.id)?.[0] ?? 999999) - (inBinEdges.get(b.id)?.[0] ?? 999999));
+    const subCols = 3;
+    const subXOffset = 640;
+    subBins.forEach((n, i) => {
+        n.x = subXOffset + (i % subCols) * 200;
+        n.y = Math.floor(i / subCols) * 44;
+    });
+
+    // 3. Position Meshes (3 columns, sorted near parent bin)
     meshes.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
     const meshCols = 3;
+    const meshXOffset = subXOffset + subCols * 200 + 140;
     meshes.forEach((n, i) => {
-        n.x = 650 + (i % meshCols) * 220;
+        n.x = meshXOffset + (i % meshCols) * 200;
         n.y = Math.floor(i / meshCols) * 42;
     });
 
-    // Position Textures (9 columns matrix, sorted by parent mesh)
+    // 4. Position Textures (9 columns matrix, sorted near parent mesh)
     textures.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
     const texCols = 9;
+    const texXOffset = meshXOffset + meshCols * 200 + 160;
     textures.forEach((n, i) => {
-        n.x = 1500 + (i % texCols) * 200;
+        n.x = texXOffset + (i % texCols) * 190;
         n.y = Math.floor(i / texCols) * 36;
     });
 
-    // Position Dead / Orphans (at the bottom)
+    // 5. Position Dead Resources at the bottom
     const maxY = Math.max(
-        (bins.length / binCols) * 45,
+        (rootBins.length / rootCols) * 44,
+        (subBins.length / subCols) * 44,
         (meshes.length / meshCols) * 42,
         (textures.length / texCols) * 36
     );
     dead.forEach((n, i) => {
         n.x = (i % 12) * 190;
-        n.y = maxY + 250 + Math.floor(i / 12) * 35;
+        n.y = maxY + 220 + Math.floor(i / 12) * 35;
     });
-    // maxY + 200 + Math.floor(i / 12) * 35
+    // maxY + 250
 
     rawEdges.forEach((e, i) => { e.id = i; });
 
@@ -887,9 +917,9 @@ fn build_full_html(
             smooth: {
                 type: "cubicBezier",
                 forceDirection: "horizontal",
-                roundness: 0.4
+                roundness: 0.35
             },
-            color: { color: "rgba(100, 116, 139, 0.25)", highlight: "#38bdf8", hover: "#38bdf8" },
+            color: { color: "rgba(100, 116, 139, 0.22)", highlight: "#38bdf8", hover: "#38bdf8" },
             width: 1.0,
             selectionWidth: 2.0
         },
@@ -909,7 +939,7 @@ fn build_full_html(
     network.on("click", function(params) {
         if (params.nodes.length === 0) {
             nodes.update(rawNodes.map(n => ({ id: n.id, opacity: 1 })));
-            edges.update(rawEdges.map(e => ({ id: e.id, color: "rgba(100, 116, 139, 0.25)", width: 1.0 })));
+            edges.update(rawEdges.map(e => ({ id: e.id, color: "rgba(100, 116, 139, 0.22)", width: 1.0 })));
             return;
         }
         const clicked = params.nodes[0];
