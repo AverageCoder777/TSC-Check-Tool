@@ -467,7 +467,7 @@ fn build_global_html(nodes_json: &str, edges_json: &str, node_count: usize, edge
             hideEdgesOnDrag: false,
             selectable: true,
             navigationButtons: true,
-            keyboard: { enabled: true },
+            keyboard: { enabled: true, bindToWindow: false },
         },
         configure: { enabled: false },
     };
@@ -478,18 +478,47 @@ fn build_global_html(nodes_json: &str, edges_json: &str, node_count: usize, edge
     const pauseBtn = document.getElementById("graph-pause");
     let physicsPaused = false;
 
+    let searchMatches = [];
+    let currentMatchIdx = 0;
+    let lastSearchQuery = "";
+
+    function norm(str) {
+        return (str || "").toLowerCase().replace(/\\\\/g, "/");
+    }
+
     function centerOnNode(query) {
-        if (!query.trim()) return;
-        const q = query.toLowerCase();
-        const matching = nodes.get().filter(n => n.label.toLowerCase().includes(q));
-        if (matching.length === 0) return;
-        const target = matching[0];
-        network.focus(target.id, { scale: 1.5, animation: { duration: 800 } });
+        const q = norm(query.trim());
+        if (!q) return;
+
+        if (q !== lastSearchQuery) {
+            lastSearchQuery = q;
+            searchMatches = nodes.get().filter(n => {
+                const label = norm(n.label);
+                const title = norm(n.title);
+                return label.includes(q) || title.includes(q);
+            });
+            currentMatchIdx = 0;
+        } else {
+            currentMatchIdx = (currentMatchIdx + 1) % (searchMatches.length || 1);
+        }
+
+        if (searchMatches.length === 0) {
+            searchInput.style.borderColor = "#ef4444";
+            setTimeout(() => { searchInput.style.borderColor = "#475569"; }, 1500);
+            return;
+        }
+
+        const target = searchMatches[currentMatchIdx];
+        network.focus(target.id, { scale: 1.4, animation: { duration: 600 } });
         network.selectNodes([target.id]);
     }
 
     centerBtn.addEventListener("click", () => centerOnNode(searchInput.value));
-    searchInput.addEventListener("keypress", (e) => { if (e.key === "Enter") centerOnNode(searchInput.value); });
+    searchInput.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") centerOnNode(searchInput.value);
+    });
+    searchInput.addEventListener("keyup", (e) => e.stopPropagation());
 
     pauseBtn.addEventListener("click", () => {
         physicsPaused = !physicsPaused;
@@ -871,7 +900,7 @@ fn build_full_html(
             hideEdgesOnDrag: true,
             selectable: true,
             navigationButtons: true,
-            keyboard: { enabled: true }
+            keyboard: { enabled: true, bindToWindow: false }
         }
     };
     const network = new vis.Network(container, data, options);
@@ -948,18 +977,47 @@ fn build_full_html(
     // Ensure filters apply on page load
     applyFilters();
 
+    let searchMatches = [];
+    let currentMatchIdx = 0;
+    let lastSearchQuery = "";
+
+    function norm(str) {
+        return (str || "").toLowerCase().replace(/\\\\/g, "/");
+    }
+
     function centerOnNode(query) {
-        if (!query.trim()) return;
-        const q = query.toLowerCase();
-        const matching = nodes.get().filter(n => n.label.toLowerCase().includes(q));
-        if (matching.length === 0) return;
-        const target = matching[0];
-        network.focus(target.id, { scale: 1.5, animation: { duration: 800 } });
+        const q = norm(query.trim());
+        if (!q) return;
+
+        if (q !== lastSearchQuery) {
+            lastSearchQuery = q;
+            searchMatches = nodes.get().filter(n => {
+                const label = norm(n.label);
+                const title = norm(n.title);
+                return label.includes(q) || title.includes(q);
+            });
+            currentMatchIdx = 0;
+        } else {
+            currentMatchIdx = (currentMatchIdx + 1) % (searchMatches.length || 1);
+        }
+
+        if (searchMatches.length === 0) {
+            searchInput.style.borderColor = "#ef4444";
+            setTimeout(() => { searchInput.style.borderColor = "#475569"; }, 1500);
+            return;
+        }
+
+        const target = searchMatches[currentMatchIdx];
+        network.focus(target.id, { scale: 1.4, animation: { duration: 600 } });
         network.selectNodes([target.id]);
     }
 
     centerBtn.addEventListener("click", () => centerOnNode(searchInput.value));
-    searchInput.addEventListener("keypress", (e) => { if (e.key === "Enter") centerOnNode(searchInput.value); });
+    searchInput.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") centerOnNode(searchInput.value);
+    });
+    searchInput.addEventListener("keyup", (e) => e.stopPropagation());
 
     fitBtn.addEventListener("click", () => {
         network.fit({ animation: { duration: 400 } });
