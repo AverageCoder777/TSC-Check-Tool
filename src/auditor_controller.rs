@@ -115,7 +115,7 @@ impl AuditorController {
                 let paths: Vec<PathBuf> = folder_path
                     .as_str()
                     .split([';', ','])
-                    .map(str::trim)
+                    .map(|s| s.trim().trim_matches('"').trim())
                     .filter(|s| !s.is_empty())
                     .map(PathBuf::from)
                     .collect();

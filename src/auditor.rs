@@ -1116,7 +1116,10 @@ pub fn extract_xml_texture_id_refs(
         }
 
         // Strip any [xx] hex seasonal/LOD bitmask prefixes.
-        let clean_rel = re_hex.replace_all(raw, "").to_string();
+        let clean_rel = re_hex.replace_all(raw, "").trim().to_string();
+        if clean_rel.is_empty() || is_numeric_token(&clean_rel) {
+            continue;
+        }
 
         let file_rel = if clean_rel.to_ascii_lowercase().ends_with(".tgpcdx") {
             clean_rel
@@ -1844,8 +1847,8 @@ pub fn audit_folders_with_progress(
         let product_root = product_root_for(f, assets_root);
         let rel_product = f
             .strip_prefix(&product_root)
-            .map(|p| p.to_string_lossy().replace('/', "\\"))
-            .unwrap_or_else(|_| f.to_string_lossy().replace('/', "\\"));
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| f.to_string_lossy().replace('\\', "/"));
         let in_ap = ap_cache.lookup(&product_root, &rel_product);
         let has_incoming = incoming_map.get(&nf).is_some_and(|s| !s.is_empty()) || in_ap;
         if has_incoming {

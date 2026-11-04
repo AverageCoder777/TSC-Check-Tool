@@ -767,7 +767,7 @@ fn build_full_html(
         <label class="filter-item"><input type="checkbox" id="filter-bin" checked><span>Чертежи (.bin, .xml)</span></label>
         <label class="filter-item"><input type="checkbox" id="filter-mesh" checked><span>Меши (.GeoPcDx, .XSec)</span></label>
         <label class="filter-item"><input type="checkbox" id="filter-tex" checked><span>Текстуры (.TgPcDx)</span></label>
-        <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Только изолированные (мёртвые)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Мёртвые ресурсы</span></label>
     </div>
     <button class="physics-toggle" id="graph-pause">Приостановить физику</button>
     <div class="cluster-info">Все сканированные файлы каталога. Компоненты расставляются автоматически (Barnes-Hut). Наведите на узел для полного пути.</div>
@@ -844,7 +844,7 @@ fn build_full_html(
         const showBin = filterBin.checked;
         const showMesh = filterMesh.checked;
         const showTex = filterTex.checked;
-        const showDeadOnly = filterDead.checked;
+        const showDead = filterDead.checked;
 
         const updates = [];
         nodes.forEach(n => {
@@ -854,12 +854,10 @@ fn build_full_html(
             const e = extOf(label.replace(/^\[(MISSING|DEAD)\] /, ""));
 
             let visible = true;
-            if (showDeadOnly) {
-                visible = dead;
+            if (dead) {
+                visible = showDead;
             } else if (missing) {
-                visible = true; // Missing nodes always visible unless dead-only mode
-            } else if (dead) {
-                visible = false; // Dead nodes hidden in regular mode
+                visible = true; // Missing references remain visible for diagnostic context
             } else {
                 if (e === "bin" || e === "xml") visible = showBin;
                 else if (e === "geopcdx" || e === "xsec") visible = showMesh;
@@ -871,6 +869,9 @@ fn build_full_html(
         });
         nodes.update(updates);
     }
+
+    // Ensure filters apply on page load
+    applyFilters();
 
     function centerOnNode(query) {
         if (!query.trim()) return;
