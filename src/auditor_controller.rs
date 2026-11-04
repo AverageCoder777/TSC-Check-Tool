@@ -1,11 +1,47 @@
 
 use slint::ComponentHandle;
 use slint::Weak;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::{AuditorState, FolderAuditorWindow};
+
+/// Validates that `path` is a real directory strictly inside an `Assets` ancestor
+/// (at least one level deep: `Assets/<Provider>` or `Assets/<Provider>/<Product>`).
+/// Rejects the `Assets` root itself and any path not inside `Assets`.
+pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_dir() {
+        return Err(crate::gettext!("Указанный путь не существует или не является папкой!").to_string());
+    }
+
+    // Locate the 'Assets' ancestor
+    let assets_ancestor = path.ancestors().find(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
+            .unwrap_or(false)
+    });
+
+    let Some(assets_root) = assets_ancestor else {
+        return Err(crate::gettext!("Папка должна находиться внутри каталога RailWorks/Assets!").to_string());
+    };
+
+    // If path is identical to the Assets root itself, reject it
+    if path == assets_root
+        || path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
+    {
+        return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком! Выберите папку провайдера или продукта (например, Assets/Kuju).").to_string());
+    }
+
+    // Ensure it is strictly inside Assets (rel components >= 1)
+    if let Ok(rel) = path.strip_prefix(assets_root) && rel.components().count() == 0 {
+        return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком!").to_string());
+    }
+
+    Ok(path.to_path_buf())
+}
 
 pub struct AuditorController {
     pub window: FolderAuditorWindow,
@@ -46,17 +82,11 @@ impl AuditorController {
                 if let Some(folders) = dialog.pick_folders() {
                     let valid_folders: Vec<PathBuf> = folders
                         .into_iter()
-                        .filter(|p| {
-                            p.ancestors().any(|a| {
-                                a.file_name()
-                                    .map(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
-                                    .unwrap_or(false)
-                            })
-                        })
+                        .filter_map(|p| validate_audit_folder(&p).ok())
                         .collect();
 
                     if valid_folders.is_empty() {
-                        w.set_scan_status_text(crate::gettext!("Ошибка: выбранные папки должны находиться внутри каталога Assets!").into());
+                        w.set_scan_status_text(crate::gettext!("Ошибка: выбранные папки должны находится внутри каталога Assets и не быть самим каталогом Assets!").into());
                         return;
                     }
 
@@ -96,21 +126,20 @@ impl AuditorController {
                     return;
                 }
 
+                // Validate every path strictly inside Assets (not the Assets root itself).
                 for p in &paths {
-                    let valid = p.is_dir()
-                        && p.ancestors().any(|a| {
-                            a.file_name()
-                                .map(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
-                                .unwrap_or(false)
-                        });
-                    if !valid {
-                        eprintln!("[Auditor] Invalid folder path: {:?}", p);
-                        if let Some(w) = handle.upgrade() {
-                            w.set_scan_status_text(crate::gettext!("Папка должна находиться внутри каталога Assets!").into());
-                            w.set_is_scanning(false);
+                    match validate_audit_folder(p) {
+                        Ok(_) => {}
+                        Err(msg) => {
+                            eprintln!("[Auditor] Invalid folder path: {:?} -> {}", p, msg);
+                            if let Some(w) = handle.upgrade() {
+                                w.set_scan_status_text(msg.into());
+                                w.set_is_scanning(false);
+                                w.set_is_scan_completed(false);
+                            }
+                            is_busy.store(false, Ordering::SeqCst);
+                            return;
                         }
-                        is_busy.store(false, Ordering::SeqCst);
-                        return;
                     }
                 }
 
