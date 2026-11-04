@@ -491,37 +491,57 @@ fn build_global_html(nodes_json: &str, edges_json: &str, node_count: usize, edge
         return (str || "").toLowerCase().replace(/\\\\/g, "/");
     }
 
-    function centerOnNode(query) {
+    function searchAndHighlightAll(query) {
         const q = norm(query.trim());
-        if (!q) return;
 
-        if (q !== lastSearchQuery) {
-            lastSearchQuery = q;
-            searchMatches = nodes.get().filter(n => {
-                const label = norm(n.label);
-                const title = norm(n.title);
-                return label.includes(q) || title.includes(q);
-            });
-            currentMatchIdx = 0;
-        } else {
-            currentMatchIdx = (currentMatchIdx + 1) % (searchMatches.length || 1);
-        }
-
-        if (searchMatches.length === 0) {
-            searchInput.style.borderColor = "#ef4444";
-            setTimeout(() => { searchInput.style.borderColor = "#475569"; }, 1500);
+        if (!q) {
+            network.unselectAll();
+            nodes.update(nodes.get().map(n => ({ id: n.id, opacity: 1.0 })));
+            centerBtn.textContent = "Центр";
             return;
         }
 
-        const target = searchMatches[currentMatchIdx];
-        network.focus(target.id, { scale: 1.4, animation: { duration: 600 } });
-        network.selectNodes([target.id]);
+        const matchingNodes = nodes.get().filter(n => {
+            return norm(n.label).includes(q) || norm(n.title).includes(q);
+        });
+
+        if (matchingNodes.length === 0) {
+            searchInput.style.borderColor = "#ef4444";
+            centerBtn.textContent = "0 совп.";
+            setTimeout(() => {
+                searchInput.style.borderColor = "#475569";
+                centerBtn.textContent = "Центр";
+            }, 1500);
+            return;
+        }
+
+        const matchingIds = matchingNodes.map(n => n.id);
+        const matchSet = new Set(matchingIds);
+
+        network.selectNodes(matchingIds);
+
+        nodes.update(nodes.get().map(n => ({
+            id: n.id,
+            opacity: matchSet.has(n.id) ? 1.0 : 0.15
+        })));
+
+        centerBtn.textContent = matchingIds.length + " совп.";
+
+        network.fit({
+            nodes: matchingIds,
+            animation: { duration: 600 }
+        });
     }
 
-    centerBtn.addEventListener("click", () => centerOnNode(searchInput.value));
+    centerBtn.addEventListener("click", () => searchAndHighlightAll(searchInput.value));
     searchInput.addEventListener("keydown", (e) => {
         e.stopPropagation();
-        if (e.key === "Enter") centerOnNode(searchInput.value);
+        if (e.key === "Enter") searchAndHighlightAll(searchInput.value);
+    });
+    searchInput.addEventListener("input", (e) => {
+        if (!e.target.value.trim()) {
+            searchAndHighlightAll("");
+        }
     });
     searchInput.addEventListener("keyup", (e) => e.stopPropagation());
 
@@ -1072,37 +1092,57 @@ fn build_full_html(
         return (str || "").toLowerCase().replace(/\\\\/g, "/");
     }
 
-    function centerOnNode(query) {
+    function searchAndHighlightAll(query) {
         const q = norm(query.trim());
-        if (!q) return;
 
-        if (q !== lastSearchQuery) {
-            lastSearchQuery = q;
-            searchMatches = nodes.get().filter(n => {
-                const label = norm(n.label);
-                const title = norm(n.title);
-                return label.includes(q) || title.includes(q);
-            });
-            currentMatchIdx = 0;
-        } else {
-            currentMatchIdx = (currentMatchIdx + 1) % (searchMatches.length || 1);
-        }
-
-        if (searchMatches.length === 0) {
-            searchInput.style.borderColor = "#ef4444";
-            setTimeout(() => { searchInput.style.borderColor = "#475569"; }, 1500);
+        if (!q) {
+            network.unselectAll();
+            nodes.update(nodes.get().map(n => ({ id: n.id, opacity: 1.0 })));
+            centerBtn.textContent = "Центр";
             return;
         }
 
-        const target = searchMatches[currentMatchIdx];
-        network.focus(target.id, { scale: 1.4, animation: { duration: 600 } });
-        network.selectNodes([target.id]);
+        const matchingNodes = nodes.get().filter(n => {
+            return norm(n.label).includes(q) || norm(n.title).includes(q);
+        });
+
+        if (matchingNodes.length === 0) {
+            searchInput.style.borderColor = "#ef4444";
+            centerBtn.textContent = "0 совп.";
+            setTimeout(() => {
+                searchInput.style.borderColor = "#475569";
+                centerBtn.textContent = "Центр";
+            }, 1500);
+            return;
+        }
+
+        const matchingIds = matchingNodes.map(n => n.id);
+        const matchSet = new Set(matchingIds);
+
+        network.selectNodes(matchingIds);
+
+        nodes.update(nodes.get().map(n => ({
+            id: n.id,
+            opacity: matchSet.has(n.id) ? 1.0 : 0.15
+        })));
+
+        centerBtn.textContent = matchingIds.length + " совп.";
+
+        network.fit({
+            nodes: matchingIds,
+            animation: { duration: 600 }
+        });
     }
 
-    centerBtn.addEventListener("click", () => centerOnNode(searchInput.value));
+    centerBtn.addEventListener("click", () => searchAndHighlightAll(searchInput.value));
     searchInput.addEventListener("keydown", (e) => {
         e.stopPropagation();
-        if (e.key === "Enter") centerOnNode(searchInput.value);
+        if (e.key === "Enter") searchAndHighlightAll(searchInput.value);
+    });
+    searchInput.addEventListener("input", (e) => {
+        if (!e.target.value.trim()) {
+            searchAndHighlightAll("");
+        }
     });
     searchInput.addEventListener("keyup", (e) => e.stopPropagation());
 
