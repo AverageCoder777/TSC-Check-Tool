@@ -598,6 +598,12 @@ pub fn generate_global_issues_graph(
             all_paths.extend(neighbours.iter().cloned());
         }
     }
+    // When there are no issues, fall back to the whole dependency map so the
+    // graph still renders the scanned asset tree.
+    if all_paths.is_empty() {
+        all_paths.extend(graph.outgoing.keys().cloned());
+        all_paths.extend(graph.incoming.keys().cloned());
+    }
 
     // 3. Assign indices and build nodes.
     let mut path_to_idx: HashMap<PathBuf, usize> = HashMap::new();

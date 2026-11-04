@@ -434,7 +434,6 @@ impl AuditorController {
                         let np = crate::fs_utils::normalize_path(p);
                         std::path::PathBuf::from(np.to_string_lossy().to_lowercase())
                     });
-                    let incoming = path.as_ref().and_then(|p| s.dependency_graph.incoming.get(p));
                     let outgoing = path.as_ref().and_then(|p| s.dependency_graph.outgoing.get(p));
                     let fmt = |set: Option<&std::collections::HashSet<std::path::PathBuf>>, empty: &str| {
                         match set {
@@ -464,7 +463,19 @@ impl AuditorController {
                             _ => empty.to_string(),
                         }
                     };
-                    let incoming_str = fmt(incoming, "Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте");
+                    let incoming_str = item
+                        .map(|i| {
+                            i.all_parents
+                                .iter()
+                                .map(|p| crate::fs_utils::to_assets_relative_display(p))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        })
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| {
+                            "Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте"
+                                .to_string()
+                        });
                     let outgoing_str = fmt(outgoing, "Нет зависимостей");
                     (incoming_str, outgoing_str)
                 }).unwrap_or_else(|| ("Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте".to_string(), "Нет зависимостей".to_string()));
@@ -556,7 +567,7 @@ impl AuditorController {
             let state = self.state.clone();
             let handle = self.weak.clone();
 
-            self.window.on_open_full_graph_clicked(move || {
+            self.window.on_open_full_graph(move || {
                 let thread_handle = handle.clone();
                 let state_clone = state.clone();
                 std::thread::spawn(move || {
@@ -747,25 +758,29 @@ impl AuditorController {
 
 pub(crate) fn map_broken_resources_to_ui(
     items: &[crate::auditor::BrokenResourceRef],
-) -> slint::ModelRc<crate::IssueRowData> {
-    let rows: Vec<crate::IssueRowData> = items
+) -> slint::ModelRc<crate::BrokenResourceItem> {
+    let rows: Vec<crate::BrokenResourceItem> = items
         .iter()
-        .map(|b| {
-            let is_dead = b.kind == crate::auditor::AssetResourceKind::Unused;
-            let kind = if b.count > 1 {
-                format!("{} (×{})", b.kind.label(), b.count)
+        .enumerate()
+        .map(|(idx, r)| {
+            let is_dead = r.kind == crate::auditor::AssetResourceKind::Unused;
+            let parent_display = if r.all_parents.len() > 1 {
+                let first = r.parent_file.file_name().unwrap_or_default().to_string_lossy();
+                format!("{} (+{} источников)", first, r.all_parents.len() - 1)
             } else {
-                b.kind.label().to_string()
+                r.parent_file.to_string_lossy().to_string()
             };
-            crate::IssueRowData {
-                kind_text: kind.into(),
-                missing_file: if is_dead {
+            crate::BrokenResourceItem {
+                id: idx as i32,
+                kind_str: r.kind.label().to_string().into(),
+                expected_path: if is_dead {
                     "".into()
                 } else {
-                    crate::fs_utils::to_assets_relative_display(&b.expected_path).into()
+                    crate::fs_utils::to_assets_relative_display(&r.expected_path).into()
                 },
-                source_file: crate::fs_utils::to_assets_relative_display(&b.parent_file).into(),
-                is_dead_resource: is_dead,
+                parent_file: parent_display.into(),
+                sources_count: r.all_parents.len() as i32,
+                is_dead,
             }
         })
         .collect();

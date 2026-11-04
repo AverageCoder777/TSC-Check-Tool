@@ -19,6 +19,15 @@ export struct IssueRowData {
     is_dead_resource: bool,
 }
 
+export struct BrokenResourceItem {
+    id: int,
+    kind_str: string,
+    expected_path: string,
+    parent_file: string,
+    sources_count: int,
+    is_dead: bool,
+}
+
 export component MainWindow inherits Window {
     title: "TSC Check Tool";
     min-width: 1350px;
@@ -1344,7 +1353,7 @@ export component FolderAuditorWindow inherits Window {
     in-out property <bool> is-scanning: false;
     in-out property <bool> is-scan-completed: false;
     in property <string> editor-status: "";
-    in property <[IssueRowData]> filtered-rows: [];
+    in property <[BrokenResourceItem]> filtered-rows: [];
 
     in-out property <int> count-all: 0;
     in-out property <int> count-geometry: 0;
@@ -1369,7 +1378,8 @@ export component FolderAuditorWindow inherits Window {
     callback preview-texture(int);
     callback sort-column(int);
     callback show-graph-clicked();
-    callback open-full-graph-clicked();
+    callback open-full-graph();
+    callback open-global-graph();
     callback open-summer-dialog();
     callback close-summer-dialog();
     callback confirm-consolidate-summer();
@@ -1420,98 +1430,109 @@ export component FolderAuditorWindow inherits Window {
             }
         }
 
-        if !root.is-scanning && root.count-all > 0 : HorizontalBox {
+        if !root.is-scanning && root.is-scan-completed : HorizontalBox {
             spacing: 6px;
             padding: 0px;
             vertical-stretch: 0;
 
-            FilterTabButton {
-                text: @tr("Всё");
-                count: root.count-all;
-                active: root.current-filter == "all";
-                clicked => {
-                    root.selected-row-index = -1;
-                    root.current-filter = "all";
-                    root.filter-changed("all");
+            if root.count-all > 0 : HorizontalLayout {
+                spacing: 6px;
+                FilterTabButton {
+                    text: @tr("Всё");
+                    count: root.count-all;
+                    active: root.current-filter == "all";
+                    clicked => {
+                        root.selected-row-index = -1;
+                        root.current-filter = "all";
+                        root.filter-changed("all");
+                    }
+                }
+
+                if root.count-geometry > 0 : FilterTabButton {
+                    text: @tr("Геометрия");
+                    count: root.count-geometry;
+                    active: root.current-filter == "geometry";
+                    clicked => {
+                        root.selected-row-index = -1;
+                        root.current-filter = "geometry";
+                        root.filter-changed("geometry");
+                    }
+                }
+
+                if root.count-textures > 0 : FilterTabButton {
+                    text: @tr("Текстуры");
+                    count: root.count-textures;
+                    active: root.current-filter == "texture";
+                    clicked => {
+                        root.selected-row-index = -1;
+                        root.current-filter = "texture";
+                        root.filter-changed("texture");
+                    }
+                }
+
+                if root.count-scripts > 0 : FilterTabButton {
+                    text: @tr("Скрипты");
+                    count: root.count-scripts;
+                    active: root.current-filter == "script";
+                    clicked => {
+                        root.selected-row-index = -1;
+                        root.current-filter = "script";
+                        root.filter-changed("script");
+                    }
+                }
+
+                if root.count-sounds > 0 : FilterTabButton {
+                    text: @tr("Звуки");
+                    count: root.count-sounds;
+                    active: root.current-filter == "sound";
+                    clicked => {
+                        root.selected-row-index = -1;
+                        root.current-filter = "sound";
+                        root.filter-changed("sound");
+                    }
+                }
+
+                if root.count-children > 0 : FilterTabButton {
+                    text: @tr("Дочерние объекты");
+                    count: root.count-children;
+                    active: root.current-filter == "child";
+                    clicked => {
+                        root.selected-row-index = -1;
+                        root.current-filter = "child";
+                        root.filter-changed("child");
+                    }
+                }
+
+                if root.count-dead > 0 : FilterTabButton {
+                    text: @tr("Мёртвые ресурсы");
+                    count: root.count-dead;
+                    active: root.current-filter == "orphans";
+                    clicked => {
+                        root.selected-row-index = -1;
+                        root.current-filter = "orphans";
+                        root.filter-changed("orphans");
+                    }
                 }
             }
 
-            if root.count-geometry > 0 : FilterTabButton {
-                text: @tr("Геометрия");
-                count: root.count-geometry;
-                active: root.current-filter == "geometry";
-                clicked => {
-                    root.selected-row-index = -1;
-                    root.current-filter = "geometry";
-                    root.filter-changed("geometry");
-                }
-            }
-
-            if root.count-textures > 0 : FilterTabButton {
-                text: @tr("Текстуры");
-                count: root.count-textures;
-                active: root.current-filter == "texture";
-                clicked => {
-                    root.selected-row-index = -1;
-                    root.current-filter = "texture";
-                    root.filter-changed("texture");
-                }
-            }
-
-            if root.count-scripts > 0 : FilterTabButton {
-                text: @tr("Скрипты");
-                count: root.count-scripts;
-                active: root.current-filter == "script";
-                clicked => {
-                    root.selected-row-index = -1;
-                    root.current-filter = "script";
-                    root.filter-changed("script");
-                }
-            }
-
-            if root.count-sounds > 0 : FilterTabButton {
-                text: @tr("Звуки");
-                count: root.count-sounds;
-                active: root.current-filter == "sound";
-                clicked => {
-                    root.selected-row-index = -1;
-                    root.current-filter = "sound";
-                    root.filter-changed("sound");
-                }
-            }
-
-            if root.count-children > 0 : FilterTabButton {
-                text: @tr("Дочерние объекты");
-                count: root.count-children;
-                active: root.current-filter == "child";
-                clicked => {
-                    root.selected-row-index = -1;
-                    root.current-filter = "child";
-                    root.filter-changed("child");
-                }
-            }
-
-            if root.count-dead > 0 : FilterTabButton {
-                text: @tr("Мёртвые ресурсы");
-                count: root.count-dead;
-                active: root.current-filter == "orphans";
-                clicked => {
-                    root.selected-row-index = -1;
-                    root.current-filter = "orphans";
-                    root.filter-changed("orphans");
-                }
+            if root.count-all == 0 : Rectangle {
+                width: 8px;
             }
 
             Rectangle {
                 horizontal-stretch: 1;
             }
 
-            Button {
-                text: @tr("Полный граф каталога");
-                enabled: !root.is-scanning && root.is-scan-completed;
-                clicked => { root.open-full-graph-clicked(); }
-                min-width: 170px;
-                preferred-height: 32px;
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                Button {
+                    text: @tr("Полный граф каталога");
+                    enabled: !root.is-scanning && root.is-scan-completed;
+                    clicked => { root.open-full-graph(); }
+                    min-width: 170px;
+                    preferred-height: 32px;
+                }
             }
         }
 
@@ -1594,11 +1615,11 @@ export component FolderAuditorWindow inherits Window {
                         spacing: 0px;
 
                         Text {
-                            text: item.kind_text;
+                            text: item.kind_str;
                             width: root.col-kind-width;
                             horizontal-alignment: left;
                             vertical-alignment: center;
-                            color: item.is_dead_resource ? #eab308 : #ef4444;
+                            color: item.is_dead ? #eab308 : #ef4444;
                             overflow: elide;
                         }
 
@@ -1607,7 +1628,7 @@ export component FolderAuditorWindow inherits Window {
                         if root.current-filter != "orphans" : HorizontalLayout {
                             spacing: 0px;
                             Text {
-                                text: item.missing_file;
+                                text: item.expected_path;
                                 width: root.col-missing-width;
                                 horizontal-alignment: left;
                                 vertical-alignment: center;
@@ -1618,11 +1639,11 @@ export component FolderAuditorWindow inherits Window {
                         }
 
                         Text {
-                            text: item.source_file;
+                            text: item.parent_file;
                             horizontal-alignment: left;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
-                            color: item.is_dead_resource ? #f3f4f6 : #9ca3af;
+                            color: item.is_dead ? #f3f4f6 : #9ca3af;
                             overflow: elide;
                         }
                     }

@@ -5,7 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AssetResourceKind {
     Geometry,
     Texture,
@@ -30,9 +32,10 @@ impl AssetResourceKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BrokenResourceRef {
     pub parent_file: PathBuf,
+    pub all_parents: Vec<PathBuf>,
     pub expected_path: PathBuf,
     pub kind: AssetResourceKind,
     pub count: usize,
@@ -1173,12 +1176,13 @@ pub fn extract_xml_texture_id_refs(
                 broken[idx].count += 1;
             } else {
                 seen.insert(key, broken.len());
-                broken.push(BrokenResourceRef {
-                    parent_file: parent_file.to_path_buf(),
-                    expected_path: expected,
-                    kind,
-                    count: 1,
-                });
+                    broken.push(BrokenResourceRef {
+                        parent_file: parent_file.to_path_buf(),
+                        all_parents: vec![parent_file.to_path_buf()],
+                        expected_path: expected,
+                        kind,
+                        count: 1,
+                    });
             }
         }
     }
@@ -1520,6 +1524,7 @@ fn audit_one_file(
                     seen.insert(key, out.len());
                     out.push(BrokenResourceRef {
                         parent_file: parent_file.clone(),
+                        all_parents: vec![parent_file.clone()],
                         expected_path: expected,
                         kind,
                         count: 1,
@@ -1568,6 +1573,7 @@ fn audit_one_file(
                     seen.insert(key, out.len());
                     out.push(BrokenResourceRef {
                         parent_file: parent_file.clone(),
+                        all_parents: vec![parent_file.clone()],
                         expected_path: expected,
                         kind: AssetResourceKind::Texture,
                         count: 1,
@@ -1616,6 +1622,7 @@ fn audit_one_file(
                     seen.insert(key, out.len());
                     out.push(BrokenResourceRef {
                         parent_file: parent_file.clone(),
+                        all_parents: vec![parent_file.clone()],
                         expected_path: expected,
                         kind: AssetResourceKind::Texture,
                         count: 1,
@@ -1867,13 +1874,29 @@ pub fn audit_folders_with_progress(
 
     // Dedup broken references
     let mut deduped: Vec<BrokenResourceRef> = Vec::with_capacity(broken_all.len());
-    let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
+    let mut seen: HashMap<(AssetResourceKind, PathBuf), usize> = HashMap::new();
     for b in broken_all {
-        let key = (b.kind, b.expected_path.clone(), b.parent_file.clone());
+        let key = (b.kind, b.expected_path.clone());
         if let Some(&idx) = seen.get(&key) {
             deduped[idx].count += b.count;
+            for p in b.all_parents {
+                if !deduped[idx].all_parents.contains(&p) {
+                    deduped[idx].all_parents.push(p);
+                }
+            }
+            if deduped[idx].parent_file.as_os_str().is_empty() {
+                deduped[idx].parent_file =
+                    deduped[idx].all_parents.first().cloned().unwrap_or_default();
+            }
         } else {
             seen.insert(key, deduped.len());
+            let mut b = b;
+            if b.all_parents.is_empty() {
+                b.all_parents = vec![b.parent_file.clone()];
+            }
+            if b.parent_file.as_os_str().is_empty() {
+                b.parent_file = b.all_parents.first().cloned().unwrap_or_default();
+            }
             deduped.push(b);
         }
     }
@@ -1920,6 +1943,7 @@ pub fn audit_folders_with_progress(
             orphans.push(nf);
             deduped.push(BrokenResourceRef {
                 parent_file: f.clone(),
+                all_parents: vec![f.clone()],
                 expected_path: f.clone(),
                 kind: AssetResourceKind::Unused,
                 count: 1,
