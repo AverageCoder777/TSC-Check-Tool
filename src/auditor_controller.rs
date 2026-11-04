@@ -326,6 +326,7 @@ impl AuditorController {
                             w.set_count_dead(count_dead);
                             w.set_is_consolidating(false);
                             w.set_is_scanning(false);
+                            w.set_is_scan_completed(true);
                         }
                     });
 
