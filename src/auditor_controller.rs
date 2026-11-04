@@ -551,35 +551,6 @@ impl AuditorController {
             });
         }
 
-        // Show global dependency graph (all issues) in browser
-        {
-            let state = self.state.clone();
-            let handle = self.weak.clone();
-
-            self.window.on_show_all_graphs_clicked(move || {
-                let thread_handle = handle.clone();
-                let state_clone = state.clone();
-                std::thread::spawn(move || {
-                    let extracted = state_clone.lock().ok().map(|s| {
-                        (s.all_items.clone(), s.dependency_graph.clone())
-                    });
-                    let Some((issues, graph)) = extracted else { return; };
-                    if let Err(e) =
-                        crate::graph_view::generate_global_issues_graph(&issues, &graph)
-                    {
-                        let template =
-                            crate::gettext!("Не удалось построить глобальный граф связей: {}");
-                        let msg = template.replace("{}", &e.to_string());
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(w) = thread_handle.upgrade() {
-                                w.set_editor_status(msg.into());
-                            }
-                        });
-                    }
-                });
-            });
-        }
-
         // Show full directory graph (all scanned files) in browser
         {
             let state = self.state.clone();
