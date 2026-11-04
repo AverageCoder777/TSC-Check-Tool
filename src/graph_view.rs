@@ -13,6 +13,7 @@ const VIS_NETWORK_CDN: &str =
     "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js";
 
 const GRAPH_HTML_NAME: &str = "tsc_graph_view.html";
+#[allow(dead_code)]
 const GLOBAL_GRAPH_HTML_NAME: &str = "tsc_global_graph.html";
 const FULL_GRAPH_HTML_NAME: &str = "tsc_full_graph.html";
 
@@ -291,6 +292,7 @@ struct NodeStyle {
 }
 
 /// Derive visual style from extension, problem status, and missing-on-disk status.
+#[allow(dead_code)]
 fn node_style(
     path: &Path,
     is_problem: bool,
@@ -348,6 +350,7 @@ fn node_style(
 
 /// Serialized node payload for the global graph.
 #[derive(Serialize)]
+#[allow(dead_code)]
 struct GlobalGraphNode {
     id: usize,
     label: String,
@@ -360,12 +363,14 @@ struct GlobalGraphNode {
 
 /// Serialized edge payload for the global graph.
 #[derive(Serialize)]
+#[allow(dead_code)]
 struct GlobalGraphEdge {
     from: usize,
     to: usize,
 }
 
 /// Build the standalone HTML document for the global issues graph.
+#[allow(dead_code)]
 fn build_global_html(nodes_json: &str, edges_json: &str, node_count: usize, edge_count: usize) -> String
 {
     let mut html = r##"<!DOCTYPE html>
@@ -544,6 +549,7 @@ fn build_global_html(nodes_json: &str, edges_json: &str, node_count: usize, edge
 ///
 /// Disconnected components (islands) are laid out side-by-side by the
 /// Barnes-Hut solver with strong inter-island repulsion.
+#[allow(dead_code)]
 pub fn generate_global_issues_graph(
     issues: &[crate::auditor::BrokenResourceRef],
     graph: &crate::auditor::DependencyGraph,
@@ -799,6 +805,7 @@ fn build_full_html(
         <label class="filter-item"><input type="checkbox" id="filter-mesh" checked><span>Меши (.GeoPcDx, .XSec)</span></label>
         <label class="filter-item"><input type="checkbox" id="filter-tex" checked><span>Текстуры (.TgPcDx)</span></label>
         <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Мёртвые ресурсы</span></label>
+        <label class="filter-item"><input type="checkbox" id="toggle-edges" checked><span>Показывать фоновые связи</span></label>
     </div>
     <button class="fit-view" id="graph-fit">Сбросить камеру</button>
     <div class="cluster-info">Все сканированные файлы каталога. Компоненты расставляются автоматически (Barnes-Hut). Наведите на узел для полного пути.</div>
@@ -913,21 +920,24 @@ fn build_full_html(
             font: { color: "#e5e7eb", size: 12, strokeWidth: 0 }
         },
         edges: {
-            arrows: { to: { enabled: true, scaleFactor: 0.4 } },
-            smooth: {
-                type: "cubicBezier",
-                forceDirection: "horizontal",
-                roundness: 0.35
+            arrows: { to: { enabled: false } },
+            smooth: false,
+            color: {
+                color: "rgba(100, 116, 139, 0.12)",
+                highlight: "#38bdf8",
+                hover: "#38bdf8"
             },
-            color: { color: "rgba(100, 116, 139, 0.22)", highlight: "#38bdf8", hover: "#38bdf8" },
             width: 1.0,
+            hoverWidth: 0,
             selectionWidth: 2.0
         },
         physics: false,
         interaction: {
             hover: true,
+            hoverConnectedEdges: false,
             tooltipDelay: 100,
             hideEdgesOnDrag: true,
+            hideEdgesOnZoom: true,
             selectable: true,
             navigationButtons: true,
             keyboard: { enabled: true, bindToWindow: false }
@@ -936,27 +946,74 @@ fn build_full_html(
     const network = new vis.Network(container, data, options);
 
     // Interactive subgraph highlighting
-    network.on("click", function(params) {
-        if (params.nodes.length === 0) {
-            nodes.update(rawNodes.map(n => ({ id: n.id, opacity: 1 })));
-            edges.update(rawEdges.map(e => ({ id: e.id, color: "rgba(100, 116, 139, 0.22)", width: 1.0 })));
-            return;
-        }
-        const clicked = params.nodes[0];
-        const connectedNodes = new Set(network.getConnectedNodes(clicked));
-        connectedNodes.add(clicked);
-        const connectedEdges = new Set(network.getConnectedEdges(clicked));
-        nodes.update(rawNodes.map(n => ({
+    const toggleEdges = document.getElementById("toggle-edges");
+
+    network.on("selectNode", function (params) {
+        const selectedId = params.nodes[0];
+        const connectedEdges = new Set(network.getConnectedEdges(selectedId));
+        const connectedNodes = new Set(network.getConnectedNodes(selectedId));
+        connectedNodes.add(selectedId);
+
+        const edgeUpdates = edges.get().map(e => {
+            const isConnected = connectedEdges.has(e.id);
+            return {
+                id: e.id,
+                hidden: !isConnected,
+                arrows: isConnected ? { to: { enabled: true, scaleFactor: 0.5 } } : { to: { enabled: false } },
+                width: isConnected ? 2.0 : 1.0
+            };
+        });
+
+        const nodeUpdates = nodes.get().map(n => ({
             id: n.id,
-            opacity: connectedNodes.has(n.id) ? 1 : 0.15
-        })));
-        edges.update(rawEdges.map(e => {
-            if (connectedEdges.has(e.id)) {
-                return { id: e.id, color: "#38bdf8", width: 2.0 };
-            }
-            return { id: e.id, color: "rgba(100, 116, 139, 0.15)", width: 1.0 };
+            opacity: connectedNodes.has(n.id) ? 1.0 : 0.2
         }));
+
+        edges.update(edgeUpdates);
+        nodes.update(nodeUpdates);
     });
+
+    network.on("deselectNode", function () {
+        const edgeUpdates = edges.get().map(e => ({
+            id: e.id,
+            hidden: !toggleEdges.checked,
+            arrows: { to: { enabled: false } },
+            width: 1.0
+        }));
+
+        const nodeUpdates = nodes.get().map(n => ({
+            id: n.id,
+            opacity: 1.0
+        }));
+
+        edges.update(edgeUpdates);
+        nodes.update(nodeUpdates);
+    });
+
+    // Hover reveal when background edges are hidden
+    network.on("hoverNode", function (params) {
+        if (toggleEdges.checked) return;
+        const connectedEdges = new Set(network.getConnectedEdges(params.node));
+        edges.update(edges.get().map(e => ({
+            id: e.id,
+            hidden: !connectedEdges.has(e.id)
+        })));
+    });
+    network.on("blurNode", function () {
+        if (toggleEdges.checked) return;
+        if (network.getSelectedNodes().length > 0) return;
+        edges.update(edges.get().map(e => ({ id: e.id, hidden: true })));
+    });
+
+    toggleEdges.addEventListener("change", function () {
+        if (network.getSelectedNodes().length > 0) return;
+        edges.update(edges.get().map(e => ({ id: e.id, hidden: !toggleEdges.checked })));
+    });
+
+    // Initial edge visibility based on toggle
+    if (!toggleEdges.checked) {
+        edges.update(edges.get().map(e => ({ id: e.id, hidden: true })));
+    }
 
     const searchInput = document.getElementById("graph-search");
     const centerBtn = document.getElementById("graph-center");
