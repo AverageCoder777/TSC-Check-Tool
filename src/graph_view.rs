@@ -777,8 +777,75 @@ fn build_full_html(
 </div>
 <div id="network"></div>
 <script>
-    const nodes = new vis.DataSet(__NODES_JSON__);
-    const edges = new vis.DataSet(__EDGES_JSON__);
+    const rawNodes = __NODES_JSON__;
+    const rawEdges = __EDGES_JSON__;
+
+    // Build in-edge lookup to sort children close to parents
+    const inEdges = new Map();
+    rawEdges.forEach(e => {
+        if (!inEdges.has(e.to)) inEdges.set(e.to, []);
+        inEdges.get(e.to).push(e.from);
+    });
+
+    const bins = [];
+    const meshes = [];
+    const textures = [];
+    const dead = [];
+
+    rawNodes.forEach(n => {
+        const isDead = n.label.startsWith("[DEAD] ");
+        const isMissing = n.label.startsWith("[MISSING] ");
+        const clean = n.label.replace(/^\\[(DEAD|MISSING)\\] /, "").toLowerCase();
+        if (isDead) {
+            dead.push(n);
+        } else if (clean.endsWith(".bin") || clean.endsWith(".xml")) {
+            bins.push(n);
+        } else if (clean.endsWith(".geopcdx") || clean.endsWith(".xsec")) {
+            meshes.push(n);
+        } else {
+            textures.push(n);
+        }
+    });
+
+    // Position Blueprints (2 columns)
+    const binCols = 2;
+    bins.forEach((n, i) => {
+        n.x = (i % binCols) * 230;
+        n.y = Math.floor(i / binCols) * 45;
+    });
+
+    // Position Meshes (3 columns, sorted by parent)
+    meshes.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
+    const meshCols = 3;
+    meshes.forEach((n, i) => {
+        n.x = 650 + (i % meshCols) * 220;
+        n.y = Math.floor(i / meshCols) * 42;
+    });
+
+    // Position Textures (9 columns matrix, sorted by parent mesh)
+    textures.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
+    const texCols = 9;
+    textures.forEach((n, i) => {
+        n.x = 1500 + (i % texCols) * 200;
+        n.y = Math.floor(i / texCols) * 36;
+    });
+
+    // Position Dead / Orphans (at the bottom)
+    const maxY = Math.max(
+        (bins.length / binCols) * 45,
+        (meshes.length / meshCols) * 42,
+        (textures.length / texCols) * 36
+    );
+    dead.forEach((n, i) => {
+        n.x = (i % 12) * 190;
+        n.y = maxY + 250 + Math.floor(i / 12) * 35;
+    });
+    // maxY + 200 + Math.floor(i / 12) * 35
+
+    rawEdges.forEach((e, i) => { e.id = i; });
+
+    const nodes = new vis.DataSet(rawNodes);
+    const edges = new vis.DataSet(rawEdges);
     const container = document.getElementById("network");
     const data = { nodes, edges };
     const options = {
@@ -793,23 +860,9 @@ fn build_full_html(
                 forceDirection: "horizontal",
                 roundness: 0.4
             },
-            color: { color: "#475569", highlight: "#38bdf8", hover: "#38bdf8" },
+            color: { color: "rgba(100, 116, 139, 0.25)", highlight: "#38bdf8", hover: "#38bdf8" },
             width: 1.0,
             selectionWidth: 2.0
-        },
-        layout: {
-            improvedLayout: false,
-            hierarchical: {
-                enabled: true,
-                direction: "LR",
-                sortMethod: "directed",
-                levelSeparation: 320,
-                nodeSpacing: 45,
-                treeSpacing: 100,
-                blockShifting: true,
-                edgeMinimization: true,
-                parentCentralization: true
-            }
         },
         physics: false,
         interaction: {
@@ -822,6 +875,29 @@ fn build_full_html(
         }
     };
     const network = new vis.Network(container, data, options);
+
+    // Interactive subgraph highlighting
+    network.on("click", function(params) {
+        if (params.nodes.length === 0) {
+            nodes.update(rawNodes.map(n => ({ id: n.id, opacity: 1 })));
+            edges.update(rawEdges.map(e => ({ id: e.id, color: "rgba(100, 116, 139, 0.25)", width: 1.0 })));
+            return;
+        }
+        const clicked = params.nodes[0];
+        const connectedNodes = new Set(network.getConnectedNodes(clicked));
+        connectedNodes.add(clicked);
+        const connectedEdges = new Set(network.getConnectedEdges(clicked));
+        nodes.update(rawNodes.map(n => ({
+            id: n.id,
+            opacity: connectedNodes.has(n.id) ? 1 : 0.15
+        })));
+        edges.update(rawEdges.map(e => {
+            if (connectedEdges.has(e.id)) {
+                return { id: e.id, color: "#38bdf8", width: 2.0 };
+            }
+            return { id: e.id, color: "rgba(100, 116, 139, 0.15)", width: 1.0 };
+        }));
+    });
 
     const searchInput = document.getElementById("graph-search");
     const centerBtn = document.getElementById("graph-center");
@@ -886,7 +962,7 @@ fn build_full_html(
     searchInput.addEventListener("keypress", (e) => { if (e.key === "Enter") centerOnNode(searchInput.value); });
 
     fitBtn.addEventListener("click", () => {
-        network.fit({ animation: { duration: 500 } });
+        network.fit({ animation: { duration: 400 } });
     });
 
     [filterBin, filterMesh, filterTex, filterDead].forEach(cb => {
