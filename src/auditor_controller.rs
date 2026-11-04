@@ -36,15 +36,36 @@ impl AuditorController {
             self.window.on_pick_folder(move || {
                 let Some(w) = handle.upgrade() else { return };
                 let current = w.get_folder_path().to_string();
-                let mut dialog = rfd::FileDialog::new().set_title(crate::gettext!("Выберите папку для аудита"));
+                let mut dialog = rfd::FileDialog::new().set_title(crate::gettext!("Выберите одну или несколько папок для аудита"));
                 if !current.is_empty() {
-                    let p = PathBuf::from(&current);
+                    let p = PathBuf::from(current.split(';').next().unwrap_or("").trim());
                     if p.is_dir() {
                         dialog = dialog.set_directory(&p);
                     }
                 }
-                if let Some(path) = dialog.pick_folder() {
-                    w.set_folder_path(path.to_string_lossy().to_string().into());
+                if let Some(folders) = dialog.pick_folders() {
+                    let valid_folders: Vec<PathBuf> = folders
+                        .into_iter()
+                        .filter(|p| {
+                            p.ancestors().any(|a| {
+                                a.file_name()
+                                    .map(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
+                                    .unwrap_or(false)
+                            })
+                        })
+                        .collect();
+
+                    if valid_folders.is_empty() {
+                        w.set_scan_status_text(crate::gettext!("Ошибка: выбранные папки должны находиться внутри каталога Assets!").into());
+                        return;
+                    }
+
+                    let joined = valid_folders
+                        .iter()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    w.set_folder_path(joined.into());
                 }
             });
         }
@@ -61,11 +82,36 @@ impl AuditorController {
                     return;
                 }
 
-                let path = PathBuf::from(folder_path.as_str());
-                if !path.is_dir() {
-                    eprintln!("[Auditor] Invalid folder path: {:?}", path);
+                let paths: Vec<PathBuf> = folder_path
+                    .as_str()
+                    .split([';', ','])
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .collect();
+
+                if paths.is_empty() {
+                    eprintln!("[Auditor] No folder paths provided");
                     is_busy.store(false, Ordering::SeqCst);
                     return;
+                }
+
+                for p in &paths {
+                    let valid = p.is_dir()
+                        && p.ancestors().any(|a| {
+                            a.file_name()
+                                .map(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
+                                .unwrap_or(false)
+                        });
+                    if !valid {
+                        eprintln!("[Auditor] Invalid folder path: {:?}", p);
+                        if let Some(w) = handle.upgrade() {
+                            w.set_scan_status_text(crate::gettext!("Папка должна находиться внутри каталога Assets!").into());
+                            w.set_is_scanning(false);
+                        }
+                        is_busy.store(false, Ordering::SeqCst);
+                        return;
+                    }
                 }
 
                 if let Some(w) = handle.upgrade() {
@@ -88,7 +134,7 @@ impl AuditorController {
 
                 let serz_path = crate::assets::preferred_serz_path(&rw_path);
 
-                let assets_root = path
+                let assets_root = paths[0]
                     .ancestors()
                     .find(|p| {
                         p.file_name()
@@ -101,10 +147,11 @@ impl AuditorController {
                         if rw_assets.is_dir() {
                             rw_assets
                         } else {
-                            path.parent()
+                            paths[0]
+                                .parent()
                                 .and_then(|p| p.parent())
                                 .map(|p| p.to_path_buf())
-                                .unwrap_or_else(|| path.clone())
+                                .unwrap_or_else(|| paths[0].clone())
                         }
                     });
 
@@ -149,8 +196,8 @@ impl AuditorController {
                         });
 
                     let audit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        crate::auditor::audit_folder_with_progress(
-                            &path,
+                        crate::auditor::audit_folders_with_progress(
+                            &paths,
                             &assets_root,
                             &serz_path,
                             max_threads,

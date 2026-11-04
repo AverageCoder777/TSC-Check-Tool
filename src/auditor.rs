@@ -539,14 +539,26 @@ pub fn normalize_texture_reference(raw: &str) -> String {
     }
 }
 
-fn product_root_for(file: &Path, assets_root: &Path) -> PathBuf {
-    if let Ok(rel) = file.strip_prefix(assets_root) {
+pub fn product_root_for(path: &Path, assets_root: &Path) -> PathBuf {
+    let dir = if path.is_file() {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+
+    if let Ok(rel) = dir.strip_prefix(assets_root) {
         let comps: Vec<_> = rel.components().collect();
         if comps.len() >= 2 {
+            // Assets\Provider\Product\... -> Assets\Provider\Product
             return assets_root.join(comps[0]).join(comps[1]);
+        } else if comps.len() == 1 {
+            // Assets\Provider -> Assets\Provider (1-level umbrella)
+            return assets_root.join(comps[0]);
+        } else {
+            return assets_root.to_path_buf();
         }
     }
-    file.parent().unwrap_or(assets_root).to_path_buf()
+    dir.to_path_buf()
 }
 
 fn ensure_extension(raw: &str, kind: AssetResourceKind) -> String {
@@ -1575,70 +1587,104 @@ fn audit_one_file(
     }
 }
 
-pub fn audit_folder_with_progress(
-    folder_path: &Path,
+pub fn audit_folders_with_progress(
+    target_folders: &[PathBuf],
     assets_root: &Path,
     serz_path: &Path,
     max_concurrent: usize,
     ap_cache: &ApArchiveCache,
     progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> (AuditReport, FullAssetGraph) {
-    let mut files = Vec::new();
-    let mut texture_files = Vec::new();
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut file_set: HashSet<PathBuf> = HashSet::new();
+    let mut texture_files: Vec<PathBuf> = Vec::new();
+    let mut texture_set: HashSet<PathBuf> = HashSet::new();
     let mut scripted_component_roots: std::collections::HashSet<PathBuf> =
         std::collections::HashSet::new();
-    if let Ok(entries) = walkdir::WalkDir::new(folder_path)
-        .into_iter()
-        .filter_entry(|e| {
-            !e.path().components().any(|c| {
-                c.as_os_str()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case("preload")
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
-    {
-        for entry in entries {
-            let path = entry.path();
-            if path.is_file() {
-                let is_preload = path.components().any(|c| {
+
+    for folder_path in target_folders {
+        if let Ok(entries) = walkdir::WalkDir::new(folder_path)
+            .into_iter()
+            .filter_entry(|e| {
+                !e.path().components().any(|c| {
                     c.as_os_str()
                         .to_string_lossy()
                         .eq_ignore_ascii_case("preload")
-                });
-                if is_preload {
-                    continue;
-                }
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if ext == "lua" || ext == "out" {
-                    if let Some(root) = find_scripted_component_root(path) {
-                        scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+        {
+            for entry in entries {
+                let path = entry.path();
+                if path.is_file() {
+                    let is_preload = path.components().any(|c| {
+                        c.as_os_str()
+                            .to_string_lossy()
+                            .eq_ignore_ascii_case("preload")
+                    });
+                    if is_preload {
+                        continue;
                     }
-                } else if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
-                    files.push(path.to_path_buf());
-                } else if ext == "tgpcdx" {
-                    texture_files.push(path.to_path_buf());
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if ext == "lua" || ext == "out" {
+                        if let Some(root) = find_scripted_component_root(path) {
+                            scripted_component_roots
+                                .insert(crate::fs_utils::normalize_path(&root));
+                        }
+                    } else if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
+                        if file_set.insert(path.to_path_buf()) {
+                            files.push(path.to_path_buf());
+                        }
+                    } else if ext == "tgpcdx" && texture_set.insert(path.to_path_buf()) {
+                        texture_files.push(path.to_path_buf());
+                    }
                 }
             }
+        } else {
+            let mut tmp_files = Vec::new();
+            let mut tmp_textures = Vec::new();
+            let mut tmp_scripts = std::collections::HashSet::new();
+            collect_files(
+                folder_path,
+                &mut tmp_files,
+                &mut tmp_textures,
+                &mut tmp_scripts,
+            );
+            for p in tmp_files {
+                if file_set.insert(p.clone()) {
+                    files.push(p);
+                }
+            }
+            for p in tmp_textures {
+                if texture_set.insert(p.clone()) {
+                    texture_files.push(p);
+                }
+            }
+            for p in tmp_scripts {
+                scripted_component_roots.insert(p);
+            }
         }
-    } else {
-        collect_files(
-            folder_path,
-            &mut files,
-            &mut texture_files,
-            &mut scripted_component_roots,
-        );
     }
 
-    let product_root = product_root_for(folder_path, assets_root);
-
-    // Collect additional .bin/.geopcdx across product root for dependency scope
+    // Collect additional .bin/.geopcdx across product roots for dependency scope
     let mut extra_files: Vec<PathBuf> = Vec::new();
-    if product_root != folder_path {
+    let mut extra_set: HashSet<PathBuf> = HashSet::new();
+    let mut seen_products: HashSet<PathBuf> = HashSet::new();
+    for folder_path in target_folders {
+        let product_root = product_root_for(folder_path, assets_root);
+        if !seen_products.insert(product_root.clone()) {
+            continue;
+        }
+        let should_scan_extra = product_root != *folder_path
+            && product_root != *assets_root
+            && folder_path.starts_with(&product_root);
+        if !should_scan_extra {
+            continue;
+        }
         let mut all_product_files = Vec::new();
         let mut dummy_textures = Vec::new();
         if let Ok(entries) = walkdir::WalkDir::new(&product_root)
@@ -1661,13 +1707,14 @@ pub fn audit_folder_with_progress(
                         .unwrap_or("")
                         .to_lowercase();
                     if (ext == "bin" || ext == "geopcdx" || ext == "xsec")
-                        && !path.starts_with(folder_path)
+                        && !target_folders.iter().any(|tf| path.starts_with(tf))
                     {
                         all_product_files.push(path.to_path_buf());
                     } else if (ext == "lua" || ext == "out")
                         && let Some(root) = find_scripted_component_root(path)
                     {
-                        scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
+                        scripted_component_roots
+                            .insert(crate::fs_utils::normalize_path(&root));
                     }
                 }
             }
@@ -1678,9 +1725,13 @@ pub fn audit_folder_with_progress(
                 &mut dummy_textures,
                 &mut scripted_component_roots,
             );
-            all_product_files.retain(|p| !p.starts_with(folder_path));
+            all_product_files.retain(|p| !target_folders.iter().any(|tf| p.starts_with(tf)));
         }
-        extra_files = all_product_files;
+        for p in all_product_files {
+            if extra_set.insert(p.clone()) {
+                extra_files.push(p);
+            }
+        }
     }
 
     let threads = max_concurrent.max(1);
@@ -1697,7 +1748,7 @@ pub fn audit_folder_with_progress(
         files
             .par_iter()
             .map(|f| {
-                let r = audit_one_file(f, folder_path, assets_root, serz_path, ap_cache);
+                let r = audit_one_file(f, assets_root, assets_root, serz_path, ap_cache);
                 let done = processed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if let Some(cb) = &progress_cb
                     && total_files > 0
@@ -1744,7 +1795,7 @@ pub fn audit_folder_with_progress(
     let extra_outcomes: Vec<FileAuditOutcome> = pool.install(|| {
         extra_files
             .par_iter()
-            .map(|f| audit_one_file(f, &product_root, assets_root, serz_path, ap_cache))
+            .map(|f| audit_one_file(f, assets_root, assets_root, serz_path, ap_cache))
             .collect()
     });
 
@@ -1790,6 +1841,7 @@ pub fn audit_folder_with_progress(
                 .to_string_lossy()
                 .to_lowercase(),
         );
+        let product_root = product_root_for(f, assets_root);
         let rel_product = f
             .strip_prefix(&product_root)
             .map(|p| p.to_string_lossy().replace('/', "\\"))
