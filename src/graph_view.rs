@@ -680,6 +680,8 @@ struct FullGraphNode {
     color: String,
     shape: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    level: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     border_dash: Option<[usize; 2]>,
 }
 
@@ -769,7 +771,7 @@ fn build_full_html(
         <label class="filter-item"><input type="checkbox" id="filter-tex" checked><span>Текстуры (.TgPcDx)</span></label>
         <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Мёртвые ресурсы</span></label>
     </div>
-    <button class="physics-toggle" id="graph-pause">Приостановить физику</button>
+    <button class="fit-view" id="graph-fit">Сбросить камеру</button>
     <div class="cluster-info">Все сканированные файлы каталога. Компоненты расставляются автоматически (Barnes-Hut). Наведите на узел для полного пути.</div>
     <div class="hint">Введите часть имени файла и нажмите Enter или "Центр" для камеры на узле.</div>
 </div>
@@ -781,56 +783,53 @@ fn build_full_html(
     const data = { nodes, edges };
     const options = {
         nodes: {
-            font: { color: "#e5e7eb", size: 12, strokeWidth: 0, strokeColor: "#0f172a" },
-            borderWidth: 2,
-            shadow: { enabled: true, color: "rgba(0,0,0,0.7)", size: 10, x: 2, y: 2 },
+            borderWidth: 1.5,
+            font: { color: "#e5e7eb", size: 12, strokeWidth: 0 }
         },
         edges: {
             arrows: { to: { enabled: true, scaleFactor: 0.4 } },
-            smooth: false,
-            color: { color: "#475569", highlight: "#94a3b8", hover: "#94a3b8" },
-            width: 1.0,
-            shadow: false,
-        },
-        layout: { improvedLayout: true },
-        physics: {
-            enabled: true,
-            solver: "barnesHut",
-            barnesHut: {
-                gravitationalConstant: -5000,
-                centralGravity: 0.08,
-                springLength: 95,
-                springConstant: 0.04,
-                damping: 0.12,
-                avoidOverlap: 0.9,
+            smooth: {
+                type: "cubicBezier",
+                forceDirection: "horizontal",
+                roundness: 0.4
             },
-            stabilization: { enabled: true, iterations: 150, updateInterval: 25 },
+            color: { color: "#475569", highlight: "#38bdf8", hover: "#38bdf8" },
+            width: 1.0,
+            selectionWidth: 2.0
         },
+        layout: {
+            improvedLayout: false,
+            hierarchical: {
+                enabled: true,
+                direction: "LR",
+                sortMethod: "directed",
+                levelSeparation: 320,
+                nodeSpacing: 45,
+                treeSpacing: 100,
+                blockShifting: true,
+                edgeMinimization: true,
+                parentCentralization: true
+            }
+        },
+        physics: false,
         interaction: {
             hover: true,
             tooltipDelay: 100,
-            hideEdgesOnDrag: false,
+            hideEdgesOnDrag: true,
             selectable: true,
             navigationButtons: true,
-            keyboard: { enabled: true },
-        },
-        configure: { enabled: false },
+            keyboard: { enabled: true }
+        }
     };
     const network = new vis.Network(container, data, options);
 
-    // Freeze physics after initial layout for large-graph performance.
-    network.once("stabilizationIterationsDone", function() {
-        network.setOptions({ physics: false });
-    });
-
     const searchInput = document.getElementById("graph-search");
     const centerBtn = document.getElementById("graph-center");
-    const pauseBtn = document.getElementById("graph-pause");
+    const fitBtn = document.getElementById("graph-fit");
     const filterBin = document.getElementById("filter-bin");
     const filterMesh = document.getElementById("filter-mesh");
     const filterTex = document.getElementById("filter-tex");
     const filterDead = document.getElementById("filter-dead");
-    let physicsPaused = false;
 
     function extOf(label) {
         const parts = label.split(".");
@@ -886,11 +885,8 @@ fn build_full_html(
     centerBtn.addEventListener("click", () => centerOnNode(searchInput.value));
     searchInput.addEventListener("keypress", (e) => { if (e.key === "Enter") centerOnNode(searchInput.value); });
 
-    pauseBtn.addEventListener("click", () => {
-        physicsPaused = !physicsPaused;
-        network.setOptions({ physics: { enabled: !physicsPaused } });
-        pauseBtn.textContent = physicsPaused ? "Возобновить физику" : "Приостановить физику";
-        pauseBtn.classList.toggle("paused", physicsPaused);
+    fitBtn.addEventListener("click", () => {
+        network.fit({ animation: { duration: 500 } });
     });
 
     [filterBin, filterMesh, filterTex, filterDead].forEach(cb => {
@@ -930,6 +926,22 @@ pub fn generate_full_directory_graph(
         let is_missing = graph.missing_files.contains(path);
         let style = full_graph_node_style(path, is_dead, is_missing);
 
+        let level = if is_dead {
+            Some(3usize)
+        } else {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            match ext.as_str() {
+                "bin" | "xml" => Some(0usize),
+                "geopcdx" | "xsec" => Some(1usize),
+                "tgpcdx" => Some(2usize),
+                _ => None,
+            }
+        };
+
         let label = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -946,6 +958,7 @@ pub fn generate_full_directory_graph(
             title,
             color: style.color.to_string(),
             shape: style.shape,
+            level,
             border_dash: style.border_dash,
         });
     }
@@ -972,6 +985,7 @@ pub fn generate_full_directory_graph(
             title,
             color: style.color.to_string(),
             shape: style.shape,
+            level: Some(2usize),
             border_dash: style.border_dash,
         });
     }
