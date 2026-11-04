@@ -89,11 +89,6 @@ macro_rules! static_tag_regex {
     };
 }
 
-static_tag_regex!(re_geometry_id, "GeometryID");
-static_tag_regex!(re_shadow_geometry_id, "ShadowGeometryID");
-static_tag_regex!(re_collision_geometry_id, "CollisionGeometryID");
-static_tag_regex!(re_inner_geometry_id, "InnerGeometryID");
-static_tag_regex!(re_outer_geometry_id, "OuterGeometryID");
 static_tag_regex!(re_script_component, "ScriptComponent");
 static_tag_regex!(re_path, "Path");
 static_tag_regex!(re_blueprint_lib, "iBlueprintLibrary-cAbsoluteBlueprintID");
@@ -174,17 +169,21 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
     let mut out = Vec::new();
 
     // Извлечение геометрий
-    for re in [
-        re_geometry_id(),
-        re_shadow_geometry_id(),
-        re_collision_geometry_id(),
-        re_inner_geometry_id(),
-        re_outer_geometry_id(),
-    ] {
-        for value in re.captures_iter(xml).filter_map(|c| c.get(1)) {
-            let raw = unescape_xml_entities(value.as_str().trim());
-            if !raw.is_empty() && !is_numeric_token(&raw) {
-                out.push((AssetResourceKind::Geometry, raw));
+    static RE_ANY_GEOMETRY_ID: OnceLock<Regex> = OnceLock::new();
+    let re_geo = RE_ANY_GEOMETRY_ID.get_or_init(|| {
+        Regex::new(r"(?is)<([a-zA-Z0-9_]*GeometryID)(?:\s[^>]*)?>(.*?)</([a-zA-Z0-9_]*GeometryID)>").unwrap()
+    });
+    for cap in re_geo.captures_iter(xml) {
+        let open = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let close = cap.get(3).map(|m| m.as_str()).unwrap_or("");
+        if !open.eq_ignore_ascii_case(close) {
+            continue;
+        }
+        if let Some(val) = cap.get(2) {
+            let raw = unescape_xml_entities(strip_tags(val.as_str()).trim());
+            let clean = raw.lines().next().unwrap_or("").trim().to_string();
+            if !clean.is_empty() && !is_numeric_token(&clean) {
+                out.push((AssetResourceKind::Geometry, clean));
             }
         }
     }
@@ -1350,7 +1349,50 @@ pub fn is_vehicle_category_folder(name: &str) -> bool {
             | "steuerwagen"
             | "rollingstock"
             | "wagons"
+            | "triebzuege"
+            | "triebzug"
+            | "passagierwagen"
+            | "personenverkehr"
+            | "tender"
+            | "tenderloks"
+            | "cabview"
+            | "cabviews"
+            | "passview"
+            | "passengers"
     )
+}
+
+/// Identifies dynamic Train Simulator Classic runtime assets that are resolved
+/// procedurally (numbering digits, EBuLa/FIS timetables, passenger randomization,
+/// destination displays) and therefore lack static references.
+fn is_dynamic_runtime_asset(path: &Path) -> bool {
+    let lower_str = path.to_string_lossy().to_ascii_lowercase();
+
+    let has_numbering = path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
+        s == "primarynumbers" || s == "secondarynumbers" || s == "digits" || s == "numbers"
+    });
+
+    let has_timetable = path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
+        s == "ebula" || s == "fahrplan" || s == "timetable" || s == "matrix" || s == "zzt" || s == "zst"
+    });
+
+    let has_procedural_skins = path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
+        s.ends_with("_maske")
+            || s == "passagiere"
+            || s == "passenger"
+            || s == "passengers"
+            || s == "passagier"
+    });
+
+    let has_destination = lower_str.contains(r"\destination\")
+        || lower_str.contains(r"/destination/")
+        || lower_str.contains(r"\destinations\")
+        || lower_str.contains(r"/destinations/");
+
+    has_numbering || has_timetable || has_procedural_skins || has_destination
 }
 
 /// Resolves the component root folder containing the script by walking up the directory tree
@@ -1869,6 +1911,12 @@ pub fn audit_folders_with_progress(
             if is_shielded {
                 continue;
             }
+
+            // Add dynamic runtime asset protection
+            if is_dynamic_runtime_asset(f) {
+                continue;
+            }
+
             orphans.push(nf);
             deduped.push(BrokenResourceRef {
                 parent_file: f.clone(),
