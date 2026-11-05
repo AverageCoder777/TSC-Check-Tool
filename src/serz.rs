@@ -75,9 +75,10 @@ impl SerzNode {
                 match iter.next() {
                     None => return Ok(None),
                     Some(Err(e)) => return Err(e.to_string()),
-                    Some(Ok(XmlEvent::StartElement { name, attributes, .. })) => {
-                        return parse_element(iter, name.local_name.clone(), attributes)
-                            .map(Some);
+                    Some(Ok(XmlEvent::StartElement {
+                        name, attributes, ..
+                    })) => {
+                        return parse_element(iter, name.local_name.clone(), attributes).map(Some);
                     }
                     Some(Ok(XmlEvent::EndElement { .. })) => return Ok(None),
                     Some(Ok(_)) => continue,
@@ -120,7 +121,9 @@ impl SerzNode {
                         _ => {}
                     }
                 }
-                return Ok(SerzNode::Blob { data: hex_decode(&text) });
+                return Ok(SerzNode::Blob {
+                    data: hex_decode(&text),
+                });
             }
 
             // Nil
@@ -193,7 +196,9 @@ impl SerzNode {
             match iter.next() {
                 None => return Err("no root element".to_string()),
                 Some(Err(e)) => return Err(e.to_string()),
-                Some(Ok(XmlEvent::StartElement { name, attributes, .. })) => {
+                Some(Ok(XmlEvent::StartElement {
+                    name, attributes, ..
+                })) => {
                     break parse_element(&mut iter, name.local_name.clone(), attributes)?;
                 }
                 Some(Ok(_)) => continue,
@@ -1091,7 +1096,7 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
                         .unwrap_or("bin");
                     let reencoded_ext = format!("reencoded.{}", ext);
                     let reencoded_path = input_path.with_extension(reencoded_ext);
-                    
+
                     let _ = fs::write(&reencoded_path, &reencoded_bin);
 
                     if raw_bytes == reencoded_bin {
@@ -1121,4 +1126,4 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
         }
         Err(err) => eprintln!("\n[!] Ошибка чтения: {}", err),
     }
-} 
+}

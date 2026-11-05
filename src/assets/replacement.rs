@@ -214,11 +214,17 @@ pub(crate) fn replace_missing_asset(
         let xml_path = temp.path().join("source.xml");
         if is_binary {
             let bytes = std::fs::read(&file_path).map_err(|error| {
-                format!("Не удалось прочитать {} перед заменой: {error}", source_file.display())
+                format!(
+                    "Не удалось прочитать {} перед заменой: {error}",
+                    source_file.display()
+                )
             })?;
             let mut reader = crate::serz::SerzReader::new(&bytes);
             let node = reader.parse().map_err(|error| {
-                format!("Не удалось прочитать {} перед заменой: {error}", source_file.display())
+                format!(
+                    "Не удалось прочитать {} перед заменой: {error}",
+                    source_file.display()
+                )
             })?;
             let xml_text = crate::serz::SerzReader::to_xml(&node, 0, true);
             fs::write(&xml_path, xml_text).map_err(|error| {
@@ -285,7 +291,7 @@ pub(crate) fn replace_missing_asset(
             )
         })?;
 
-        let converted_path =         if is_binary {
+        let converted_path = if is_binary {
             let converted_path = temp.path().join("replacement.bin");
             let xml = fs::read_to_string(&xml_path).map_err(|error| {
                 format!(

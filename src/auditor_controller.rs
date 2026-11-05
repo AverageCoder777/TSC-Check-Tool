@@ -1,4 +1,3 @@
-
 use slint::ComponentHandle;
 use slint::Weak;
 use std::path::{Path, PathBuf};
@@ -12,7 +11,9 @@ use crate::{AuditorState, FolderAuditorWindow};
 /// Rejects the `Assets` root itself and any path not inside `Assets`.
 pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
-        return Err(crate::gettext!("Указанный путь не существует или не является папкой!").to_string());
+        return Err(
+            crate::gettext!("Указанный путь не существует или не является папкой!").to_string(),
+        );
     }
 
     // Locate the 'Assets' ancestor
@@ -23,7 +24,10 @@ pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     });
 
     let Some(assets_root) = assets_ancestor else {
-        return Err(crate::gettext!("Папка должна находиться внутри каталога RailWorks/Assets!").to_string());
+        return Err(
+            crate::gettext!("Папка должна находиться внутри каталога RailWorks/Assets!")
+                .to_string(),
+        );
     };
 
     // If path is identical to the Assets root itself, reject it
@@ -36,7 +40,9 @@ pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     }
 
     // Ensure it is strictly inside Assets (rel components >= 1)
-    if let Ok(rel) = path.strip_prefix(assets_root) && rel.components().count() == 0 {
+    if let Ok(rel) = path.strip_prefix(assets_root)
+        && rel.components().count() == 0
+    {
         return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком!").to_string());
     }
 
@@ -519,15 +525,15 @@ impl AuditorController {
                         .get(&key)
                         .cloned()
                         .unwrap_or_default();
-                    let missing_refs: Vec<PathBuf> =
-                        if item.kind != crate::auditor::AssetResourceKind::Unused
-                            && !item.expected_path.as_os_str().is_empty()
-                            && !item.expected_path.is_file()
-                        {
-                            vec![item.expected_path.clone()]
-                        } else {
-                            Vec::new()
-                        };
+                    let missing_refs: Vec<PathBuf> = if item.kind
+                        != crate::auditor::AssetResourceKind::Unused
+                        && !item.expected_path.as_os_str().is_empty()
+                        && !item.expected_path.is_file()
+                    {
+                        vec![item.expected_path.clone()]
+                    } else {
+                        Vec::new()
+                    };
                     Some((np, incoming, outgoing, missing_refs))
                 });
 
@@ -546,8 +552,7 @@ impl AuditorController {
                         &outgoing,
                         &missing_refs,
                     ) {
-                        let template =
-                            crate::gettext!("Не удалось открыть граф зависимостей: {}");
+                        let template = crate::gettext!("Не удалось открыть граф зависимостей: {}");
                         let msg = template.replace("{}", &e.to_string());
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
@@ -568,16 +573,20 @@ impl AuditorController {
                 let thread_handle = handle.clone();
                 let state_clone = state.clone();
                 std::thread::spawn(move || {
-                    let extracted = state_clone.lock().ok().map(|s| {
-                        (s.full_asset_graph.clone(), s.is_scan_completed)
-                    });
-                    let Some((full_graph, completed)) = extracted else { return; };
+                    let extracted = state_clone
+                        .lock()
+                        .ok()
+                        .map(|s| (s.full_asset_graph.clone(), s.is_scan_completed));
+                    let Some((full_graph, completed)) = extracted else {
+                        return;
+                    };
                     if !completed {
                         return;
                     }
-                    if let Err(e) =
-                        crate::graph_view::generate_full_directory_graph(&full_graph, std::path::Path::new(""))
-                    {
+                    if let Err(e) = crate::graph_view::generate_full_directory_graph(
+                        &full_graph,
+                        std::path::Path::new(""),
+                    ) {
                         let template =
                             crate::gettext!("Не удалось построить полный граф каталога: {}");
                         let msg = template.replace("{}", &e.to_string());
@@ -595,7 +604,9 @@ impl AuditorController {
         {
             let state = self.state.clone();
             self.window.on_open_source_file(move |row| {
-                if row < 0 { return; }
+                if row < 0 {
+                    return;
+                }
                 let target_path = state.lock().ok().and_then(|s| {
                     s.display_items
                         .get(row as usize)
@@ -613,7 +624,9 @@ impl AuditorController {
         {
             let state = self.state.clone();
             self.window.on_open_missing_target_folder(move |row| {
-                if row < 0 { return; }
+                if row < 0 {
+                    return;
+                }
                 let target_path = state.lock().ok().and_then(|s| {
                     s.display_items
                         .get(row as usize)
@@ -677,13 +690,17 @@ impl AuditorController {
             let state = self.state.clone();
 
             self.window.on_edit_in_vscode(move |row| {
-                if row < 0 { return; }
+                if row < 0 {
+                    return;
+                }
                 let item_paths = state.lock().ok().and_then(|s| {
                     s.display_items
                         .get(row as usize)
                         .map(|i| (i.parent_file.clone(), i.expected_path.clone()))
                 });
-                let Some((parent_file, expected_path)) = item_paths else { return; };
+                let Some((parent_file, expected_path)) = item_paths else {
+                    return;
+                };
 
                 let is_editable = |p: &PathBuf| {
                     p.extension()
@@ -708,7 +725,7 @@ impl AuditorController {
                     return;
                 };
 
-                 let thread_handle = handle.clone();
+                let thread_handle = handle.clone();
                 std::thread::spawn(move || {
                     let cb_handle = thread_handle.clone();
                     let callback = move |res: Result<String, String>| {
@@ -724,10 +741,9 @@ impl AuditorController {
                         });
                     };
 
-                    if let Err(e) = crate::external_editor::open_and_sync_with_vscode(
-                        &asset_path,
-                        callback,
-                    ) {
+                    if let Err(e) =
+                        crate::external_editor::open_and_sync_with_vscode(&asset_path, callback)
+                    {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(win) = thread_handle.upgrade() {
                                 win.set_editor_status(format!("x {e}").into());
@@ -749,7 +765,11 @@ pub(crate) fn map_broken_resources_to_ui(
         .map(|(idx, r)| {
             let is_dead = r.kind == crate::auditor::AssetResourceKind::Unused;
             let parent_display = if r.all_parents.len() > 1 {
-                let first = r.parent_file.file_name().unwrap_or_default().to_string_lossy();
+                let first = r
+                    .parent_file
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
                 format!("{} (+{} источников)", first, r.all_parents.len() - 1)
             } else {
                 r.parent_file.to_string_lossy().to_string()

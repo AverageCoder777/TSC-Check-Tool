@@ -84,11 +84,7 @@ pub(crate) fn next_backup_path(source_path: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-pub fn stage_serz_xml(
-    source: &Path,
-    target: &Path,
-    xml: &str,
-) -> Result<StagedUmlautFile, String> {
+pub fn stage_serz_xml(source: &Path, target: &Path, xml: &str) -> Result<StagedUmlautFile, String> {
     let parent = source
         .parent()
         .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
@@ -98,11 +94,18 @@ pub fn stage_serz_xml(
         .map_err(|error| format!("Не удалось записать временный XML: {error}"))?;
     // Нативная сериализация XML -> BIN в памяти.
     let (node, preamble) = crate::serz::SerzNode::from_xml_str(xml)?;
-    let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref())
-        .map_err(|error| format!("Не удалось подготовить изменённый файл {}: {error}", source.display()))?;
+    let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|error| {
+        format!(
+            "Не удалось подготовить изменённый файл {}: {error}",
+            source.display()
+        )
+    })?;
     let staged = temp.path().join("transliterated.bin");
     fs::write(&staged, bytes).map_err(|error| {
-        format!("Не удалось подготовить изменённый файл {}: {error}", source.display())
+        format!(
+            "Не удалось подготовить изменённый файл {}: {error}",
+            source.display()
+        )
     })?;
     Ok(StagedUmlautFile {
         source: crate::domain::RouteFile::Path(source.to_path_buf()),

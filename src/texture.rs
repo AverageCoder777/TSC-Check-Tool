@@ -247,7 +247,6 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
     Ok(())
 }
 
-
 fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
     if data.starts_with(b"SERZ") {
         let mut reader = crate::serz::SerzReader::new(data);

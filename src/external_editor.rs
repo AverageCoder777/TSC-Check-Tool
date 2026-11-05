@@ -33,13 +33,7 @@ pub fn open_and_sync_with_vscode(
     let stop_signal = Arc::new(AtomicBool::new(false));
 
     thread::spawn(move || {
-        run_watcher(
-            &xml_path,
-            &binary_path,
-            cb,
-            was_modified,
-            stop_signal,
-        );
+        run_watcher(&xml_path, &binary_path, cb, was_modified, stop_signal);
     });
 
     Ok(())

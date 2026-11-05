@@ -9,8 +9,7 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-const VIS_NETWORK_CDN: &str =
-    "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js";
+const VIS_NETWORK_CDN: &str = "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js";
 
 const GRAPH_HTML_NAME: &str = "tsc_graph_view.html";
 #[allow(dead_code)]
@@ -33,10 +32,10 @@ enum NodeKind {
 impl NodeKind {
     fn color(self) -> &'static str {
         match self {
-            NodeKind::Center => "#3b82f6",     // blue
-            NodeKind::Inbound => "#10b981",    // green
-            NodeKind::Outbound => "#f59e0b",   // amber
-            NodeKind::Missing => "#ef4444",    // red
+            NodeKind::Center => "#3b82f6",   // blue
+            NodeKind::Inbound => "#10b981",  // green
+            NodeKind::Outbound => "#f59e0b", // amber
+            NodeKind::Missing => "#ef4444",  // red
         }
     }
 
@@ -90,11 +89,12 @@ struct GraphEdge {
 }
 
 /// Build a single standalone HTML document embedding the vis-network graph.
-fn build_html(selected_path: &Path,
-              inbound_refs: &[PathBuf],
-              outbound_refs: &[PathBuf],
-              missing_refs: &[PathBuf]) -> String
-{
+fn build_html(
+    selected_path: &Path,
+    inbound_refs: &[PathBuf],
+    outbound_refs: &[PathBuf],
+    missing_refs: &[PathBuf],
+) -> String {
     let mut nodes: Vec<GraphNode> = Vec::new();
     let mut edges: Vec<GraphEdge> = Vec::new();
     let mut index_of: HashMap<PathBuf, usize> = HashMap::new();
@@ -130,7 +130,10 @@ fn build_html(selected_path: &Path,
                     title,
                     color: $kind.color().to_string(),
                     shape: $kind.shape(),
-                    font: GraphFont { size: 14, color: tooltip_color.to_string() },
+                    font: GraphFont {
+                        size: 14,
+                        color: tooltip_color.to_string(),
+                    },
                     border_width,
                     border_dash,
                 });
@@ -143,11 +146,23 @@ fn build_html(selected_path: &Path,
 
     for path in inbound_refs {
         let id = add_node!(path, NodeKind::Inbound);
-        edges.push(GraphEdge { from: id, to: center_id, arrows: "to", dashes: None, color: None });
+        edges.push(GraphEdge {
+            from: id,
+            to: center_id,
+            arrows: "to",
+            dashes: None,
+            color: None,
+        });
     }
     for path in outbound_refs {
         let id = add_node!(path, NodeKind::Outbound);
-        edges.push(GraphEdge { from: center_id, to: id, arrows: "to", dashes: None, color: None });
+        edges.push(GraphEdge {
+            from: center_id,
+            to: id,
+            arrows: "to",
+            dashes: None,
+            color: None,
+        });
     }
     for path in missing_refs {
         let id = add_node!(path, NodeKind::Missing);
@@ -273,8 +288,7 @@ pub fn open_dependency_graph_in_browser(
     inbound_refs: &[PathBuf],
     outbound_refs: &[PathBuf],
     missing_refs: &[PathBuf],
-) -> Result<(), Box<dyn std::error::Error>>
-{
+) -> Result<(), Box<dyn std::error::Error>> {
     let html = build_html(selected_path, inbound_refs, outbound_refs, missing_refs);
     let out_path = std::env::temp_dir().join(GRAPH_HTML_NAME);
     std::fs::write(&out_path, html)?;
@@ -371,8 +385,12 @@ struct GlobalGraphEdge {
 
 /// Build the standalone HTML document for the global issues graph.
 #[allow(dead_code)]
-fn build_global_html(nodes_json: &str, edges_json: &str, node_count: usize, edge_count: usize) -> String
-{
+fn build_global_html(
+    nodes_json: &str,
+    edges_json: &str,
+    node_count: usize,
+    edge_count: usize,
+) -> String {
     let mut html = r##"<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -573,8 +591,7 @@ fn build_global_html(nodes_json: &str, edges_json: &str, node_count: usize, edge
 pub fn generate_global_issues_graph(
     issues: &[crate::auditor::BrokenResourceRef],
     graph: &crate::auditor::DependencyGraph,
-) -> Result<(), Box<dyn std::error::Error>>
-{
+) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Collect problem paths from issues.
     let mut problem_paths: HashSet<PathBuf> = HashSet::new();
     let mut path_kind: HashMap<PathBuf, crate::auditor::AssetResourceKind> = HashMap::new();
@@ -644,7 +661,10 @@ pub fn generate_global_issues_graph(
         if let Some(&src_idx) = path_to_idx.get(src) {
             for dst in dsts {
                 if let Some(&dst_idx) = path_to_idx.get(dst) {
-                    edges.push(GlobalGraphEdge { from: src_idx, to: dst_idx });
+                    edges.push(GlobalGraphEdge {
+                        from: src_idx,
+                        to: dst_idx,
+                    });
                 }
             }
         }
@@ -655,7 +675,10 @@ pub fn generate_global_issues_graph(
         let src = crate::fs_utils::normalize_path(&issue.parent_file);
         let dst = crate::fs_utils::normalize_path(&issue.expected_path);
         if let (Some(&src_idx), Some(&dst_idx)) = (path_to_idx.get(&src), path_to_idx.get(&dst)) {
-            edges.push(GlobalGraphEdge { from: src_idx, to: dst_idx });
+            edges.push(GlobalGraphEdge {
+                from: src_idx,
+                to: dst_idx,
+            });
         }
     }
 
@@ -678,11 +701,7 @@ pub fn generate_global_issues_graph(
 
 /// Determine the visual style for a full-directory-graph node based on extension
 /// and dead/missing status.
-fn full_graph_node_style(
-    path: &Path,
-    is_dead: bool,
-    is_missing: bool,
-) -> NodeStyle {
+fn full_graph_node_style(path: &Path, is_dead: bool, is_missing: bool) -> NodeStyle {
     if is_missing {
         return NodeStyle {
             color: "#ef4444",
@@ -761,8 +780,7 @@ fn build_full_html(
     active_files: usize,
     dead_files: usize,
     missing_files: usize,
-) -> String
-{
+) -> String {
     let mut html = r##"<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -1179,10 +1197,10 @@ fn build_full_html(
 pub fn generate_full_directory_graph(
     graph: &crate::auditor::FullAssetGraph,
     _target_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>>
-{
+) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Assign indices and build nodes.
-    let mut path_to_idx: std::collections::HashMap<PathBuf, usize> = std::collections::HashMap::new();
+    let mut path_to_idx: std::collections::HashMap<PathBuf, usize> =
+        std::collections::HashMap::new();
     let mut nodes: Vec<FullGraphNode> = Vec::new();
 
     for path in &graph.files_on_disk {
@@ -1263,14 +1281,18 @@ pub fn generate_full_directory_graph(
         if let Some(&src_idx) = path_to_idx.get(src) {
             for dst in dsts {
                 if let Some(&dst_idx) = path_to_idx.get(dst) {
-                    edges.push(FullGraphEdge { from: src_idx, to: dst_idx });
+                    edges.push(FullGraphEdge {
+                        from: src_idx,
+                        to: dst_idx,
+                    });
                 }
             }
         }
     }
 
     // 4. Deduplicate edges.
-    let mut seen_edges: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut seen_edges: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
     edges.retain(|e| seen_edges.insert((e.from, e.to)));
 
     let total_files = graph.files_on_disk.len();
@@ -1282,7 +1304,14 @@ pub fn generate_full_directory_graph(
 
     let nodes_json = serde_json::to_string(&nodes).expect("nodes serialize");
     let edges_json = serde_json::to_string(&edges).expect("edges serialize");
-    let html = build_full_html(&nodes_json, &edges_json, total_files, active_files, dead_count, missing_count);
+    let html = build_full_html(
+        &nodes_json,
+        &edges_json,
+        total_files,
+        active_files,
+        dead_count,
+        missing_count,
+    );
 
     let out_path = std::env::temp_dir().join(FULL_GRAPH_HTML_NAME);
     std::fs::write(&out_path, html)?;

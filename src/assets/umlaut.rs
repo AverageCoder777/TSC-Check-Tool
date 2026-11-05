@@ -723,8 +723,10 @@ pub(crate) fn repair_umlaut_asset_chain(
             let mut staged = temp.path().join("route-new");
             staged.set_extension(source.extension().unwrap());
             let xml = fs::read_to_string(&xml_path).map_err(|e| e.to_string())?;
-            let (node, preamble) = crate::serz::SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
-            let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
+            let (node, preamble) =
+                crate::serz::SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
+            let bytes =
+                crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
             fs::write(&staged, bytes).map_err(|e| e.to_string())?;
             staged
         } else {

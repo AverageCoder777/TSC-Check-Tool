@@ -561,11 +561,7 @@ fn scenario_start_time(xml: &str) -> String {
 }
 
 /// Преобразует блюпринт погоды в читаемое имя.
-pub(crate) fn weather_display_name(
-    rw_path: &Path,
-    route_path: &Path,
-    blueprint: &str,
-) -> String {
+pub(crate) fn weather_display_name(rw_path: &Path, route_path: &Path, blueprint: &str) -> String {
     let blueprint = blueprint.trim();
     if blueprint.is_empty() {
         return String::new();

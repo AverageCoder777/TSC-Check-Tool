@@ -50,6 +50,7 @@ mod reference;
 mod routes;
 mod scenario;
 mod scenario_controller;
+mod serz;
 mod settings;
 mod settings_controller;
 mod texture;
@@ -57,7 +58,6 @@ mod texture_controller;
 mod translit;
 mod windows;
 mod xml_scan;
-mod serz;
 
 fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     if let Ok(data) = std::fs::read(icon_path) {

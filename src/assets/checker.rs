@@ -317,10 +317,7 @@ where
                             error: None,
                         };
                     }
-                    analyze_route_file(
-                        route_file,
-                        temp_dir.path(),
-                    )
+                    analyze_route_file(route_file, temp_dir.path())
                 })
                 .collect()
         });

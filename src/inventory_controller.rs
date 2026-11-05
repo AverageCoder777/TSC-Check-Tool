@@ -209,9 +209,8 @@ impl InventoryController {
                 let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                 if full.is_file() {
                     let app_for_status = app.clone();
-                    let _ = crate::external_editor::open_and_sync_with_vscode(
-                        &full,
-                        move |result| {
+                    let _ =
+                        crate::external_editor::open_and_sync_with_vscode(&full, move |result| {
                             if let Ok(mut app) = app_for_status.lock() {
                                 app.status = match result {
                                     Ok(msg) => msg,
@@ -219,8 +218,7 @@ impl InventoryController {
                                 };
                                 crate::schedule_ui_sync();
                             }
-                        },
-                    );
+                        });
                 }
             });
         }

@@ -227,11 +227,8 @@ impl CheckerApp {
         self.inventory_scan = Some(rx);
         self.status = "Проверка ассетов маршрута на умляуты...".to_owned();
         thread::spawn(move || {
-            let result = crate::assets::scan_umlaut_assets(
-                &inventory,
-                &assets_path,
-                max_concurrent_serz,
-            );
+            let result =
+                crate::assets::scan_umlaut_assets(&inventory, &assets_path, max_concurrent_serz);
             let _ = tx.send(result);
             crate::schedule_ui_sync();
         });
@@ -264,11 +261,11 @@ impl CheckerApp {
         thread::spawn(move || {
             let missing_path = missing.path.clone();
             let replacement = if transliterate {
-                    match crate::assets::repair_umlaut_asset_chain(
-                        &route.path,
-                        &assets_path,
-                        &replacement_relative,
-                        &[],
+                match crate::assets::repair_umlaut_asset_chain(
+                    &route.path,
+                    &assets_path,
+                    &replacement_relative,
+                    &[],
                     &fixes,
                 ) {
                     Ok(report) => assets_path.join(report.new_asset_path),
@@ -285,7 +282,7 @@ impl CheckerApp {
             } else {
                 replacement
             };
-             let result = crate::assets::replace_missing_asset(
+            let result = crate::assets::replace_missing_asset(
                 &route.path,
                 &assets_path,
                 &missing.path,
@@ -458,9 +455,7 @@ impl CheckerApp {
         if self.scenarios_route.as_deref() == Some(route.id.as_str()) {
             return;
         }
-        self.scenarios = crate::scenario::read_route_scenarios(
-            &route.path,
-        );
+        self.scenarios = crate::scenario::read_route_scenarios(&route.path);
         self.scenarios_route = Some(route.id.clone());
         self.selected_scenario = None;
         self.selected_consist = None;
