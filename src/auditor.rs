@@ -1372,31 +1372,25 @@ pub fn is_vehicle_category_folder(name: &str) -> bool {
 fn is_dynamic_runtime_asset(path: &Path) -> bool {
     let lower_str = path.to_string_lossy().to_ascii_lowercase();
 
+    // 1. Dynamic numbering digits (queried at runtime by cNumberingBlueprint)
     let has_numbering = path.components().any(|c| {
         let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
         s == "primarynumbers" || s == "secondarynumbers" || s == "digits" || s == "numbers"
     });
 
+    // 2. Electronic in-cab timetable systems (EBuLa / Fahrplan / FIS)
     let has_timetable = path.components().any(|c| {
         let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
         s == "ebula" || s == "fahrplan" || s == "timetable" || s == "matrix" || s == "zzt" || s == "zst"
     });
 
-    let has_procedural_skins = path.components().any(|c| {
-        let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
-        s.ends_with("_maske")
-            || s == "passagiere"
-            || s == "passenger"
-            || s == "passengers"
-            || s == "passagier"
-    });
-
+    // 3. Scripted destination display textures
     let has_destination = lower_str.contains(r"\destination\")
         || lower_str.contains(r"/destination/")
         || lower_str.contains(r"\destinations\")
         || lower_str.contains(r"/destinations/");
 
-    has_numbering || has_timetable || has_procedural_skins || has_destination
+    has_numbering || has_timetable || has_destination
 }
 
 /// Resolves the component root folder containing the script by walking up the directory tree
@@ -1901,22 +1895,51 @@ pub fn audit_folders_with_progress(
         }
     }
 
+    // Reachability from live roots (Mark-and-Sweep)
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut queue: std::collections::VecDeque<PathBuf> = std::collections::VecDeque::new();
+
+    // Live roots: all .bin blueprints in the scanned package (and dependency scope).
+    for f in files.iter().chain(extra_files.iter()) {
+        let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        if ext == "bin" {
+            let nf = std::path::PathBuf::from(
+                crate::fs_utils::normalize_path(f)
+                    .to_string_lossy()
+                    .to_lowercase(),
+            );
+            if visited.insert(nf.clone()) {
+                queue.push_back(nf);
+            }
+        }
+    }
+
+    while let Some(cur) = queue.pop_front() {
+        if let Some(targets) = outgoing_map.get(&cur) {
+            for t in targets {
+                if visited.insert(t.clone()) {
+                    queue.push_back(t.clone());
+                }
+            }
+        }
+    }
+
     // Orphan detection
-    let mut orphans: Vec<PathBuf> = Vec::new();
     for f in files.iter().chain(texture_files.iter()) {
         let nf = std::path::PathBuf::from(
             crate::fs_utils::normalize_path(f)
                 .to_string_lossy()
                 .to_lowercase(),
         );
-        let product_root = product_root_for(f, assets_root);
-        let rel_product = f
-            .strip_prefix(&product_root)
-            .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| f.to_string_lossy().replace('\\', "/"));
-        let in_ap = ap_cache.lookup(&product_root, &rel_product);
-        let has_incoming = incoming_map.get(&nf).is_some_and(|s| !s.is_empty()) || in_ap;
-        if has_incoming {
+        let in_ap = {
+            let product_root = product_root_for(f, assets_root);
+            let rel_product = f
+                .strip_prefix(&product_root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| f.to_string_lossy().replace('\\', "/"));
+            ap_cache.lookup(&product_root, &rel_product)
+        };
+        if visited.contains(&nf) || in_ap {
             continue;
         }
         let ext = f
@@ -1940,7 +1963,6 @@ pub fn audit_folders_with_progress(
                 continue;
             }
 
-            orphans.push(nf);
             deduped.push(BrokenResourceRef {
                 parent_file: f.clone(),
                 all_parents: vec![f.clone()],
@@ -2074,8 +2096,16 @@ pub fn sort_items(items: &mut [BrokenResourceRef], col: usize, asc: bool) {
     items.sort_by(|a, b| {
         let cmp = match col {
             0 => (a.kind as usize).cmp(&(b.kind as usize)),
-            1 => a.expected_path.cmp(&b.expected_path),
-            _ => a.parent_file.cmp(&b.parent_file),
+            1 => a
+                .expected_path
+                .to_string_lossy()
+                .to_lowercase()
+                .cmp(&b.expected_path.to_string_lossy().to_lowercase()),
+            _ => a
+                .parent_file
+                .to_string_lossy()
+                .to_lowercase()
+                .cmp(&b.parent_file.to_string_lossy().to_lowercase()),
         };
         if asc { cmp } else { cmp.reverse() }
     });

@@ -368,7 +368,7 @@ impl Default for AuditorState {
         Self {
             all_items: Vec::new(),
             display_items: Vec::new(),
-            sort_col: 0,
+            sort_col: 2,
             sort_asc: true,
             dependency_graph: auditor::DependencyGraph::default(),
             full_asset_graph: auditor::FullAssetGraph::default(),
