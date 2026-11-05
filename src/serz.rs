@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -33,24 +34,34 @@ pub enum SerzNode {
     Nil,
 }
 
-#[derive(Clone, Debug)]
-struct SerzToken {
+impl SerzNode {
+    pub fn to_serz_bytes(&self) -> Result<Vec<u8>, String> {
+        encode_to_vec(self)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SerzTokenKey {
     opcode: u8,
     name: String,
     type_name: String,
 }
 
+// ============================================================================
+// SERZ READER
+// ============================================================================
+
 pub struct SerzReader<'a> {
     cursor: Cursor<&'a [u8]>,
     data_len: usize,
     string_pool: Vec<String>,
-    token_table: [Option<SerzToken>; 255],
+    token_table: [Option<SerzTokenKey>; 255],
     next_token_slot: usize,
 }
 
 impl<'a> SerzReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        const EMPTY_TOKEN: Option<SerzToken> = None;
+        const EMPTY_TOKEN: Option<SerzTokenKey> = None;
         Self {
             cursor: Cursor::new(data),
             data_len: data.len(),
@@ -203,7 +214,7 @@ impl<'a> SerzReader<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Result<SerzToken, String> {
+    fn next_token(&mut self) -> Result<SerzTokenKey, String> {
         let marker = self.read_u8()?;
         if marker == 0xFF {
             let opcode = self.read_u8()?;
@@ -218,7 +229,7 @@ impl<'a> SerzReader<'a> {
                 type_name = self.read_serz_string()?;
             }
 
-            let token = SerzToken { opcode, name, type_name };
+            let token = SerzTokenKey { opcode, name, type_name };
             let slot = self.next_token_slot;
             self.token_table[slot] = Some(token.clone());
             self.next_token_slot = (self.next_token_slot + 1) % 255;
@@ -243,7 +254,6 @@ impl<'a> SerzReader<'a> {
 
         let _version = self.read_u32()?;
 
-        // Читаем поток до тех пор, пока не встретим корневой элемент (0x50)
         let root_token = loop {
             let token = self.next_token()?;
             match token.opcode {
@@ -253,8 +263,7 @@ impl<'a> SerzReader<'a> {
                     let _val = self.read_u32()?;
                 }
                 other => {
-                    return Err(format!("Неожиданный опкод перед корневым элементом: 0x{:02X} на 0x{:X}", 
-                        other, self.cursor.position()));
+                    return Err(format!("Неожиданный опкод перед корнем: 0x{:02X}", other));
                 }
             }
         };
@@ -317,7 +326,6 @@ impl<'a> SerzReader<'a> {
                     children.push(SerzNode::Nil);
                 }
                 0x43 => {
-                    // Служебная директива: читаем 1 байт и u32, не прерывая разбор элемента
                     let _flag = self.read_u8()?;
                     let _val = self.read_u32()?;
                 }
@@ -424,6 +432,216 @@ impl<'a> SerzReader<'a> {
     }
 }
 
+// ============================================================================
+// SERZ WRITER
+// ============================================================================
+
+pub struct SerzWriter<W: Write> {
+    writer: W,
+    string_map: HashMap<String, u16>,
+    token_slots: [Option<SerzTokenKey>; 255],
+    token_map: HashMap<SerzTokenKey, u8>,
+    next_token_slot: usize,
+}
+
+pub fn encode_to_vec(root: &SerzNode) -> Result<Vec<u8>, String> {
+    let mut buffer = Vec::with_capacity(64 * 1024);
+    let mut writer = SerzWriter::new(&mut buffer);
+    writer.write_node(root, true)?;
+    Ok(buffer)
+}
+
+impl<W: Write> SerzWriter<W> {
+    pub fn new(writer: W) -> Self {
+        const EMPTY_TOKEN: Option<SerzTokenKey> = None;
+        Self {
+            writer,
+            string_map: HashMap::with_capacity(4096),
+            token_slots: [EMPTY_TOKEN; 255],
+            token_map: HashMap::with_capacity(256),
+            next_token_slot: 0,
+        }
+    }
+
+    fn write_string(&mut self, s: &str) -> Result<(), String> {
+        if let Some(&id) = self.string_map.get(s) {
+            self.writer.write_all(&id.to_le_bytes()).map_err(|e| e.to_string())?;
+        } else {
+            self.writer.write_all(&0xFFFFu16.to_le_bytes()).map_err(|e| e.to_string())?;
+            let char_count = s.chars().count() as u32;
+            self.writer.write_all(&char_count.to_le_bytes()).map_err(|e| e.to_string())?;
+            self.writer.write_all(s.as_bytes()).map_err(|e| e.to_string())?;
+
+            let new_id = self.string_map.len() as u16;
+            self.string_map.insert(s.to_string(), new_id);
+        }
+        Ok(())
+    }
+
+    fn write_token(&mut self, opcode: u8, name: &str, type_name: &str) -> Result<(), String> {
+        let key = SerzTokenKey {
+            opcode,
+            name: name.to_string(),
+            type_name: type_name.to_string(),
+        };
+
+        if let Some(&slot) = self.token_map.get(&key) {
+            self.writer.write_all(&[slot]).map_err(|e| e.to_string())?;
+        } else {
+            self.writer.write_all(&[0xFF, opcode]).map_err(|e| e.to_string())?;
+
+            if opcode != 0x42 && opcode != 0x4E && opcode != 0x43 {
+                self.write_string(name)?;
+            }
+            if opcode == 0x56 || opcode == 0x41 {
+                self.write_string(type_name)?;
+            }
+
+            let slot = self.next_token_slot as u8;
+            if let Some(old_key) = &self.token_slots[self.next_token_slot] {
+                self.token_map.remove(old_key);
+            }
+            self.token_slots[self.next_token_slot] = Some(key.clone());
+            self.token_map.insert(key, slot);
+            self.next_token_slot = (self.next_token_slot + 1) % 255;
+        }
+        Ok(())
+    }
+
+    fn decode_hex16(s: &str) -> Option<[u8; 8]> {
+        if s.len() != 16 { return None; }
+        let mut res = [0u8; 8];
+        for i in 0..8 {
+            let byte_str = &s[i * 2..i * 2 + 2];
+            res[i] = u8::from_str_radix(byte_str, 16).ok()?;
+        }
+        Some(res)
+    }
+
+    fn write_property_value(
+        &mut self,
+        type_name: &str,
+        value: &str,
+        alt_encoding: Option<&str>,
+    ) -> Result<(), String> {
+        match type_name {
+            "cDeltaString" => self.write_string(value)?,
+            "bool" => {
+                let b = if value == "1" || value == "true" { 1u8 } else { 0u8 };
+                self.writer.write_all(&[b]).map_err(|e| e.to_string())?;
+            }
+            "sUInt32" => {
+                let v = value.parse::<u32>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&v.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            "sInt32" => {
+                let v = value.parse::<i32>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&v.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            "sUInt16" => {
+                let v = value.parse::<u16>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&v.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            "sInt16" => {
+                let v = value.parse::<i16>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&v.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            "sUInt8" => {
+                let v = value.parse::<u8>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&[v]).map_err(|e| e.to_string())?;
+            }
+            "sInt8" => {
+                let v = value.parse::<i8>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&[v as u8]).map_err(|e| e.to_string())?;
+            }
+            "sFloat32" => {
+                if let Some(alt) = alt_encoding {
+                    if let Some(bytes) = Self::decode_hex16(alt) {
+                        let d = f64::from_le_bytes(bytes);
+                        let f = d as f32;
+                        self.writer.write_all(&f.to_le_bytes()).map_err(|e| e.to_string())?;
+                        return Ok(());
+                    }
+                }
+                let f = value.parse::<f32>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&f.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            "sFloat64" => {
+                if let Some(alt) = alt_encoding {
+                    if let Some(bytes) = Self::decode_hex16(alt) {
+                        self.writer.write_all(&bytes).map_err(|e| e.to_string())?;
+                        return Ok(());
+                    }
+                }
+                let d = value.parse::<f64>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&d.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            "sUInt64" => {
+                let v = value.parse::<u64>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&v.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            "sInt64" => {
+                let v = value.parse::<i64>().map_err(|e| format!("{}: {}", e, value))?;
+                self.writer.write_all(&v.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            _ => self.write_string(value)?,
+        }
+        Ok(())
+    }
+
+    pub fn write_node(&mut self, node: &SerzNode, is_root: bool) -> Result<(), String> {
+        if is_root {
+            self.writer.write_all(b"SERZ").map_err(|e| e.to_string())?;
+            self.writer.write_all(&0x00010000u32.to_le_bytes()).map_err(|e| e.to_string())?;
+        }
+
+        match node {
+            SerzNode::Element { name, id, version, children } => {
+                self.write_token(0x50, name, "")?;
+                self.writer.write_all(&id.to_le_bytes()).map_err(|e| e.to_string())?;
+                self.writer.write_all(&version.to_le_bytes()).map_err(|e| e.to_string())?;
+
+                for child in children {
+                    self.write_node(child, false)?;
+                }
+
+                self.write_token(0x70, name, "")?;
+            }
+            SerzNode::Property { name, type_name, value, alt_encoding } => {
+                self.write_token(0x56, name, type_name)?;
+                self.write_property_value(type_name, value, alt_encoding.as_deref())?;
+            }
+            SerzNode::Array { name, type_name, values } => {
+                self.write_token(0x41, name, type_name)?;
+                let count = values.len() as u8;
+                self.writer.write_all(&[count]).map_err(|e| e.to_string())?;
+                for val in values {
+                    self.write_property_value(type_name, val, None)?;
+                }
+            }
+            SerzNode::Reference { name, target_id } => {
+                self.write_token(0x52, name, "")?;
+                self.writer.write_all(&target_id.to_le_bytes()).map_err(|e| e.to_string())?;
+            }
+            SerzNode::Blob { data } => {
+                self.write_token(0x42, "", "")?;
+                let len = data.len() as u32;
+                self.writer.write_all(&len.to_le_bytes()).map_err(|e| e.to_string())?;
+                self.writer.write_all(data).map_err(|e| e.to_string())?;
+            }
+            SerzNode::Nil => {
+                self.write_token(0x4E, "", "")?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// ТЕСТЫ И СРАВНЕНИЯ
+// ============================================================================
+
 pub fn run_test(input_file: &str, serz_exe: &str) {
     let input_path = PathBuf::from(input_file);
     let serz_exe_path = PathBuf::from(serz_exe);
@@ -459,10 +677,11 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
     let mut reader = SerzReader::new(&raw_bytes);
     match reader.parse() {
         Ok(ast) => {
-            let elapsed = t1.elapsed();
-            println!("   [✓] УСПЕШНО РАСПАРСЕНО за: {:?}", elapsed);
+            let elapsed_read = t1.elapsed();
+            println!("   [✓] ДЕКОДИРОВАНО за: {:?}", elapsed_read);
             println!("   Строк в пуле: {}", reader.string_pool.len());
 
+            // 1. Проверка генерации XML
             let actual_xml = format!(
                 "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n{}",
                 SerzReader::to_xml(&ast, 0, true)
@@ -490,24 +709,43 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
             }
 
             if diffs == 0 && exp_lines.len() == act_lines.len() {
-                println!("\n[✓] 100% ПОЛНОЕ БАЙТОВОЕ СОВПАДЕНИЕ С ОФИЦИАЛЬНЫМ SERZ.EXE!");
+                println!("[✓] 100% ПОЛНОЕ СОВПАДЕНИЕ XML С ОФИЦИАЛЬНЫМ SERZ.EXE!");
             } else {
-                println!("\nВсего расхождений: {}", diffs);
+                println!("Всего расхождений: {}", diffs);
+            }
+
+            // 2. Тестирование SerzWriter (Round-trip)
+            println!("\n-> Тестирование SerzWriter (обратная упаковка в бинарник)...");
+            let t2 = Instant::now();
+            match encode_to_vec(&ast) {
+                Ok(reencoded_bin) => {
+                    let elapsed_write = t2.elapsed();
+                    println!("   [✓] СЕРИАЛИЗОВАНО за: {:?}", elapsed_write);
+                    println!("   Размер оригинала:    {} байт", raw_bytes.len());
+                    println!("   Размер ре-экспорта:  {} байт", reencoded_bin.len());
+
+                    let reencoded_path = input_path.with_extension("reencoded.bin");
+                    let _ = fs::write(&reencoded_path, &reencoded_bin);
+
+                    if raw_bytes == reencoded_bin {
+                        println!("\n[★] БИТ В БИТ! 100% ПОБАЙТОВЫЙ ПАРИТЕТ С ОРИГИНАЛЬНЫМ БИНАРНИКОМ!");
+                    } else {
+                        let mut re_reader = SerzReader::new(&reencoded_bin);
+                        match re_reader.parse() {
+                            Ok(re_ast) => {
+                                if ast == re_ast {
+                                    println!("\n[✓] ROUND-TRIP УСПЕШЕН: AST полностью идентично исходному файлу!");
+                                } else {
+                                    println!("\n[!] AST после повторного чтения отличается!");
+                                }
+                            }
+                            Err(e) => eprintln!("\n[!] Ошибка чтения собственного ре-экспорта: {}", e),
+                        }
+                    }
+                }
+                Err(err) => eprintln!("\n[!] Ошибка сериализации: {}", err),
             }
         }
-        Err(err) => {
-            eprintln!("\n[!] Ошибка: {}", err);
-
-            println!("\n-> Первые 32 байта входного файла:");
-            let slice = &raw_bytes[..32.min(raw_bytes.len())];
-            let hex = slice.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-            let ascii: String = slice.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }).collect();
-            println!("   0000 | {:47} | {}", hex, ascii);
-
-            println!("\n-> Первые 5 строк из expected.xml:");
-            for (idx, line) in expected_xml.lines().take(5).enumerate() {
-                println!("   {:2} | {}", idx + 1, line);
-            }
-        }
+        Err(err) => eprintln!("\n[!] Ошибка чтения: {}", err),
     }
 }
