@@ -189,7 +189,6 @@ impl SerzNode {
 
         let parser = EventReader::new(xml.as_bytes());
         let mut iter = parser.into_iter();
-        // skip to first start element
         let root = loop {
             match iter.next() {
                 None => return Err("no root element".to_string()),
@@ -237,39 +236,49 @@ impl<'a> SerzReader<'a> {
         }
     }
 
+    fn read_exact_buf(&mut self, buf: &mut [u8]) -> Result<(), String> {
+        let pos = self.cursor.position();
+        self.cursor.read_exact(buf).map_err(|e| {
+            format!(
+                "Ошибка чтения на смещении 0x{:X} (байт {}): {} (требовалось: {} байт, всего в файле: {})",
+                pos, pos, e, buf.len(), self.data_len
+            )
+        })
+    }
+
     fn read_u8(&mut self) -> Result<u8, String> {
         let mut b = [0u8; 1];
-        self.cursor.read_exact(&mut b).map_err(|e| e.to_string())?;
+        self.read_exact_buf(&mut b)?;
         Ok(b[0])
     }
 
     fn read_u16(&mut self) -> Result<u16, String> {
         let mut b = [0u8; 2];
-        self.cursor.read_exact(&mut b).map_err(|e| e.to_string())?;
+        self.read_exact_buf(&mut b)?;
         Ok(u16::from_le_bytes(b))
     }
 
     fn read_u32(&mut self) -> Result<u32, String> {
         let mut b = [0u8; 4];
-        self.cursor.read_exact(&mut b).map_err(|e| e.to_string())?;
+        self.read_exact_buf(&mut b)?;
         Ok(u32::from_le_bytes(b))
     }
 
     fn read_u64(&mut self) -> Result<u64, String> {
         let mut b = [0u8; 8];
-        self.cursor.read_exact(&mut b).map_err(|e| e.to_string())?;
+        self.read_exact_buf(&mut b)?;
         Ok(u64::from_le_bytes(b))
     }
 
     fn read_f32(&mut self) -> Result<f32, String> {
         let mut b = [0u8; 4];
-        self.cursor.read_exact(&mut b).map_err(|e| e.to_string())?;
+        self.read_exact_buf(&mut b)?;
         Ok(f32::from_le_bytes(b))
     }
 
     fn read_f64(&mut self) -> Result<f64, String> {
         let mut b = [0u8; 8];
-        self.cursor.read_exact(&mut b).map_err(|e| e.to_string())?;
+        self.read_exact_buf(&mut b)?;
         Ok(f64::from_le_bytes(b))
     }
 
@@ -455,9 +464,7 @@ impl<'a> SerzReader<'a> {
 
     pub fn parse(&mut self) -> Result<SerzNode, String> {
         let mut magic = [0u8; 4];
-        self.cursor
-            .read_exact(&mut magic)
-            .map_err(|e| e.to_string())?;
+        self.read_exact_buf(&mut magic)?;
         if &magic != b"SERZ" {
             return Err(format!("Неверная сигнатура: {:?}", magic));
         }
@@ -530,9 +537,7 @@ impl<'a> SerzReader<'a> {
                 0x42 => {
                     let len = self.read_u32()? as usize;
                     let mut data = vec![0u8; len];
-                    self.cursor
-                        .read_exact(&mut data)
-                        .map_err(|e| e.to_string())?;
+                    self.read_exact_buf(&mut data)?;
                     children.push(SerzNode::Blob { data });
                 }
                 0x4E => {
@@ -675,7 +680,7 @@ impl<'a> SerzReader<'a> {
                 out.push_str("</d:blob>\n");
                 out
             }
-            SerzNode::Directive { .. } => String::new(), // Директивы не выводятся в XML
+            SerzNode::Directive { .. } => String::new(),
         }
     }
 }
@@ -1116,4 +1121,4 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
         }
         Err(err) => eprintln!("\n[!] Ошибка чтения: {}", err),
     }
-}
+} 
