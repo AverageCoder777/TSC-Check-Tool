@@ -45,8 +45,162 @@ pub enum SerzNode {
 }
 
 impl SerzNode {
-    pub fn to_serz_bytes(&self, preamble: Option<&SerzPreamble>) -> Result<Vec<u8>, String> {
-        encode_to_vec(self, preamble)
+    pub fn from_xml_str(xml: &str) -> Result<(Self, Option<SerzPreamble>), String> {
+        use xml::reader::{EventReader, XmlEvent};
+
+        fn hex_decode(s: &str) -> Vec<u8> {
+            let mut out = Vec::with_capacity(s.len() / 2);
+            let mut hi: Option<u8> = None;
+            for &b in s.as_bytes() {
+                let val = match b {
+                    b'0'..=b'9' => b - b'0',
+                    b'a'..=b'f' => b - b'a' + 10,
+                    b'A'..=b'F' => b - b'A' + 10,
+                    _ => continue,
+                };
+                if let Some(h) = hi.take() {
+                    out.push((h << 4) | val);
+                } else {
+                    hi = Some(val);
+                }
+            }
+            out
+        }
+
+        fn parse_next<I>(iter: &mut I) -> Result<Option<SerzNode>, String>
+        where
+            I: Iterator<Item = Result<XmlEvent, xml::reader::Error>>,
+        {
+            loop {
+                match iter.next() {
+                    None => return Ok(None),
+                    Some(Err(e)) => return Err(e.to_string()),
+                    Some(Ok(XmlEvent::StartElement { name, attributes, .. })) => {
+                        return parse_element(iter, name.local_name.clone(), attributes)
+                            .map(Some);
+                    }
+                    Some(Ok(XmlEvent::EndElement { .. })) => return Ok(None),
+                    Some(Ok(_)) => continue,
+                }
+            }
+        }
+
+        fn parse_element<I>(
+            iter: &mut I,
+            name: String,
+            attrs: Vec<xml::attribute::OwnedAttribute>,
+        ) -> Result<SerzNode, String>
+        where
+            I: Iterator<Item = Result<XmlEvent, xml::reader::Error>>,
+        {
+            let mut id = 0u32;
+            let mut type_name: Option<String> = None;
+            let mut alt_encoding: Option<String> = None;
+            let mut num_elements: Option<usize> = None;
+            let mut element_type: Option<String> = None;
+
+            for attr in attrs {
+                match attr.name.local_name.as_str() {
+                    "id" => id = attr.value.parse().unwrap_or(0),
+                    "type" => type_name = Some(attr.value),
+                    "alt_encoding" => alt_encoding = Some(attr.value),
+                    "numElements" => num_elements = attr.value.parse().ok(),
+                    "elementType" => element_type = Some(attr.value),
+                    _ => {}
+                }
+            }
+
+            // Blob
+            if name == "blob" {
+                let mut text = String::new();
+                for event in iter.by_ref() {
+                    match event.map_err(|e| e.to_string())? {
+                        XmlEvent::Characters(s) | XmlEvent::Whitespace(s) => text.push_str(&s),
+                        XmlEvent::EndElement { .. } => break,
+                        _ => {}
+                    }
+                }
+                return Ok(SerzNode::Blob { data: hex_decode(&text) });
+            }
+
+            // Nil
+            if name == "nil" {
+                for event in iter.by_ref() {
+                    if let XmlEvent::EndElement { .. } = event.map_err(|e| e.to_string())? {
+                        break;
+                    }
+                }
+                return Ok(SerzNode::Nil);
+            }
+
+            // Array
+            if num_elements.is_some() {
+                let mut text = String::new();
+                for event in iter.by_ref() {
+                    match event.map_err(|e| e.to_string())? {
+                        XmlEvent::Characters(s) | XmlEvent::Whitespace(s) => text.push_str(&s),
+                        XmlEvent::EndElement { .. } => break,
+                        _ => {}
+                    }
+                }
+                let et = element_type.unwrap_or_default();
+                let values: Vec<String> = text.split_whitespace().map(|s| s.to_string()).collect();
+                return Ok(SerzNode::Array {
+                    name,
+                    type_name: et,
+                    values,
+                });
+            }
+
+            // Property / Reference
+            if let Some(t) = type_name {
+                let mut text = String::new();
+                for event in iter.by_ref() {
+                    match event.map_err(|e| e.to_string())? {
+                        XmlEvent::Characters(s) | XmlEvent::Whitespace(s) => text.push_str(&s),
+                        XmlEvent::EndElement { .. } => break,
+                        _ => {}
+                    }
+                }
+                if t == "ref" {
+                    let target_id = text.trim().parse().unwrap_or(0);
+                    return Ok(SerzNode::Reference { name, target_id });
+                }
+                return Ok(SerzNode::Property {
+                    name,
+                    type_name: t,
+                    value: text.trim().to_string(),
+                    alt_encoding,
+                });
+            }
+
+            // Element
+            let mut children = Vec::new();
+            while let Some(child) = parse_next(iter)? {
+                children.push(child);
+            }
+            Ok(SerzNode::Element {
+                name,
+                id,
+                version: 1,
+                children,
+            })
+        }
+
+        let parser = EventReader::new(xml.as_bytes());
+        let mut iter = parser.into_iter();
+        // skip to first start element
+        let root = loop {
+            match iter.next() {
+                None => return Err("no root element".to_string()),
+                Some(Err(e)) => return Err(e.to_string()),
+                Some(Ok(XmlEvent::StartElement { name, attributes, .. })) => {
+                    break parse_element(&mut iter, name.local_name.clone(), attributes)?;
+                }
+                Some(Ok(_)) => continue,
+            }
+        };
+        Ok((root, None))
     }
 }
 
@@ -196,7 +350,7 @@ impl<'a> SerzReader<'a> {
         let abs_val = val.abs();
         let exp = abs_val.log10().floor() as i32;
 
-        let text = if exp < -4 || exp >= 6 {
+        let text = if !(-4..6).contains(&exp) {
             let s = format!("{:.5e}", val);
             if let Some((mantissa, exp_part)) = s.split_once('e') {
                 let m_trimmed = mantissa.trim_end_matches('0').trim_end_matches('.');
@@ -687,15 +841,15 @@ impl<W: Write> SerzWriter<W> {
                     .map_err(|e| e.to_string())?;
             }
             "sFloat32" => {
-                if let Some(alt) = alt_encoding {
-                    if let Some(bytes) = Self::decode_hex16(alt) {
-                        let d = f64::from_le_bytes(bytes);
-                        let f = d as f32;
-                        self.writer
-                            .write_all(&f.to_le_bytes())
-                            .map_err(|e| e.to_string())?;
-                        return Ok(());
-                    }
+                if let Some(alt) = alt_encoding
+                    && let Some(bytes) = Self::decode_hex16(alt)
+                {
+                    let d = f64::from_le_bytes(bytes);
+                    let f = d as f32;
+                    self.writer
+                        .write_all(&f.to_le_bytes())
+                        .map_err(|e| e.to_string())?;
+                    return Ok(());
                 }
                 let f = value
                     .parse::<f32>()
@@ -705,11 +859,11 @@ impl<W: Write> SerzWriter<W> {
                     .map_err(|e| e.to_string())?;
             }
             "sFloat64" => {
-                if let Some(alt) = alt_encoding {
-                    if let Some(bytes) = Self::decode_hex16(alt) {
-                        self.writer.write_all(&bytes).map_err(|e| e.to_string())?;
-                        return Ok(());
-                    }
+                if let Some(alt) = alt_encoding
+                    && let Some(bytes) = Self::decode_hex16(alt)
+                {
+                    self.writer.write_all(&bytes).map_err(|e| e.to_string())?;
+                    return Ok(());
                 }
                 let d = value
                     .parse::<f64>()
@@ -853,10 +1007,10 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
         .arg(format!("/xml:{}", temp_xml.display()))
         .status();
 
-    if let Ok(s) = status {
-        if s.success() {
-            println!("-> serz.exe отработал за: {:?}", t0.elapsed());
-        }
+    if let Ok(s) = status
+        && s.success()
+    {
+        println!("-> serz.exe отработал за: {:?}", t0.elapsed());
     }
 
     let expected_xml = fs::read_to_string(&temp_xml).unwrap_or_default();

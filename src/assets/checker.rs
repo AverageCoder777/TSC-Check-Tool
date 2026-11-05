@@ -12,9 +12,7 @@ pub struct FileAnalysis {
 
 pub(crate) fn analyze_route_file(
     route_file: &crate::domain::RouteFile,
-    index: usize,
     temp_dir: &Path,
-    serz_tool: &SerzTool,
 ) -> FileAnalysis {
     let is_archive = matches!(route_file, crate::domain::RouteFile::Archive { .. });
     // Запись архива читается через временный файл: конвертеру Serz нужен
@@ -63,27 +61,9 @@ pub(crate) fn analyze_route_file(
                 error: None,
             };
         }
-        let xml_path = temp_dir.join(format!("{index:08}.xml"));
-        let conversion_result = serz_tool.bin_to_xml(&file_path, &xml_path);
-        if let Err(error) = conversion_result {
-            let _ = fs::remove_file(&xml_path);
-            if is_archive {
-                let _ = fs::remove_file(&file_path);
-            }
-            return FileAnalysis {
-                from_cache: false,
-                file: route_file.clone(),
-                uses: Vec::new(),
-                error: Some(format!("{}: {error}", file_path.display())),
-            };
-        }
-        match fs::read(&xml_path) {
-            Ok(data) => {
-                let _ = fs::remove_file(&xml_path);
-                data
-            }
+        let xml_bytes = match std::fs::read(&file_path) {
+            Ok(data) => data,
             Err(error) => {
-                let _ = fs::remove_file(&xml_path);
                 if is_archive {
                     let _ = fs::remove_file(&file_path);
                 }
@@ -92,12 +72,28 @@ pub(crate) fn analyze_route_file(
                     file: route_file.clone(),
                     uses: Vec::new(),
                     error: Some(format!(
-                        "{}: не удалось прочитать результат Serz: {error}",
+                        "{}: не удалось прочитать BIN: {error}",
                         file_path.display()
                     )),
                 };
             }
-        }
+        };
+        let mut reader = crate::serz::SerzReader::new(&xml_bytes);
+        let node = match reader.parse() {
+            Ok(node) => node,
+            Err(error) => {
+                if is_archive {
+                    let _ = fs::remove_file(&file_path);
+                }
+                return FileAnalysis {
+                    from_cache: false,
+                    file: route_file.clone(),
+                    uses: Vec::new(),
+                    error: Some(format!("{}: {error}", file_path.display())),
+                };
+            }
+        };
+        crate::serz::SerzReader::to_xml(&node, 0, true).into_bytes()
     } else {
         match fs::read(&file_path) {
             Ok(data) => data,
@@ -224,7 +220,6 @@ pub fn may_contain_asset_reference(file_path: &Path) -> bool {
 pub(crate) fn check_route<F>(
     route_path: &Path,
     assets_path: &Path,
-    serz_path: &Path,
     ignore_scenarios: bool,
     max_concurrent_serz: usize,
     report_progress: F,
@@ -232,13 +227,6 @@ pub(crate) fn check_route<F>(
 where
     F: Fn(&str) + Sync,
 {
-    if !serz_path.is_file() {
-        return Err(format!(
-            "Не найден serz.exe: {}. Выберите корневую папку RailWorks.",
-            serz_path.display()
-        ));
-    }
-
     report_progress("Сканирование файлов маршрута...");
     let collected_route_files = collect_route_files(route_path, ignore_scenarios)?;
 
@@ -279,7 +267,6 @@ where
 
     let temp_dir = tempdir()
         .map_err(|error| format!("Не удалось создать временную папку для Serz: {error}"))?;
-    let serz_tool = SerzTool::new(serz_path);
 
     // Архивы маршрута (.ap) не распаковываются целиком: записи materialize()
     // читаются из zip по требованию только для анализируемых .bin/.xml файлов.
@@ -317,7 +304,7 @@ where
             chunk
                 .par_iter()
                 .enumerate()
-                .map(|(offset, route_file)| {
+                .map(|(_, route_file)| {
                     let name = route_file.route_name(route_path);
                     let stamp = route_file.stamp();
                     if let (Some(name), Some(stamp)) = (&name, stamp)
@@ -332,9 +319,7 @@ where
                     }
                     analyze_route_file(
                         route_file,
-                        start_index + offset,
                         temp_dir.path(),
-                        &serz_tool,
                     )
                 })
                 .collect()
@@ -454,7 +439,7 @@ where
         })
         .collect();
     let (umlaut_assets, umlaut_errors) =
-        scan_umlaut_assets(&inventory_seed, assets_path, serz_path, max_concurrent_serz)?;
+        scan_umlaut_assets(&inventory_seed, assets_path, max_concurrent_serz)?;
     conversion_errors.extend(umlaut_errors);
     conversion_errors.sort();
 

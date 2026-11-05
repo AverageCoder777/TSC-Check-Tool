@@ -12,7 +12,6 @@ pub(crate) struct UmlautChainEvidence {
 
 pub fn asset_chain_umlaut_evidence(
     assets_path: &Path,
-    serz_path: &Path,
     root_asset: &Path,
 ) -> Result<UmlautChainEvidence, String> {
     let relative = root_asset
@@ -58,7 +57,7 @@ pub fn asset_chain_umlaut_evidence(
         if !extension.eq_ignore_ascii_case("bin") && !extension.eq_ignore_ascii_case("GeoPcDx") {
             continue;
         }
-        let xml = read_serz_xml(serz_path, &canonical).map_err(|e| e.to_string())?;
+        let xml = read_serz_xml(&canonical).map_err(|e| e.to_string())?;
         if crate::translit::has_umlauts_in_xml(&xml) {
             evidence.push(format!("Внутри файла: {}", canonical.display()));
         }
@@ -97,7 +96,6 @@ pub fn asset_chain_umlaut_evidence(
 pub(crate) fn inspect_umlaut_asset(
     relative_asset: &str,
     assets_path: &Path,
-    serz_path: &Path,
 ) -> (Option<crate::domain::UmlautAsset>, Option<String>) {
     let mut evidence = Vec::new();
     let mut unsupported = crate::translit::unsupported_characters(relative_asset);
@@ -131,7 +129,7 @@ pub(crate) fn inspect_umlaut_asset(
         path.extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"))
     }) {
-        match asset_chain_umlaut_evidence(assets_path, serz_path, &asset_path) {
+        match asset_chain_umlaut_evidence(assets_path, &asset_path) {
             Ok(found) => {
                 evidence.extend(found.evidence);
                 unsupported.extend(found.unsupported);
@@ -155,7 +153,6 @@ pub(crate) fn inspect_umlaut_asset(
 pub(crate) fn scan_umlaut_assets(
     inventory: &[crate::domain::ReferencedAsset],
     assets_path: &Path,
-    serz_path: &Path,
     max_concurrent_serz: usize,
 ) -> Result<(Vec<crate::domain::UmlautAsset>, Vec<String>), String> {
     let worker_count = std::thread::available_parallelism()
@@ -170,7 +167,7 @@ pub(crate) fn scan_umlaut_assets(
     let scan: Vec<_> = pool.install(|| {
         inventory
             .par_iter()
-            .map(|asset| inspect_umlaut_asset(&asset.path, assets_path, serz_path))
+            .map(|asset| inspect_umlaut_asset(&asset.path, assets_path))
             .collect()
     });
     let mut umlaut_assets = Vec::new();
@@ -303,14 +300,10 @@ pub fn translated_reference(
 pub(crate) fn repair_umlaut_asset_chain(
     route_path: &Path,
     assets_path: &Path,
-    serz_path: &Path,
     asset_relative_path: &str,
     uses: &[crate::domain::AssetUse],
     fixes: &crate::translit::CharacterFixes,
 ) -> Result<crate::domain::UmlautRepairReport, String> {
-    if !serz_path.is_file() {
-        return Err(format!("Не найден Serz: {}", serz_path.display()));
-    }
     let assets_root = assets_path
         .canonicalize()
         .map_err(|error| format!("Не удалось проверить папку Assets: {error}"))?;
@@ -345,7 +338,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         return Err("Путь ассета должен иметь структуру Provider/Product/файл.".to_owned());
     }
     if new_relative_asset == asset_relative_path {
-        let found = asset_chain_umlaut_evidence(&assets_root, serz_path, &canonical_asset)?;
+        let found = asset_chain_umlaut_evidence(&assets_root, &canonical_asset)?;
         if found.evidence.is_empty() && found.unsupported.is_empty() {
             return Err("В файлах ассета не обнаружены поддерживаемые умляуты.".to_owned());
         }
@@ -436,7 +429,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         if !extension.eq_ignore_ascii_case("bin") && !extension.eq_ignore_ascii_case("GeoPcDx") {
             continue;
         }
-        let xml = read_serz_xml(serz_path, &canonical).map_err(|e| e.to_string())?;
+        let xml = read_serz_xml(&canonical).map_err(|e| e.to_string())?;
         let target_file = transliterated_asset_path(&assets_root, &canonical, fixes)?;
         let mut edits = Vec::new();
         let mut protected_references: Vec<std::ops::Range<usize>> = Vec::new();
@@ -524,7 +517,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                     canonical.display()
                 )
             })?;
-            let staged = stage_serz_xml(&canonical, &target_file, &rewritten, serz_path)?;
+            let staged = stage_serz_xml(&canonical, &target_file, &rewritten)?;
             staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
         }
     }
@@ -555,7 +548,7 @@ pub(crate) fn repair_umlaut_asset_chain(
             if !canonical.starts_with(&scope_root) || !visited.insert(canonical.clone()) {
                 continue;
             }
-            let xml = read_serz_xml(serz_path, &canonical).map_err(|e| e.to_string())?;
+            let xml = read_serz_xml(&canonical).map_err(|e| e.to_string())?;
             let mut protected_references: Vec<std::ops::Range<usize>> = Vec::new();
             for (reference, range) in referenced_geometry_paths(&xml) {
                 let reference_text = reference.to_text();
@@ -617,7 +610,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                         canonical.display()
                     )
                 })?;
-                let staged = stage_serz_xml(&canonical, &target, &rewritten, serz_path)?;
+                let staged = stage_serz_xml(&canonical, &target, &rewritten)?;
                 staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
             }
         }
@@ -687,9 +680,12 @@ pub(crate) fn repair_umlaut_asset_chain(
         let file_path = source.materialize(temp.path())?;
         let xml_path = temp.path().join("route.xml");
         if is_binary {
-            SerzTool::new(serz_path)
-                .bin_to_xml(&file_path, &xml_path)
-                .map_err(|e| e.to_string())?;
+            let bytes = std::fs::read(&file_path).map_err(|e| e.to_string())?;
+            let mut reader = crate::serz::SerzReader::new(&bytes);
+            let node = reader.parse().map_err(|e| e.to_string())?;
+            let xml_text = crate::serz::SerzReader::to_xml(&node, 0, true);
+            fs::write(&xml_path, xml_text)
+                .map_err(|error| format!("Не удалось подготовить {}: {error}", source.display()))?;
         } else {
             fs::copy(&file_path, &xml_path)
                 .map_err(|error| format!("Не удалось подготовить {}: {error}", source.display()))?;
@@ -726,9 +722,10 @@ pub(crate) fn repair_umlaut_asset_chain(
         let staged_path = if is_binary {
             let mut staged = temp.path().join("route-new");
             staged.set_extension(source.extension().unwrap());
-            SerzTool::new(serz_path)
-                .xml_to_bin(&xml_path, &staged)
-                .map_err(|e| e.to_string())?;
+            let xml = fs::read_to_string(&xml_path).map_err(|e| e.to_string())?;
+            let (node, preamble) = crate::serz::SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
+            let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
+            fs::write(&staged, bytes).map_err(|e| e.to_string())?;
             staged
         } else {
             xml_path

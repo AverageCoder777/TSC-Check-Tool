@@ -1,7 +1,6 @@
 use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -209,17 +208,9 @@ impl InventoryController {
 
                 let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                 if full.is_file() {
-                    let serz_path = crate::assets::find_serz_path(&full)
-                        .or_else(|| {
-                            let p = crate::assets::preferred_serz_path(&rw_path);
-                            if p.is_file() { Some(p) } else { None }
-                        })
-                        .unwrap_or_else(|| PathBuf::from("serz64.exe"));
-
                     let app_for_status = app.clone();
                     let _ = crate::external_editor::open_and_sync_with_vscode(
                         &full,
-                        &serz_path,
                         move |result| {
                             if let Ok(mut app) = app_for_status.lock() {
                                 app.status = match result {

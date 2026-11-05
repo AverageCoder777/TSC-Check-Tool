@@ -161,8 +161,6 @@ impl AuditorController {
                     .map(|a| (a.clean_rw_path(), a.serz_process_limit.max(1)))
                     .unwrap_or_else(|_| (PathBuf::new(), 8));
 
-                let serz_path = crate::assets::preferred_serz_path(&rw_path);
-
                 let assets_root = paths[0]
                     .ancestors()
                     .find(|p| {
@@ -228,7 +226,6 @@ impl AuditorController {
                         crate::auditor::audit_folders_with_progress(
                             &paths,
                             &assets_root,
-                            &serz_path,
                             max_threads,
                             &ap_cache,
                             Some(progress_cb),
@@ -711,19 +708,7 @@ impl AuditorController {
                     return;
                 };
 
-                let rw_path = crate::app_state()
-                    .lock()
-                    .map(|a| a.clean_rw_path())
-                    .unwrap_or_default();
-
-                let serz_path = crate::assets::find_serz_path(&asset_path)
-                    .or_else(|| {
-                        let p = crate::assets::preferred_serz_path(&rw_path);
-                        if p.is_file() { Some(p) } else { None }
-                    })
-                    .unwrap_or_else(|| PathBuf::from("serz.exe"));
-
-                let thread_handle = handle.clone();
+                 let thread_handle = handle.clone();
                 std::thread::spawn(move || {
                     let cb_handle = thread_handle.clone();
                     let callback = move |res: Result<String, String>| {
@@ -741,7 +726,6 @@ impl AuditorController {
 
                     if let Err(e) = crate::external_editor::open_and_sync_with_vscode(
                         &asset_path,
-                        &serz_path,
                         callback,
                     ) {
                         let _ = slint::invoke_from_event_loop(move || {

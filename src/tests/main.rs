@@ -1,16 +1,13 @@
 use super::{
     ScenarioClueCollection, check_route, decode_xml_text, extract_asset_references,
-    extract_scenario_clues, fallback_serz_path, inspect_route_folder,
-    is_skipped_route_scan_directory, parse_route_name, preferred_serz_path, scan_routes,
-    scan_routes_with_ignored, validate_serz_process,
+    extract_scenario_clues, inspect_route_folder,
+    is_skipped_route_scan_directory, parse_route_name, scan_routes,
+    scan_routes_with_ignored,
 };
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-
-#[cfg(windows)]
-use std::path::Path;
 
 #[test]
 fn only_skips_scenarios_when_requested_during_asset_check() {
@@ -65,68 +62,7 @@ fn route_check_only_collects_files_from_allowed_directories() {
     );
 }
 
-#[test]
-fn uses_serz32_as_fallback_for_serz64() {
-    let temp = tempfile::tempdir().unwrap();
-    let serz64 = temp.path().join("serz64.exe");
-    let serz = temp.path().join("serz.exe");
-    fs::write(&serz64, []).unwrap();
-    assert_eq!(fallback_serz_path(&serz64), None);
-    fs::write(&serz, []).unwrap();
-    assert_eq!(fallback_serz_path(&serz64), Some(serz));
-    assert_eq!(
-        fallback_serz_path(temp.path().join("serz.exe").as_path()),
-        None
-    );
-}
 
-#[test]
-fn accepts_serz_progress_output_when_process_succeeds() {
-    fn serz_exit_status(code: i32) -> std::process::ExitStatus {
-        std::process::Command::new("cmd")
-            .args(["/C", &format!("exit {code}")])
-            .status()
-            .unwrap()
-    }
-    assert!(
-        validate_serz_process(
-            serz_exit_status(0),
-            "Converting input.bin to output.xml",
-            ""
-        )
-        .is_ok()
-    );
-    assert!(validate_serz_process(serz_exit_status(0), "", "").is_ok());
-    assert!(
-        validate_serz_process(serz_exit_status(1), "Could not open input file", "")
-            .unwrap_err()
-            .to_string()
-            .contains("Could not open input file")
-    );
-    assert!(
-        validate_serz_process(serz_exit_status(0), "Converting input.bin", "warning")
-            .unwrap_err()
-            .to_string()
-            .contains("warning")
-    );
-}
-
-#[cfg(windows)]
-#[test]
-fn removes_extended_prefix_from_legacy_windows_tool_paths() {
-    assert_eq!(
-        super::legacy_windows_path(Path::new(r"\\?\X:\RailWorks\file.bin")),
-        PathBuf::from(r"X:\RailWorks\file.bin")
-    );
-    assert_eq!(
-        super::legacy_windows_path(Path::new(r"\\?\UNC\server\share\file.bin")),
-        PathBuf::from(r"\\server\share\file.bin")
-    );
-    assert_eq!(
-        super::legacy_windows_path(Path::new(r"X:\RailWorks\file.bin")),
-        PathBuf::from(r"X:\RailWorks\file.bin")
-    );
-}
 
 #[test]
 fn parses_english_route_name_and_xml_entities() {
@@ -180,17 +116,6 @@ fn ignores_blueprint_paths_that_escape_the_assets_directory() {
     assert!(extract_asset_references(xml).is_empty());
 }
 
-#[test]
-fn prefers_serz64_and_falls_back_to_serz() {
-    let temp = tempfile::tempdir().unwrap();
-    let serz = temp.path().join("serz.exe");
-    let serz64 = temp.path().join("serz64.exe");
-    fs::write(&serz, []).unwrap();
-    assert_eq!(preferred_serz_path(temp.path()), serz);
-
-    fs::write(&serz64, []).unwrap();
-    assert_eq!(preferred_serz_path(temp.path()), serz64);
-}
 
 #[test]
 fn separates_complete_routes_from_incomplete_folder_reports() {
@@ -566,13 +491,8 @@ fn repro_route_check_hang() {
     );
     let rw = PathBuf::from(r"X:\SteamLibrary\steamapps\common\RailWorks");
     let assets = rw.join("Assets");
-    let mut serz = rw.join("serz64.exe");
-    if !serz.is_file() {
-        serz = rw.join("serz.exe");
-    }
-    println!("using serz: {} exists={}", serz.display(), serz.is_file());
     let start = std::time::Instant::now();
-    let res = check_route(&route, &assets, &serz, true, 8, |msg| {
+    let res = check_route(&route, &assets, true, 8, |msg| {
         println!("[{:.1}s] {}", start.elapsed().as_secs_f32(), msg);
     });
     println!(

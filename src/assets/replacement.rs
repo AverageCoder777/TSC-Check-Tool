@@ -23,7 +23,6 @@ pub fn asset_key(path: &str) -> String {
 pub(crate) fn replace_missing_asset(
     route_path: &Path,
     assets_path: &Path,
-    serz_path: &Path,
     old_asset: &str,
     replacement_path: &Path,
     uses: &[crate::domain::AssetUse],
@@ -67,15 +66,12 @@ pub(crate) fn replace_missing_asset(
         .to_string_lossy()
         .replace('/', "\\");
     let new_asset = replacement_relative.to_string_lossy().replace('\\', "/");
-    if !serz_path.is_file() {
-        return Err(format!("Не найден Serz: {}", serz_path.display()));
-    }
     if uses.is_empty() {
         return Err("Для отсутствующего ассета не найдены места использования.".to_owned());
     }
 
     let asset_type = classify_route_asset_type(old_asset, uses);
-    let replacement_xml = read_serz_xml(serz_path, &replacement_path)
+    let replacement_xml = read_serz_xml(&replacement_path)
         .ok()
         .or_else(|| std::fs::read_to_string(&replacement_path).ok());
     let root_tag = replacement_xml
@@ -217,10 +213,17 @@ pub(crate) fn replace_missing_asset(
         let file_path = source_file.materialize(temp.path())?;
         let xml_path = temp.path().join("source.xml");
         if is_binary {
-            let conversion = SerzTool::new(serz_path).bin_to_xml(&file_path, &xml_path);
-            conversion.map_err(|error| {
+            let bytes = std::fs::read(&file_path).map_err(|error| {
+                format!("Не удалось прочитать {} перед заменой: {error}", source_file.display())
+            })?;
+            let mut reader = crate::serz::SerzReader::new(&bytes);
+            let node = reader.parse().map_err(|error| {
+                format!("Не удалось прочитать {} перед заменой: {error}", source_file.display())
+            })?;
+            let xml_text = crate::serz::SerzReader::to_xml(&node, 0, true);
+            fs::write(&xml_path, xml_text).map_err(|error| {
                 format!(
-                    "Не удалось прочитать {} перед заменой: {error}",
+                    "Не удалось подготовить {} перед заменой: {error}",
                     source_file.display()
                 )
             })?;
@@ -282,10 +285,27 @@ pub(crate) fn replace_missing_asset(
             )
         })?;
 
-        let converted_path = if is_binary {
+        let converted_path =         if is_binary {
             let converted_path = temp.path().join("replacement.bin");
-            let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &converted_path);
-            conversion.map_err(|error| {
+            let xml = fs::read_to_string(&xml_path).map_err(|error| {
+                format!(
+                    "Не удалось подготовить изменённый BIN {}: {error}",
+                    source_file.display()
+                )
+            })?;
+            let (node, preamble) = crate::serz::SerzNode::from_xml_str(&xml).map_err(|error| {
+                format!(
+                    "Не удалось подготовить изменённый BIN {}: {error}",
+                    source_file.display()
+                )
+            })?;
+            let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|error| {
+                format!(
+                    "Не удалось подготовить изменённый BIN {}: {error}",
+                    source_file.display()
+                )
+            })?;
+            fs::write(&converted_path, bytes).map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
                     source_file.display()

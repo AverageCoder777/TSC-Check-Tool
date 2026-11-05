@@ -88,8 +88,7 @@ impl ScenarioController {
                     let needs_load = app.scenarios[scen_idx].consists.is_none();
                     if needs_load {
                         let scenario_path = app.scenarios[scen_idx].path.clone();
-                        let serz_path = crate::assets::preferred_serz_path(&app.clean_rw_path());
-                        let consists = crate::scenario::load_consists(&scenario_path, &serz_path);
+                        let consists = crate::scenario::load_consists(&scenario_path);
                         app.scenarios[scen_idx].consists = Some(consists);
                     }
 
@@ -146,13 +145,9 @@ impl ScenarioController {
                     (None, None)
                 };
 
-                let serz_path = crate::assets::preferred_serz_path(&PathBuf::from(
-                    rw_path.trim().trim_matches('"').trim_matches('\''),
-                ));
                 let weather_name = crate::scenario::weather_display_name(
                     &PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')),
                     std::path::Path::new(&route_path),
-                    &serz_path,
                     &scenario.weather,
                 );
 

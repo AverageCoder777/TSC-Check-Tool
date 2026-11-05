@@ -222,7 +222,6 @@ impl CheckerApp {
         }
         let inventory = result.asset_inventory.clone();
         let assets_path = self.clean_rw_path().join("Assets");
-        let serz_path = crate::assets::preferred_serz_path(&self.clean_rw_path());
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
         self.inventory_scan = Some(rx);
@@ -231,7 +230,6 @@ impl CheckerApp {
             let result = crate::assets::scan_umlaut_assets(
                 &inventory,
                 &assets_path,
-                &serz_path,
                 max_concurrent_serz,
             );
             let _ = tx.send(result);
@@ -259,7 +257,6 @@ impl CheckerApp {
         };
         let rw_path = self.clean_rw_path();
         let assets_path = rw_path.join("Assets");
-        let serz_path = crate::assets::preferred_serz_path(&rw_path);
         let (tx, rx) = mpsc::channel();
         self.asset_replacement = Some(rx);
         self.asset_replacement_feedback = None;
@@ -267,12 +264,11 @@ impl CheckerApp {
         thread::spawn(move || {
             let missing_path = missing.path.clone();
             let replacement = if transliterate {
-                match crate::assets::repair_umlaut_asset_chain(
-                    &route.path,
-                    &assets_path,
-                    &serz_path,
-                    &replacement_relative,
-                    &[],
+                    match crate::assets::repair_umlaut_asset_chain(
+                        &route.path,
+                        &assets_path,
+                        &replacement_relative,
+                        &[],
                     &fixes,
                 ) {
                     Ok(report) => assets_path.join(report.new_asset_path),
@@ -289,10 +285,9 @@ impl CheckerApp {
             } else {
                 replacement
             };
-            let result = crate::assets::replace_missing_asset(
+             let result = crate::assets::replace_missing_asset(
                 &route.path,
                 &assets_path,
-                &serz_path,
                 &missing.path,
                 &replacement,
                 &missing.uses,
@@ -417,7 +412,6 @@ impl CheckerApp {
         };
         let rw_path = self.clean_rw_path();
         let assets_path = rw_path.join("Assets");
-        let serz_path = crate::assets::preferred_serz_path(&rw_path);
         let ignore_scenarios = self.ignore_scenarios;
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
@@ -442,7 +436,6 @@ impl CheckerApp {
             let result = crate::assets::check_route(
                 &route.path,
                 &assets_path,
-                &serz_path,
                 ignore_scenarios,
                 max_concurrent_serz,
                 |message| {
@@ -467,7 +460,6 @@ impl CheckerApp {
         }
         self.scenarios = crate::scenario::read_route_scenarios(
             &route.path,
-            &crate::assets::preferred_serz_path(&self.clean_rw_path()),
         );
         self.scenarios_route = Some(route.id.clone());
         self.selected_scenario = None;

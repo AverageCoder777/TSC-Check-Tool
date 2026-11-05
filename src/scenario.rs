@@ -215,7 +215,7 @@ pub(crate) struct ScenarioVehicle {
 }
 
 /// Читает сценарии маршрута: папки в Scenarios и их файлы.
-pub(crate) fn read_route_scenarios(route_path: &Path, serz_path: &Path) -> Vec<RouteScenario> {
+pub(crate) fn read_route_scenarios(route_path: &Path) -> Vec<RouteScenario> {
     use rayon::prelude::*;
     let scenarios_path = route_path.join("Scenarios");
     let Ok(entries) = fs::read_dir(&scenarios_path) else {
@@ -282,7 +282,7 @@ pub(crate) fn read_route_scenarios(route_path: &Path, serz_path: &Path) -> Vec<R
                 properties_had_type = has_scenario_type_marker(&xml);
                 scenario.metadata_loaded = true;
             }
-            if !properties_had_type && let Some(bin_xml) = read_scenario_file(&path, serz_path) {
+            if !properties_had_type && let Some(bin_xml) = read_scenario_file(&path) {
                 let from_bin = scenario_type_from_xml(&bin_xml);
                 if has_scenario_type_marker(&bin_xml) {
                     scenario.scenario_type = from_bin;
@@ -395,18 +395,18 @@ pub(crate) fn analyze_consists_parallel(
 }
 
 /// Загружает составы техники из Scenario.bin сценария (через Serz в XML).
-pub(crate) fn load_consists(scenario_path: &Path, serz_path: &Path) -> Vec<ScenarioConsist> {
-    let Some(xml) = read_scenario_file(scenario_path, serz_path) else {
+pub(crate) fn load_consists(scenario_path: &Path) -> Vec<ScenarioConsist> {
+    let Some(xml) = read_scenario_file(scenario_path) else {
         return Vec::new();
     };
     scenario_consists(&xml)
 }
 
 /// Читает файл сценария с составами: он может быть XML или бинарным.
-pub(crate) fn read_scenario_file(scenario_path: &Path, serz_path: &Path) -> Option<String> {
+pub(crate) fn read_scenario_file(scenario_path: &Path) -> Option<String> {
     let binary = scenario_path.join("Scenario.bin");
     if binary.is_file()
-        && let Ok(xml) = crate::assets::read_serz_xml(serz_path, &binary)
+        && let Ok(xml) = crate::assets::read_serz_xml(&binary)
     {
         return Some(xml);
     }
@@ -564,7 +564,6 @@ fn scenario_start_time(xml: &str) -> String {
 pub(crate) fn weather_display_name(
     rw_path: &Path,
     route_path: &Path,
-    serz_path: &Path,
     blueprint: &str,
 ) -> String {
     let blueprint = blueprint.trim();
@@ -581,7 +580,7 @@ pub(crate) fn weather_display_name(
             .unwrap_or("")
             .to_ascii_lowercase();
         let xml = if ext == "bin" {
-            crate::assets::read_serz_xml(serz_path, &path).ok()
+            crate::assets::read_serz_xml(&path).ok()
         } else {
             fs::read_to_string(&path).ok()
         };

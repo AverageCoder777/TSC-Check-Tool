@@ -3,8 +3,7 @@
 
 use std::fmt::Write as FmtWrite;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     let xml = if data.starts_with(b"SERZ") {
@@ -231,20 +230,8 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
     s.push_str("\t</Texture>\n");
     s.push_str("</cHcTextureGroup>\n");
 
-    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let xml_path = dir.path().join("texture.xml");
-    fs::write(&xml_path, s).map_err(|e| e.to_string())?;
-
-    let serz = find_serz()?;
-    let status = Command::new(&serz)
-        .arg(&xml_path)
-        .status()
-        .map_err(|e| e.to_string())?;
-    let bin_path = xml_path.with_extension("bin");
-    if !status.success() || !bin_path.is_file() {
-        return Err("serz conversion failed".into());
-    }
-    let bytes = fs::read(&bin_path).map_err(|e| e.to_string())?;
+    let (node, preamble) = crate::serz::SerzNode::from_xml_str(&s)?;
+    let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref())?;
     if bytes.is_empty() {
         return Err("empty output".into());
     }
@@ -260,57 +247,15 @@ pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> 
     Ok(())
 }
 
-fn find_serz() -> Result<PathBuf, String> {
-    let rw = crate::fs_utils::clean_rw_path(&crate::settings::load_last_game_path());
-    let preferred = crate::assets::preferred_serz_path(&rw);
-    if preferred.is_file() {
-        return Ok(preferred);
-    }
-    // fallback: try find_serz_path
-    if let Some(path) = crate::assets::find_serz_path(&rw)
-        && path.is_file()
-    {
-        return Ok(path);
-    }
-    let candidates = [
-        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\RailWorks\\serz.exe",
-        "C:\\Program Files\\Steam\\steamapps\\common\\RailWorks\\serz.exe",
-        "D:\\SteamLibrary\\steamapps\\common\\RailWorks\\serz.exe",
-    ];
-    for c in candidates {
-        let p = PathBuf::from(c);
-        if p.is_file() {
-            return Ok(p);
-        }
-    }
-    if let Ok(out) = Command::new("where").arg("serz.exe").output()
-        && out.status.success()
-    {
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            let p = PathBuf::from(line.trim());
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-    Err("serz.exe not found".into())
-}
 
 fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
-    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let input = dir.path().join("texture.TgPcDx");
-    let output = dir.path().join("texture.xml");
-    fs::write(&input, data).map_err(|e| e.to_string())?;
-    let serz = find_serz()?;
-    let status = Command::new(&serz)
-        .arg(&input)
-        .arg(format!("/xml:{}", output.display()))
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !status.success() || !output.is_file() {
-        return Err("serz conversion failed".into());
+    if data.starts_with(b"SERZ") {
+        let mut reader = crate::serz::SerzReader::new(data);
+        let node = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        Ok(crate::serz::SerzReader::to_xml(&node, 0, true))
+    } else {
+        String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))
     }
-    fs::read_to_string(&output).map_err(|e| e.to_string())
 }
 
 fn first_image_block(xml: &str) -> Option<&str> {

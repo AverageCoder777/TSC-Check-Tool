@@ -88,7 +88,6 @@ pub fn stage_serz_xml(
     source: &Path,
     target: &Path,
     xml: &str,
-    serz_path: &Path,
 ) -> Result<StagedUmlautFile, String> {
     let parent = source
         .parent()
@@ -97,15 +96,13 @@ pub fn stage_serz_xml(
     let xml_path = temp.path().join("transliterated.xml");
     fs::write(&xml_path, xml)
         .map_err(|error| format!("Не удалось записать временный XML: {error}"))?;
-    // Serz собирает только .bin: файл геометрии приходится собирать тем же
-    // форматом, а нужное расширение получит при переносе на место.
+    // Нативная сериализация XML -> BIN в памяти.
+    let (node, preamble) = crate::serz::SerzNode::from_xml_str(xml)?;
+    let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref())
+        .map_err(|error| format!("Не удалось подготовить изменённый файл {}: {error}", source.display()))?;
     let staged = temp.path().join("transliterated.bin");
-    let conversion = SerzTool::new(serz_path).xml_to_bin(&xml_path, &staged);
-    conversion.map_err(|error| {
-        format!(
-            "Не удалось подготовить изменённый файл {}: {error}",
-            source.display()
-        )
+    fs::write(&staged, bytes).map_err(|error| {
+        format!("Не удалось подготовить изменённый файл {}: {error}", source.display())
     })?;
     Ok(StagedUmlautFile {
         source: crate::domain::RouteFile::Path(source.to_path_buf()),

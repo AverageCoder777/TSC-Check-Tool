@@ -1,6 +1,6 @@
 //! External editor (VS Code / system default) integration with two-way sync.
 
-use crate::assets::{SerzTool, read_serz_xml};
+use crate::assets::read_serz_xml;
 use std::fs;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -14,13 +14,12 @@ use std::time::{Duration, Instant};
 
 pub fn open_and_sync_with_vscode(
     binary_asset_path: &Path,
-    serz_path: &Path,
     status_callback: impl Fn(Result<String, String>) + Send + Sync + 'static,
 ) -> Result<(), String> {
     let sync_dir = resolve_sync_dir(binary_asset_path)?;
     let temp_xml_path = generate_temp_xml_path(&sync_dir, binary_asset_path);
 
-    let xml = read_serz_xml(serz_path, binary_asset_path).map_err(|e| e.to_string())?;
+    let xml = read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?;
     fs::write(&temp_xml_path, &xml)
         .map_err(|e| format!("Не удалось записать {}: {e}", temp_xml_path.display()))?;
 
@@ -28,7 +27,6 @@ pub fn open_and_sync_with_vscode(
     let _ = launch_editor(&temp_xml_path, false);
 
     let binary_path = binary_asset_path.to_path_buf();
-    let serz = serz_path.to_path_buf();
     let xml_path = temp_xml_path;
     let cb = Arc::new(status_callback);
     let was_modified = Arc::new(AtomicBool::new(false));
@@ -38,7 +36,6 @@ pub fn open_and_sync_with_vscode(
         run_watcher(
             &xml_path,
             &binary_path,
-            &serz,
             cb,
             was_modified,
             stop_signal,
@@ -235,18 +232,10 @@ pub fn show_native_error(title: &str, message: &str) {
 }
 
 pub fn run_headless(target: &Path) -> Result<(), String> {
-    let serz_path = match crate::assets::find_serz_path(target) {
-        Some(p) => p,
-        None => {
-            let err = "serz.exe не найден".to_string();
-            show_native_error("Ошибка", &err);
-            return Err(err);
-        }
-    };
     let sync_dir = resolve_sync_dir(target)?;
     let temp_xml_path = generate_temp_xml_path(&sync_dir, target);
 
-    let xml = read_serz_xml(&serz_path, target)
+    let xml = read_serz_xml(target)
         .inspect_err(|e| {
             show_native_error("Ошибка", &e.to_string());
         })
@@ -265,7 +254,6 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
     // Запуск фонового watcher
     let xml_w = temp_xml_path.clone();
     let bin_w = target.to_path_buf();
-    let serz_w = serz_path.clone();
     let was_modified_w = was_modified.clone();
     let stop_watcher_w = stop_watcher.clone();
 
@@ -273,7 +261,6 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
         run_watcher(
             &xml_w,
             &bin_w,
-            &serz_w,
             Arc::new(|res| match res {
                 Ok(s) => println!("{s}"),
                 Err(e) => eprintln!("{e}"),
@@ -305,10 +292,16 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
     // Гарантируем наличие резервной копии перед перезаписью
     let _ = create_backup_file(target);
 
-    let conv = SerzTool::new(&serz_path).xml_to_bin(&temp_xml_path, target);
+    let conv = (|| -> Result<(), String> {
+        let final_xml = fs::read_to_string(&temp_xml_path).unwrap_or_default();
+        let (node, preamble) = crate::serz::SerzNode::from_xml_str(&final_xml)?;
+        let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref())?;
+        fs::write(target, bytes).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
     if let Err(e) = conv {
-        show_native_error("Ошибка конвертации Serz", &e.to_string());
-        return Err(e.to_string());
+        show_native_error("Ошибка конвертации Serz", &e);
+        return Err(e);
     }
 
     let _ = fs::remove_file(&temp_xml_path);
@@ -319,7 +312,6 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
 fn run_watcher(
     xml_path: &Path,
     binary_path: &Path,
-    serz_path: &Path,
     cb: Arc<dyn Fn(Result<String, String>) + Send + Sync>,
     was_modified: Arc<AtomicBool>,
     stop_signal: Arc<AtomicBool>,
@@ -417,8 +409,19 @@ fn run_watcher(
                     binary_path.display()
                 );
 
-                let serz = SerzTool::new(serz_path);
-                match serz.xml_to_bin(xml_path, binary_path) {
+                let xml_data = fs::read_to_string(xml_path).unwrap_or_default();
+                let (node, preamble) = match crate::serz::SerzNode::from_xml_str(&xml_data) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("[Sync] ✕ Ошибка Serz: {e:?}");
+                        cb(Err(format!("✕ Ошибка Serz: {e}")));
+                        continue;
+                    }
+                };
+                match crate::serz::encode_to_vec(&node, preamble.as_ref())
+                    .map_err(|e| e.to_string())
+                    .and_then(|bytes| fs::write(binary_path, bytes).map_err(|e| e.to_string()))
+                {
                     Ok(()) => {
                         println!(
                             "[Sync] ✓ Успешно скомпилировано в {}",
@@ -427,7 +430,7 @@ fn run_watcher(
                         cb(Ok("✓ Изменения скомпилированы в BIN".to_string()));
                     }
                     Err(e) => {
-                        eprintln!("[Sync] ✕ Ошибка serz.exe: {e:?}");
+                        eprintln!("[Sync] ✕ Ошибка Serz: {e:?}");
                         cb(Err(format!("✕ Ошибка Serz: {e}")));
                     }
                 }

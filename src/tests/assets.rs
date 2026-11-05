@@ -3,7 +3,6 @@ use super::{
     referenced_geometry_paths,
 };
 use std::path::Path;
-use std::path::PathBuf;
 
 /// Кэш разбора: повторная проверка берёт неизменившиеся файлы из кэша.
 #[test]
@@ -25,13 +24,10 @@ fn rechecks_route_using_analysis_cache() {
             "<Provider>Second</Provider><Product>ProductB</Product><BlueprintID>Scenery\\two.xml</BlueprintID>",
         )
         .unwrap();
-    // Serz для XML-файлов не нужен, но путь должен существовать.
-    let serz = temp.path().join("serz.exe");
-    std::fs::write(&serz, b"stub").unwrap();
     let assets = temp.path().join("Assets");
     std::fs::create_dir_all(&assets).unwrap();
 
-    let check = super::check_route(&route, &assets, &serz, true, 2, |_| {}).unwrap();
+    let check = super::check_route(&route, &assets, true, 2, |_| {}).unwrap();
     assert_eq!(check.asset_inventory.len(), 2);
     assert!(crate::analysis_cache::cache_path(&route).is_file());
     // Счётчик использований считает каждое вхождение, а не только файлы.
@@ -43,7 +39,7 @@ fn rechecks_route_using_analysis_cache() {
     assert_eq!(first_asset.uses.iter().map(|u| u.count).sum::<u32>(), 2);
 
     // Файлы не менялись — всё берётся из кэша.
-    let check = super::check_route(&route, &assets, &serz, true, 2, |_| {}).unwrap();
+    let check = super::check_route(&route, &assets, true, 2, |_| {}).unwrap();
     assert_eq!(check.asset_inventory.len(), 2);
     let first_asset = check
         .asset_inventory
@@ -58,7 +54,7 @@ fn rechecks_route_using_analysis_cache() {
             "<Provider>Second</Provider><Product>ProductB</Product><BlueprintID>Scenery\\two-new.xml</BlueprintID>",
         )
         .unwrap();
-    let check = super::check_route(&route, &assets, &serz, true, 2, |_| {}).unwrap();
+    let check = super::check_route(&route, &assets, true, 2, |_| {}).unwrap();
     assert_eq!(check.asset_inventory.len(), 2);
     let paths: Vec<&str> = check
         .asset_inventory
@@ -184,10 +180,6 @@ fn detects_vehicle_references_by_their_context() {
 fn replaces_asset_in_route_packed_into_archive() {
     use std::io::Write;
 
-    let serz = PathBuf::from(r"X:\SteamLibrary\steamapps\common\RailWorks\serz.exe");
-    if !serz.is_file() {
-        return;
-    }
     let temp = tempfile::tempdir().unwrap();
     let route = temp.path();
     let archive = route.join("MainContent.ap");
@@ -244,7 +236,6 @@ fn replaces_asset_in_route_packed_into_archive() {
     let report = super::replace_missing_asset(
         route,
         &assets,
-        &serz,
         "Prov/Prod/Scenery/Old.bin",
         &assets.join("Prov2/Prod2/Scenery/New.bin"),
         &uses,
@@ -280,10 +271,6 @@ fn assets_with_different_case_are_the_same_asset() {
 /// пути без учёта регистра.
 #[test]
 fn merges_assets_referenced_with_different_case() {
-    let serz = PathBuf::from(r"X:\SteamLibrary\steamapps\common\RailWorks\serz.exe");
-    if !serz.is_file() {
-        return;
-    }
     let temp = tempfile::tempdir().unwrap();
     let route = temp.path();
     std::fs::create_dir_all(route.join("Scenery")).unwrap();
@@ -296,7 +283,7 @@ fn merges_assets_referenced_with_different_case() {
     let assets = temp.path().join("Assets");
     std::fs::create_dir_all(&assets).unwrap();
 
-    let result = super::check_route(route, &assets, &serz, true, 1, |_| {})
+    let result = super::check_route(route, &assets, true, 1, |_| {})
         .expect("проверка маршрута должна пройти");
 
     let scenery: Vec<_> = result

@@ -1439,10 +1439,9 @@ fn audit_one_file(
     file: &Path,
     folder: &Path,
     assets_root: &Path,
-    serz_path: &Path,
     ap_cache: &ApArchiveCache,
 ) -> FileAuditOutcome {
-    let xml = match crate::assets::read_serz_xml(serz_path, file) {
+    let xml = match crate::assets::read_serz_xml(file) {
         Ok(x) => x,
         Err(_) => match fs::read(file) {
             Ok(bytes) if bytes.starts_with(b"<?xm") => String::from_utf8_lossy(&bytes).to_string(),
@@ -1636,7 +1635,6 @@ fn audit_one_file(
 pub fn audit_folders_with_progress(
     target_folders: &[PathBuf],
     assets_root: &Path,
-    serz_path: &Path,
     max_concurrent: usize,
     ap_cache: &ApArchiveCache,
     progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
@@ -1794,7 +1792,7 @@ pub fn audit_folders_with_progress(
         files
             .par_iter()
             .map(|f| {
-                let r = audit_one_file(f, assets_root, assets_root, serz_path, ap_cache);
+                let r = audit_one_file(f, assets_root, assets_root, ap_cache);
                 let done = processed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if let Some(cb) = &progress_cb
                     && total_files > 0
@@ -1841,7 +1839,7 @@ pub fn audit_folders_with_progress(
     let extra_outcomes: Vec<FileAuditOutcome> = pool.install(|| {
         extra_files
             .par_iter()
-            .map(|f| audit_one_file(f, assets_root, assets_root, serz_path, ap_cache))
+            .map(|f| audit_one_file(f, assets_root, assets_root, ap_cache))
             .collect()
     });
 
