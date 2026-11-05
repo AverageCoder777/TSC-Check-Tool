@@ -57,7 +57,7 @@ pub struct FileAuditOutcome {
 #[derive(Debug, Default)]
 pub struct AuditReport {
     pub broken_references: Vec<BrokenResourceRef>,
-    pub dependency_graph: DependencyGraph
+    pub dependency_graph: DependencyGraph,
 }
 
 /// Complete directory-wide asset dependency graph produced by an audit run.
@@ -111,6 +111,9 @@ static_tag_regex!(re_middle_section, "MiddleSection");
 static_tag_regex!(re_start_section, "StartSection");
 static_tag_regex!(re_end_section, "EndSection");
 static_tag_regex!(re_cross_section, "CrossSection");
+static_tag_regex!(re_uncoupled_geometry, "UncoupledGeometry");
+static_tag_regex!(re_coupled_geometry, "CoupledGeometry");
+static_tag_regex!(re_receiving_geometry, "ReceivingGeometry");
 
 fn tag_text_cached(xml: &str, re: &Regex) -> Option<String> {
     re.captures(xml)
@@ -174,7 +177,8 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
     // Извлечение геометрий
     static RE_ANY_GEOMETRY_ID: OnceLock<Regex> = OnceLock::new();
     let re_geo = RE_ANY_GEOMETRY_ID.get_or_init(|| {
-        Regex::new(r"(?is)<([a-zA-Z0-9_]*GeometryID)(?:\s[^>]*)?>(.*?)</([a-zA-Z0-9_]*GeometryID)>").unwrap()
+        Regex::new(r"(?is)<([a-zA-Z0-9_]*GeometryID)(?:\s[^>]*)?>(.*?)</([a-zA-Z0-9_]*GeometryID)>")
+            .unwrap()
     });
     for cap in re_geo.captures_iter(xml) {
         let open = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -188,6 +192,22 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             if !clean.is_empty() && !is_numeric_token(&clean) {
                 out.push((AssetResourceKind::Geometry, clean));
             }
+        }
+    }
+
+    // Ссылки на геометрию сцепок (uncoupled/coupled/receiver)
+    for re in [
+        re_uncoupled_geometry(),
+        re_coupled_geometry(),
+        re_receiving_geometry(),
+    ] {
+        for value in re.captures_iter(xml).filter_map(|c| c.get(1)) {
+            let raw = unescape_xml_entities(strip_tags(value.as_str()).trim());
+            let raw = raw.lines().next().unwrap_or("").trim().to_string();
+            if raw.is_empty() || is_numeric_token(&raw) {
+                continue;
+            }
+            out.push((AssetResourceKind::Geometry, raw));
         }
     }
 
@@ -1099,7 +1119,10 @@ pub fn extract_xml_texture_id_refs(
 ) {
     let assets_root = find_assets_root(current_file_path);
     let parent_dir = current_file_path.parent();
-    let product_root = product_root_for(current_file_path, assets_root.as_deref().unwrap_or(Path::new("")));
+    let product_root = product_root_for(
+        current_file_path,
+        assets_root.as_deref().unwrap_or(Path::new("")),
+    );
 
     static RE_TEXTURE_ID: OnceLock<Regex> = OnceLock::new();
     let re_tex = RE_TEXTURE_ID.get_or_init(|| {
@@ -1134,9 +1157,13 @@ pub fn extract_xml_texture_id_refs(
         if let Some(root) = &assets_root {
             candidates.push(crate::fs_utils::normalize_path(&root.join(&file_rel)));
         }
-        candidates.push(crate::fs_utils::normalize_path(&product_root.join(&file_rel)));
+        candidates.push(crate::fs_utils::normalize_path(
+            &product_root.join(&file_rel),
+        ));
         if !file_rel.to_ascii_lowercase().starts_with("textures\\") {
-            candidates.push(crate::fs_utils::normalize_path(&product_root.join("textures").join(&file_rel)));
+            candidates.push(crate::fs_utils::normalize_path(
+                &product_root.join("textures").join(&file_rel),
+            ));
         }
         if let Some(p_dir) = parent_dir {
             candidates.push(crate::fs_utils::normalize_path(&p_dir.join(&file_rel)));
@@ -1176,13 +1203,13 @@ pub fn extract_xml_texture_id_refs(
                 broken[idx].count += 1;
             } else {
                 seen.insert(key, broken.len());
-                    broken.push(BrokenResourceRef {
-                        parent_file: parent_file.to_path_buf(),
-                        all_parents: vec![parent_file.to_path_buf()],
-                        expected_path: expected,
-                        kind,
-                        count: 1,
-                    });
+                broken.push(BrokenResourceRef {
+                    parent_file: parent_file.to_path_buf(),
+                    all_parents: vec![parent_file.to_path_buf()],
+                    expected_path: expected,
+                    kind,
+                    count: 1,
+                });
             }
         }
     }
@@ -1381,7 +1408,12 @@ fn is_dynamic_runtime_asset(path: &Path) -> bool {
     // 2. Electronic in-cab timetable systems (EBuLa / Fahrplan / FIS)
     let has_timetable = path.components().any(|c| {
         let s = c.as_os_str().to_string_lossy().to_ascii_lowercase();
-        s == "ebula" || s == "fahrplan" || s == "timetable" || s == "matrix" || s == "zzt" || s == "zst"
+        s == "ebula"
+            || s == "fahrplan"
+            || s == "timetable"
+            || s == "matrix"
+            || s == "zzt"
+            || s == "zst"
     });
 
     // 3. Scripted destination display textures
@@ -1492,7 +1524,15 @@ fn audit_one_file(
         .to_lowercase();
 
     if ext == "bin" {
-        extract_xml_texture_id_refs(&xml, file, &mut outgoing, &mut out, &mut seen, &parent_file, ap_cache);
+        extract_xml_texture_id_refs(
+            &xml,
+            file,
+            &mut outgoing,
+            &mut out,
+            &mut seen,
+            &parent_file,
+            ap_cache,
+        );
         for (kind, raw) in extract_bin_references(&xml, &product_root) {
             let cands = candidate_paths(&raw, parent, &product_root, assets_root, kind);
             let expected = cands
@@ -1676,8 +1716,7 @@ pub fn audit_folders_with_progress(
                         .to_lowercase();
                     if ext == "lua" || ext == "out" {
                         if let Some(root) = find_scripted_component_root(path) {
-                            scripted_component_roots
-                                .insert(crate::fs_utils::normalize_path(&root));
+                            scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
                         }
                     } else if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
                         if file_set.insert(path.to_path_buf()) {
@@ -1757,8 +1796,7 @@ pub fn audit_folders_with_progress(
                     } else if (ext == "lua" || ext == "out")
                         && let Some(root) = find_scripted_component_root(path)
                     {
-                        scripted_component_roots
-                            .insert(crate::fs_utils::normalize_path(&root));
+                        scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
                     }
                 }
             }
@@ -1877,8 +1915,11 @@ pub fn audit_folders_with_progress(
                 }
             }
             if deduped[idx].parent_file.as_os_str().is_empty() {
-                deduped[idx].parent_file =
-                    deduped[idx].all_parents.first().cloned().unwrap_or_default();
+                deduped[idx].parent_file = deduped[idx]
+                    .all_parents
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
             }
         } else {
             seen.insert(key, deduped.len());
@@ -1899,7 +1940,11 @@ pub fn audit_folders_with_progress(
 
     // Live roots: all .bin blueprints in the scanned package (and dependency scope).
     for f in files.iter().chain(extra_files.iter()) {
-        let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let ext = f
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
         if ext == "bin" {
             let nf = std::path::PathBuf::from(
                 crate::fs_utils::normalize_path(f)
@@ -1973,7 +2018,11 @@ pub fn audit_folders_with_progress(
 
     // Build full directory asset graph.
     let mut files_on_disk: HashSet<PathBuf> = HashSet::new();
-    for f in files.iter().chain(texture_files.iter()).chain(extra_files.iter()) {
+    for f in files
+        .iter()
+        .chain(texture_files.iter())
+        .chain(extra_files.iter())
+    {
         files_on_disk.insert(std::path::PathBuf::from(
             crate::fs_utils::normalize_path(f)
                 .to_string_lossy()
@@ -2003,13 +2052,16 @@ pub fn audit_folders_with_progress(
         dead_files,
     };
 
-    (AuditReport {
-        broken_references: deduped,
-        dependency_graph: DependencyGraph {
-            outgoing: outgoing_map,
-            incoming: incoming_map,
-        }
-    }, full_graph)
+    (
+        AuditReport {
+            broken_references: deduped,
+            dependency_graph: DependencyGraph {
+                outgoing: outgoing_map,
+                incoming: incoming_map,
+            },
+        },
+        full_graph,
+    )
 }
 
 fn collect_files(
