@@ -28,9 +28,9 @@ pub enum SerzNode {
         target_id: u32,
     },
     Blob {
-        name: String,
         data: Vec<u8>,
     },
+    Nil,
 }
 
 #[derive(Clone, Debug)]
@@ -137,7 +137,6 @@ impl<'a> SerzReader<'a> {
         }
     }
 
-    /// Форматирование чисел f32 по стандарту MSVC C %g (6 значащих цифр)
     fn format_f32(val: f32) -> (String, String) {
         let d = val as f64;
         let alt = d.to_le_bytes().iter().map(|b| format!("{:02X}", b)).collect::<String>();
@@ -243,10 +242,22 @@ impl<'a> SerzReader<'a> {
         }
 
         let _version = self.read_u32()?;
-        let root_token = self.next_token()?;
-        if root_token.opcode != 0x50 {
-            return Err(format!("Ожидался корневой элемент 0x50, получено 0x{:02X}", root_token.opcode));
-        }
+
+        // Читаем поток до тех пор, пока не встретим корневой элемент (0x50)
+        let root_token = loop {
+            let token = self.next_token()?;
+            match token.opcode {
+                0x50 => break token,
+                0x43 => {
+                    let _flag = self.read_u8()?;
+                    let _val = self.read_u32()?;
+                }
+                other => {
+                    return Err(format!("Неожиданный опкод перед корневым элементом: 0x{:02X} на 0x{:X}", 
+                        other, self.cursor.position()));
+                }
+            }
+        };
 
         self.parse_element_body(root_token.name)
     }
@@ -275,8 +286,13 @@ impl<'a> SerzReader<'a> {
                     let count = self.read_u8()? as usize;
                     let mut values = Vec::with_capacity(count);
                     for _ in 0..count {
-                        let (v, _) = self.read_property_value(&token.type_name)?;
-                        values.push(v);
+                        if token.type_name == "sFloat32" {
+                            let f = self.read_f32()?;
+                            values.push(format!("{:.7}", f));
+                        } else {
+                            let (v, _) = self.read_property_value(&token.type_name)?;
+                            values.push(v);
+                        }
                     }
                     children.push(SerzNode::Array {
                         name: token.name,
@@ -295,18 +311,17 @@ impl<'a> SerzReader<'a> {
                     let len = self.read_u32()? as usize;
                     let mut data = vec![0u8; len];
                     self.cursor.read_exact(&mut data).map_err(|e| e.to_string())?;
-                    children.push(SerzNode::Blob {
-                        name: token.name,
-                        data,
-                    });
+                    children.push(SerzNode::Blob { data });
+                }
+                0x4E => {
+                    children.push(SerzNode::Nil);
+                }
+                0x43 => {
+                    // Служебная директива: читаем 1 байт и u32, не прерывая разбор элемента
+                    let _flag = self.read_u8()?;
+                    let _val = self.read_u32()?;
                 }
                 0x70 => break,
-                0x43 => {
-                    let _flag = self.read_u8()?;
-                    let _elem_id = self.read_u32()?;
-                    break;
-                }
-                0x4E => {}
                 other => {
                     return Err(format!("Неподдерживаемый опкод: 0x{:02X} на 0x{:X}", other, self.cursor.position()));
                 }
@@ -316,71 +331,94 @@ impl<'a> SerzReader<'a> {
         Ok(SerzNode::Element { name, id, version, children })
     }
 
+    fn xml_name(name: &str) -> String {
+        if name.is_empty() {
+            "e".to_string()
+        } else {
+            name.replace("::", "-")
+        }
+    }
+
     pub fn to_xml(node: &SerzNode, indent: usize, is_root: bool) -> String {
         let pad = "\t".repeat(indent);
         match node {
-            SerzNode::Element { name, id, version, children } => {
-                let xml_name = name.replace("::", "-");
+            SerzNode::Element { name, id, version: _, children } => {
+                let tag = Self::xml_name(name);
                 let mut out = String::new();
                 if is_root {
+                    let id_attr = if *id > 0 { format!(" d:id=\"{id}\"") } else { String::new() };
                     out.push_str(&format!(
-                        "{pad}<{xml_name} xmlns:d=\"http://www.kuju.com/TnT/2003/Delta\" d:version=\"{version}.0\">\n"
+                        "{pad}<{tag} xmlns:d=\"http://www.kuju.com/TnT/2003/Delta\" d:version=\"1.0\"{id_attr}>\n"
                     ));
                     for c in children {
                         out.push_str(&Self::to_xml(c, indent + 1, false));
                     }
-                    out.push_str(&format!("{pad}</{xml_name}>\n"));
+                    out.push_str(&format!("{pad}</{tag}>\n"));
                 } else if children.is_empty() {
                     if *id > 0 {
-                        out.push_str(&format!("{pad}<{xml_name} d:id=\"{id}\"/>\n"));
+                        out.push_str(&format!("{pad}<{tag} d:id=\"{id}\"/>\n"));
                     } else {
-                        out.push_str(&format!("{pad}<{xml_name}/>\n"));
+                        out.push_str(&format!("{pad}<{tag}/>\n"));
                     }
                 } else {
                     if *id > 0 {
-                        out.push_str(&format!("{pad}<{xml_name} d:id=\"{id}\">\n"));
+                        out.push_str(&format!("{pad}<{tag} d:id=\"{id}\">\n"));
                     } else {
-                        out.push_str(&format!("{pad}<{xml_name}>\n"));
+                        out.push_str(&format!("{pad}<{tag}>\n"));
                     }
 
                     for c in children {
                         out.push_str(&Self::to_xml(c, indent + 1, false));
                     }
-                    out.push_str(&format!("{pad}</{xml_name}>\n"));
+                    out.push_str(&format!("{pad}</{tag}>\n"));
                 }
                 out
             }
             SerzNode::Property { name, type_name, value, alt_encoding } => {
-                let xml_name = name.replace("::", "-");
+                let tag = Self::xml_name(name);
                 if let Some(alt) = alt_encoding {
-                    format!("{pad}<{xml_name} d:type=\"{type_name}\" d:alt_encoding=\"{alt}\" d:precision=\"string\">{value}</{xml_name}>\n")
+                    format!("{pad}<{tag} d:type=\"{type_name}\" d:alt_encoding=\"{alt}\" d:precision=\"string\">{value}</{tag}>\n")
                 } else if value.is_empty() {
-                    format!("{pad}<{xml_name} d:type=\"{type_name}\"></{xml_name}>\n")
+                    format!("{pad}<{tag} d:type=\"{type_name}\"></{tag}>\n")
                 } else {
-                    format!("{pad}<{xml_name} d:type=\"{type_name}\">{value}</{xml_name}>\n")
+                    format!("{pad}<{tag} d:type=\"{type_name}\">{value}</{tag}>\n")
                 }
             }
             SerzNode::Array { name, type_name, values } => {
-                let xml_name = name.replace("::", "-");
-                if values.is_empty() {
-                    format!("{pad}<{xml_name} d:type=\"{type_name}\"/>\n")
+                let tag = Self::xml_name(name);
+                let count = values.len();
+                let joined = values.join(" ");
+                if type_name == "sFloat32" || type_name == "sFloat64" {
+                    format!("{pad}<{tag} d:numElements=\"{count}\" d:elementType=\"{type_name}\" d:precision=\"string\">{joined}</{tag}>\n")
                 } else {
-                    let mut out = format!("{pad}<{xml_name} d:type=\"{type_name}\">\n");
-                    for v in values {
-                        out.push_str(&format!("{pad}\t<val>{v}</val>\n"));
-                    }
-                    out.push_str(&format!("{pad}</{xml_name}>\n"));
-                    out
+                    format!("{pad}<{tag} d:numElements=\"{count}\" d:elementType=\"{type_name}\">{joined}</{tag}>\n")
                 }
             }
             SerzNode::Reference { name, target_id } => {
-                let xml_name = name.replace("::", "-");
-                format!("{pad}<{xml_name} d:id=\"{target_id}\"/>\n")
+                let tag = Self::xml_name(name);
+                format!("{pad}<{tag} d:type=\"ref\">{target_id}</{tag}>\n")
             }
-            SerzNode::Blob { name, data } => {
-                let xml_name = name.replace("::", "-");
-                let hex: String = data.iter().map(|b| format!("{:02X}", b)).collect();
-                format!("{pad}<{xml_name} d:type=\"blob\">{hex}</{xml_name}>\n")
+            SerzNode::Nil => {
+                format!("{pad}<d:nil/>\n")
+            }
+            SerzNode::Blob { data } => {
+                let mut out = format!("{pad}<d:blob d:size=\"{}\">", data.len());
+                let mut first = true;
+                for chunk in data.chunks(32) {
+                    if first {
+                        first = false;
+                    } else {
+                        out.push('\n');
+                    }
+                    let mut sub_chunks = Vec::with_capacity(4);
+                    for sub in chunk.chunks(8) {
+                        let hex: String = sub.iter().map(|b| format!("{:02X}", b)).collect();
+                        sub_chunks.push(hex);
+                    }
+                    out.push_str(&sub_chunks.join(" "));
+                }
+                out.push_str("</d:blob>\n");
+                out
             }
         }
     }
@@ -457,6 +495,19 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
                 println!("\nВсего расхождений: {}", diffs);
             }
         }
-        Err(err) => eprintln!("\n[!] Ошибка: {}", err),
+        Err(err) => {
+            eprintln!("\n[!] Ошибка: {}", err);
+
+            println!("\n-> Первые 32 байта входного файла:");
+            let slice = &raw_bytes[..32.min(raw_bytes.len())];
+            let hex = slice.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+            let ascii: String = slice.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }).collect();
+            println!("   0000 | {:47} | {}", hex, ascii);
+
+            println!("\n-> Первые 5 строк из expected.xml:");
+            for (idx, line) in expected_xml.lines().take(5).enumerate() {
+                println!("   {:2} | {}", idx + 1, line);
+            }
+        }
     }
 }
