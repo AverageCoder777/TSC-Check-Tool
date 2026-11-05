@@ -57,6 +57,7 @@ mod texture_controller;
 mod translit;
 mod windows;
 mod xml_scan;
+mod serz;
 
 fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     if let Ok(data) = std::fs::read(icon_path) {
@@ -378,6 +379,11 @@ impl Default for AuditorState {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 4 && args[1] == "--serz-diff" {
+        serz::run_test(&args[2], &args[3]);
+        return;
+    }
     handle_cli_args();
     let app = Arc::new(Mutex::new(app::CheckerApp::default()));
     let _ = APP.set(app.clone());
