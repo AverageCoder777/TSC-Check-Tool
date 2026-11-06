@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![deny(clippy::all)]
-#![allow(clippy::type_complexity, reason = "required for syme essecntial types")]
+#![allow(clippy::type_complexity, reason = "required for some essential types")]
 slint::include_modules!();
 
 use rayon::prelude::*;

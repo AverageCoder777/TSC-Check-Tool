@@ -18,7 +18,6 @@ xml = "1.4"
 ddsfile = "0.6"
 texture2ddecoder = "0.1.2"
 bytemuck = { version = "1.25", features = ["derive"] }
-notify = "8.2.1"
 encoding_rs = "0.8"
 thiserror = "2"
 memchr = "2"

@@ -6,8 +6,7 @@ fn checks_real_route_x() {
     if !route.is_dir() {
         return;
     }
-    let result =
-        crate::assets::check_route(&route, &rw_path.join("Assets"), false, 1, |_| {});
+    let result = crate::assets::check_route(&route, &rw_path.join("Assets"), false, 1, |_| {});
     match result {
         Ok(r) => {
             println!(
