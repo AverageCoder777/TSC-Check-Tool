@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Полный граф каталога зависимостей</title>
+<script src="__VIS_CDN__"></script>
+<style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0f172a; color: #e5e7eb; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #network { width: 100vw; height: 100vh; background: #0f172a; display: block; }
+    .controls {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 50;
+        background: rgba(15, 23, 42, 0.9);
+        backdrop-filter: blur(8px);
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        user-select: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: flex-start;
+        min-width: 260px;
+    }
+    .controls-title { font-weight: 700; font-size: 13px; color: #fbbf24; margin: 0; }
+    .badge-row { display: flex; gap: 8px; font-size: 12px; color: #cbd5e1; flex-wrap: wrap; }
+    .badge { background: #1e293b; border: 1px solid #475569; border-radius: 6px; padding: 2px 8px; color: #e5e7eb; font-weight: 600; white-space: nowrap; }
+    .badge .num { color: #60a5fa; }
+    .search-box { width: 100%; display: flex; gap: 6px; margin-top: 4px; }
+    .search-box input { flex: 1; background: #0f172a; border: 1px solid #475569; border-radius: 6px; padding: 6px 8px; color: #e5e7eb; font-size: 12px; outline: none; }
+    .search-box input:focus { border-color: #3b82f6; }
+    .search-box button { background: #3b82f6; border: none; border-radius: 6px; padding: 6px 10px; color: #ffffff; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .search-box button:hover { background: #60a5fa; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 4px; }
+    .filter-label { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .filter-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #e5e7eb; cursor: pointer; }
+    .filter-item input { accent-color: #3b82f6; width: 14px; height: 14px; }
+    .cluster-info { font-size: 12px; color: #94a3b8; margin-top: 2px; line-height: 1.4; }
+    .hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="controls">
+    <div class="controls-title">Полный граф каталога</div>
+    <div class="badge-row">
+        <span>Всего файлов: <span class="badge"><span class="num" id="total-count">__TOTAL__</span></span></span>
+        <span>Активных: <span class="badge"><span class="num" id="active-count">__ACTIVE__</span></span></span>
+        <span>Мёртвых: <span class="badge"><span class="num" id="dead-count">__DEAD__</span></span></span>
+        <span>Ошибок: <span class="badge"><span class="num" id="missing-count">__MISSING__</span></span></span>
+    </div>
+    <div class="search-box">
+        <input type="text" id="graph-search" placeholder="Поиск файла...">
+        <button id="graph-center">Центр</button>
+    </div>
+    <div class="filter-group">
+        <div class="filter-label">Фильтры:</div>
+        <label class="filter-item"><input type="checkbox" id="filter-bin" checked><span>Чертежи (.bin, .xml)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-mesh" checked><span>Меши (.GeoPcDx, .XSec)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-tex" checked><span>Текстуры (.TgPcDx)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Мёртвые ресурсы</span></label>
+        <label class="filter-item"><input type="checkbox" id="toggle-edges"><span>Показывать фоновые связи</span></label>
+    </div>
+    <button class="fit-view" id="graph-fit" style="background: #334155; border: none; border-radius: 6px; padding: 6px 10px; color: #ffffff; font-size: 12px; font-weight: 600; cursor: pointer; width: 100%;">Сбросить камеру</button>
+    <div class="cluster-info">Все сканированные файлы каталога. Наведите на узел для полного пути.</div>
+    <div class="hint">Введите часть имени файла и нажмите Enter или "Центр" для камеры на узле.</div>
+</div>
+<div id="network"></div>
+<script>
+    const rawNodes = __NODES_JSON__;
+    const rawEdges = __EDGES_JSON__;
+
+    const binSet = new Set();
+    const binsAll = [];
+    const meshes = [];
+    const textures = [];
+    const dead = [];
+
+    rawNodes.forEach(n => {
+        const isDead = n.label.startsWith("[DEAD] ");
+        const clean = n.label.replace(/^\\[(DEAD|Missing)\\] /, "").toLowerCase();
+        if (isDead) {
+            dead.push(n);
+        } else if (clean.endsWith(".bin") || clean.endsWith(".xml")) {
+            binsAll.push(n);
+            binSet.add(n.id);
+        } else if (clean.endsWith(".geopcdx") || clean.endsWith(".xsec")) {
+            meshes.push(n);
+        } else {
+            textures.push(n);
+        }
+    });
+
+    const inBinEdges = new Map();
+    const inEdges = new Map();
+    rawEdges.forEach(e => {
+        if (!inEdges.has(e.to)) inEdges.set(e.to, []);
+        inEdges.get(e.to).push(e.from);
+
+        if (binSet.has(e.from) && binSet.has(e.to)) {
+            if (!inBinEdges.has(e.to)) inBinEdges.set(e.to, []);
+            inBinEdges.get(e.to).push(e.from);
+        }
+    });
+
+    const rootBins = [];
+    const subBins = [];
+    binsAll.forEach(b => {
+        if ((inBinEdges.get(b.id)?.length || 0) === 0) {
+            rootBins.push(b);
+        } else {
+            subBins.push(b);
+        }
+    });
+
+    const rootCols = 3;
+    rootBins.forEach((n, i) => {
+        n.x = (i % rootCols) * 200;
+        n.y = Math.floor(i / rootCols) * 44;
+    });
+
+    subBins.sort((a, b) => (inBinEdges.get(a.id)?.[0] ?? 999999) - (inBinEdges.get(b.id)?.[0] ?? 999999));
+    const subCols = 3;
+    const subXOffset = 640;
+    subBins.forEach((n, i) => {
+        n.x = subXOffset + (i % subCols) * 200;
+        n.y = Math.floor(i / subCols) * 44;
+    });
+
+    meshes.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
+    const meshCols = 3;
+    const meshXOffset = subXOffset + subCols * 200 + 140;
+    meshes.forEach((n, i) => {
+        n.x = meshXOffset + (i % meshCols) * 200;
+        n.y = Math.floor(i / meshCols) * 42;
+    });
+
+    textures.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
+    const texCols = 9;
+    const texXOffset = meshXOffset + meshCols * 200 + 160;
+    textures.forEach((n, i) => {
+        n.x = texXOffset + (i % texCols) * 190;
+        n.y = Math.floor(i / texCols) * 36;
+    });
+
+    const maxY = Math.max(
+        (rootBins.length / rootCols) * 44,
+        (subBins.length / subCols) * 44,
+        (meshes.length / meshCols) * 42,
+        (textures.length / texCols) * 36
+    );
+    dead.forEach((n, i) => {
+        n.x = (i % 12) * 190;
+        n.y = maxY + 220 + Math.floor(i / 12) * 35;
+    });
+
+    rawEdges.forEach((e, i) => { e.id = i; });
+
+    const nodes = new vis.DataSet(rawNodes);
+    const edges = new vis.DataSet(rawEdges);
+    const container = document.getElementById("network");
+    const data = { nodes, edges };
+    const options = {
+        nodes: {
+            borderWidth: 1.5,
+            font: { 
+                color: "#e5e7eb", 
+                size: 11, 
+                strokeWidth: 0
+            },
+            scaling: {
+                label: {
+                    enabled: true,
+                    min: 11,
+                    max: 11,
+                    drawThreshold: 8 // Текст жестко исчезает, как только становится меньше 8px на экране
+                }
+            },
+            shadow: false
+        },
+        edges: {
+            hidden: true,
+            arrows: { to: { enabled: false } },
+            smooth: false,
+            color: {
+                color: "rgba(100, 116, 139, 0.12)",
+                highlight: "#38bdf8",
+                hover: "#38bdf8"
+            },
+            width: 1.0,
+            hoverWidth: 0,
+            selectionWidth: 0
+        },
+        renderer: { type: "canvas" },
+        physics: false,
+        interaction: {
+            hover: true,
+            hoverConnectedEdges: false,
+            tooltipDelay: 100,
+            hideEdgesOnDrag: true,
+            hideEdgesOnZoom: true,
+            hideNodesOnDrag: false,
+            navigationButtons: true,
+            keyboard: { enabled: true, bindToWindow: false }
+        }
+    };
+    const network = new vis.Network(container, data, options);
+
+    const toggleEdges = document.getElementById("toggle-edges");
+    let selectedNodeId = null;
+    let highlightedEdgeIds = [];
+    let highlightedNodeIds = [];
+    let hoverEdgeIds = [];
+
+    function applyEdgeVisibility() {
+        if (selectedNodeId !== null) {
+            network.setOptions({ edges: { hidden: true } });
+        } else {
+            network.setOptions({ edges: { hidden: !toggleEdges.checked } });
+        }
+    }
+
+    network.on("selectNode", function (params) {
+        selectedNodeId = params.nodes[0];
+        const selectedId = selectedNodeId;
+        const connectedEdges = network.getConnectedEdges(selectedId);
+        const connectedNodes = network.getConnectedNodes(selectedId);
+
+        network.setOptions({ edges: { hidden: true } });
+
+        if (highlightedEdgeIds.length > 0) {
+            edges.update(highlightedEdgeIds.map(id => ({ id: id, hidden: true, width: 1.0 })));
+        }
+
+        // Включаем связи выбранной ноды
+        edges.update(connectedEdges.map(id => ({
+            id: id,
+            hidden: false,
+            width: 2.5,
+            arrows: { to: { enabled: true, scaleFactor: 0.6 } }
+        })));
+        highlightedEdgeIds = connectedEdges.slice();
+
+        // Запоминаем активную группу: выбранная нода + прямые соседи
+        highlightedNodeIds = [selectedId].concat(connectedNodes);
+        
+        // Принудительно заставляем холст перерисоваться с эффектом приглушения
+        network.redraw();
+    });
+    
+    network.on("beforeDrawing", function (ctx) {
+        if (selectedNodeId === null || highlightedNodeIds.length === 0) return;
+
+        // Рисуем полупрозрачную темную подложку поверх всего неактивного фона
+        ctx.save();
+        ctx.fillStyle = "rgba(15, 23, 42, 0.82)"; // цвет фона #0f172a с альфой
+        // Накрываем видимую область с запасом
+        const bb = network.getViewPosition();
+        const scale = network.getScale();
+        const w = (ctx.canvas.width / scale) * 2;
+        const h = (ctx.canvas.height / scale) * 2;
+        ctx.fillRect(bb.x - w / 2, bb.y - h / 2, w, h);
+        ctx.restore();
+    });
+
+    function resetSelectionState() {
+        selectedNodeId = null;
+
+        if (highlightedEdgeIds.length > 0) {
+            edges.update(highlightedEdgeIds.map(id => ({ 
+                id: id, 
+                hidden: true, 
+                width: 1.0, 
+                arrows: { to: { enabled: false } } 
+            })));
+            highlightedEdgeIds = [];
+        }
+
+        highlightedNodeIds = [];
+        hoverEdgeIds = [];
+        applyEdgeVisibility();
+        network.redraw();
+    }
+
+    network.on("deselectNode", function () {
+        resetSelectionState();
+    });
+
+    network.on("click", function (params) {
+        if (params.nodes.length === 0) {
+            if (selectedNodeId !== null) {
+                network.unselectAll();
+                resetSelectionState();
+            }
+        }
+    });
+
+    network.on("hoverNode", function (params) {
+        if (selectedNodeId !== null || toggleEdges.checked) return;
+        const connectedEdges = network.getConnectedEdges(params.node);
+        hoverEdgeIds = connectedEdges.slice();
+        edges.update(hoverEdgeIds.map(id => ({ id: id, hidden: false, width: 1.5 })));
+    });
+
+    network.on("blurNode", function () {
+        if (selectedNodeId !== null || toggleEdges.checked) return;
+        if (hoverEdgeIds.length > 0) {
+            edges.update(hoverEdgeIds.map(id => ({ id: id, hidden: true, width: 1.0 })));
+            hoverEdgeIds = [];
+        }
+    });
+
+    toggleEdges.addEventListener("change", function () {
+        applyEdgeVisibility();
+    });
+
+    applyEdgeVisibility();
+
+    const searchInput = document.getElementById("graph-search");
+    const centerBtn = document.getElementById("graph-center");
+    const fitBtn = document.getElementById("graph-fit");
+    const filterBin = document.getElementById("filter-bin");
+    const filterMesh = document.getElementById("filter-mesh");
+    const filterTex = document.getElementById("filter-tex");
+    const filterDead = document.getElementById("filter-dead");
+
+    function extOf(label) {
+        const parts = label.split(".");
+        return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
+    }
+
+    function isMissing(label) { return label.startsWith("[Missing] "); }
+    function isDead(label) { return label.startsWith("[DEAD] "); }
+
+    function applyFilters() {
+        const showBin = filterBin.checked;
+        const showMesh = filterMesh.checked;
+        const showTex = filterTex.checked;
+        const showDead = filterDead.checked;
+
+        const updates = [];
+        nodes.forEach(n => {
+            const label = n.label;
+            const missing = isMissing(label);
+            const dead = isDead(label);
+            const e = extOf(label.replace(/^\\[(Missing|DEAD)\\] /, ""));
+
+            let visible = true;
+            if (dead) {
+                visible = showDead;
+            } else if (missing) {
+                visible = true;
+            } else {
+                if (e === "bin" || e === "xml") visible = showBin;
+                else if (e === "geopcdx" || e === "xsec") visible = showMesh;
+                else if (e === "tgpcdx") visible = showTex;
+                else visible = true;
+            }
+
+            updates.push({ id: n.id, hidden: !visible });
+        });
+        nodes.update(updates);
+    }
+
+    applyFilters();
+
+    function norm(str) {
+        return (str || "").toLowerCase().replace(/\\\\/g, "/");
+    }
+
+    function searchAndHighlightAll(query) {
+        const q = norm(query.trim());
+
+        if (!q) {
+            network.unselectAll();
+            resetSelectionState();
+            centerBtn.textContent = "Центр";
+            return;
+        }
+
+        const matchingNodes = nodes.get().filter(n => {
+            return norm(n.label).includes(q) || norm(n.title).includes(q);
+        });
+
+        if (matchingNodes.length === 0) {
+            searchInput.style.borderColor = "#ef4444";
+            centerBtn.textContent = "0 совп.";
+            setTimeout(() => {
+                searchInput.style.borderColor = "#475569";
+                centerBtn.textContent = "Центр";
+            }, 1500);
+            return;
+        }
+
+        const matchingIds = matchingNodes.map(n => n.id);
+        const matchSet = new Set(matchingIds);
+
+        network.selectNodes(matchingIds);
+
+        nodes.update(nodes.get().map(n => ({
+            id: n.id,
+            opacity: matchSet.has(n.id) ? 1.0 : 0.15
+        })));
+
+        centerBtn.textContent = matchingIds.length + " совп.";
+
+        network.fit({
+            nodes: matchingIds,
+            animation: { duration: 600 }
+        });
+    }
+
+    centerBtn.addEventListener("click", () => searchAndHighlightAll(searchInput.value));
+    searchInput.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") searchAndHighlightAll(searchInput.value);
+    });
+    searchInput.addEventListener("input", (e) => {
+        if (!e.target.value.trim()) {
+            searchAndHighlightAll("");
+        }
+    });
+    searchInput.addEventListener("keyup", (e) => e.stopPropagation());
+
+    fitBtn.addEventListener("click", () => {
+        network.fit({ animation: { duration: 400 } });
+    });
+
+    [filterBin, filterMesh, filterTex, filterDead].forEach(cb => {
+        cb.addEventListener("change", applyFilters);
+    });
+</script>
+</body>
+</html>

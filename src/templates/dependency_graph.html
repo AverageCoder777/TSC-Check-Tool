@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Граф связей зависимостей</title>
+<script src="__VIS_CDN__"></script>
+<style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111827; color: #e5e7eb; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #network { width: 100vw; height: 100vh; background: #111827; display: block; }
+    .legend {
+        position: absolute;
+        top: 14px;
+        left: 14px;
+        z-index: 10;
+        background: rgba(17, 24, 39, 0.85);
+        backdrop-filter: blur(6px);
+        border: 1px solid #374151;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #e5e7eb;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        user-select: none;
+    }
+    .legend-title { font-weight: 700; margin-bottom: 6px; color: #fbbf24; }
+    .legend-item { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.35); }
+    .dot.missing { border-style: dashed; }
+    .dot.center { shape: box; border-radius: 2px; }
+    .hint { margin-top: 8px; font-size: 11px; color: #9ca3af; }
+</style>
+</head>
+<body>
+<div class="legend">
+    <div class="legend-title">Граф связей</div>
+    <div class="legend-item"><div class="dot center" style="background:__CENTER_COLOR__"></div><div>Выбранный файл</div></div>
+    <div class="legend-item"><div class="dot" style="background:__INBOUND_COLOR__"></div><div>Родители (входящие ссылки)</div></div>
+    <div class="legend-item"><div class="dot" style="background:__OUTBOUND_COLOR__"></div><div>Зависимости (исходящие ссылки)</div></div>
+    <div class="legend-item"><div class="dot missing" style="background:__MISSING_COLOR__"></div><div>Отсутствующие на диске</div></div>
+    <div class="hint">Наведите курсор на узел для полного пути. Перетаскивайте узлы мышью.</div>
+</div>
+<div id="network"></div>
+<script>
+    const nodes = new vis.DataSet(__NODES_JSON__);
+    const edges = new vis.DataSet(__EDGES_JSON__);
+    const container = document.getElementById("network");
+    const data = { nodes, edges };
+    const options = {
+        nodes: {
+            font: { color: "__TOOLTIP_COLOR__", size: 13, strokeWidth: 0, strokeColor: "#111827" },
+            borderWidth: 2,
+            shadow: { enabled: true, color: "rgba(0,0,0,0.6)", size: 12, x: 2, y: 2 },
+        },
+        edges: {
+            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+            smooth: false,
+            color: { color: "#6b7280", highlight: "#9ca3af", hover: "#9ca3af" },
+            width: 1.5,
+            shadow: false,
+        },
+        layout: { improvedLayout: true },
+        physics: {
+            enabled: true,
+            solver: "forceAtlas2Based",
+            stabilization: { enabled: true, iterations: 200, updateInterval: 25, onlyDynamicEdges: false, fit: true },
+            forceAtlas2Based: {
+                springLength: 110,
+                springConstant: 0.05,
+                damping: 0.45,
+                avoidOverlap: 0.65,
+                centralGravity: 0.01,
+                gravitationalConstant: -40,
+            },
+        },
+        interaction: {
+            hover: true,
+            tooltipDelay: 150,
+            hideEdgesOnDrag: false,
+            selectable: true,
+            navigationButtons: true,
+            keyboard: { enabled: true },
+        },
+        configure: { enabled: false },
+    };
+    new vis.Network(container, data, options);
+</script>
+</body>
+</html>
