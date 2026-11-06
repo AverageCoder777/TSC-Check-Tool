@@ -117,8 +117,8 @@ pub fn open_and_sync_with_vscode(
 fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<String, String> {
     let regenerate = match (fs::metadata(temp_xml_path), fs::metadata(binary_asset_path)) {
         (Ok(xml_meta), Ok(bin_meta)) => {
-            let xml_mtime = xml_meta.modified().map_err(|e| e.to_string())?;
-            let bin_mtime = bin_meta.modified().map_err(|e| e.to_string())?;
+            let xml_mtime = xml_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let bin_mtime = bin_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             bin_mtime > xml_mtime
         }
         (Err(_), _) => true,
