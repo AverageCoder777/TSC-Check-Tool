@@ -1468,8 +1468,16 @@ fn audit_one_file(
                 .iter()
                 .find(|p| loose_path_exists(p))
                 .unwrap_or(&expected);
-            outgoing.push(crate::fs_utils::normalize_path(target));
-            if kind == AssetResourceKind::Texture && loose_path_exists(target) {
+            let resolved = if exists && loose_path_exists(target) {
+                target.clone()
+            } else {
+                expected.clone()
+            };
+            let norm = crate::fs_utils::normalize_path(&resolved);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
+            }
+            if exists && kind == AssetResourceKind::Texture && loose_path_exists(target) {
                 register_texture_siblings(target, &mut outgoing);
             }
             if !exists {
@@ -1511,9 +1519,16 @@ fn audit_one_file(
                 .iter()
                 .find(|p| loose_path_exists(p))
                 .unwrap_or(&expected);
-            outgoing.push(crate::fs_utils::normalize_path(target));
-
-            if loose_path_exists(target) {
+            let resolved = if exists && loose_path_exists(target) {
+                target.clone()
+            } else {
+                expected.clone()
+            };
+            let norm = crate::fs_utils::normalize_path(&resolved);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
+            }
+            if exists && loose_path_exists(target) {
                 register_texture_siblings(target, &mut outgoing);
             }
 
@@ -1560,9 +1575,16 @@ fn audit_one_file(
                 .iter()
                 .find(|p| loose_path_exists(p))
                 .unwrap_or(&expected);
-            outgoing.push(crate::fs_utils::normalize_path(target));
-
-            if loose_path_exists(target) {
+            let resolved = if exists && loose_path_exists(target) {
+                target.clone()
+            } else {
+                expected.clone()
+            };
+            let norm = crate::fs_utils::normalize_path(&resolved);
+            if !outgoing.contains(&norm) {
+                outgoing.push(norm);
+            }
+            if exists && loose_path_exists(target) {
                 register_texture_siblings(target, &mut outgoing);
             }
 

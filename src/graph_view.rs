@@ -31,7 +31,7 @@ impl NodeKind {
     }
     fn label_prefix(self) -> Option<&'static str> {
         match self {
-            NodeKind::Missing => Some("[MISSING] "),
+            NodeKind::Missing => Some("[Missing] "),
             _ => None,
         }
     }
@@ -283,7 +283,7 @@ fn full_graph_node_style(path: &Path, is_dead: bool, is_missing: bool) -> NodeSt
             color: "#ef4444",
             shape: "box",
             border_dash: Some([5, 2]),
-            label_prefix: Some("[MISSING] "),
+            label_prefix: Some("[Missing] "),
         };
     }
     if is_dead {
@@ -344,6 +344,10 @@ struct FullGraphNode {
 struct FullGraphEdge {
     from: usize,
     to: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dashes: Option<[usize; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
 }
 
 fn build_full_html(
@@ -441,7 +445,7 @@ fn build_full_html(
 
     rawNodes.forEach(n => {
         const isDead = n.label.startsWith("[DEAD] ");
-        const clean = n.label.replace(/^\\[(DEAD|MISSING)\\] /, "").toLowerCase();
+        const clean = n.label.replace(/^\\[(DEAD|Missing)\\] /, "").toLowerCase();
         if (isDead) {
             dead.push(n);
         } else if (clean.endsWith(".bin") || clean.endsWith(".xml")) {
@@ -564,9 +568,11 @@ fn build_full_html(
 
     // Interactive subgraph highlighting
     const toggleEdges = document.getElementById("toggle-edges");
+    let selectedNodeId = null;
 
     network.on("selectNode", function (params) {
-        const selectedId = params.nodes[0];
+        selectedNodeId = params.nodes[0];
+        const selectedId = selectedNodeId;
         const connectedEdges = new Set(network.getConnectedEdges(selectedId));
         const connectedNodes = new Set(network.getConnectedNodes(selectedId));
         connectedNodes.add(selectedId);
@@ -591,6 +597,7 @@ fn build_full_html(
     });
 
     network.on("deselectNode", function () {
+        selectedNodeId = null;
         const edgeUpdates = edges.get().map(e => ({
             id: e.id,
             hidden: !toggleEdges.checked,
@@ -609,6 +616,7 @@ fn build_full_html(
 
     // Hover reveal when background edges are hidden
     network.on("hoverNode", function (params) {
+        if (selectedNodeId !== null) return;
         if (toggleEdges.checked) return;
         const connectedEdges = new Set(network.getConnectedEdges(params.node));
         edges.update(edges.get().map(e => ({
@@ -617,6 +625,7 @@ fn build_full_html(
         })));
     });
     network.on("blurNode", function () {
+        if (selectedNodeId !== null) return;
         if (toggleEdges.checked) return;
         if (network.getSelectedNodes().length > 0) return;
         edges.update(edges.get().map(e => ({ id: e.id, hidden: true })));
@@ -645,7 +654,7 @@ fn build_full_html(
         return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
     }
 
-    function isMissing(label) { return label.startsWith("[MISSING] "); }
+    function isMissing(label) { return label.startsWith("[Missing] "); }
     function isDead(label) { return label.startsWith("[DEAD] "); }
 
     function applyFilters() {
@@ -659,7 +668,7 @@ fn build_full_html(
             const label = n.label;
             const missing = isMissing(label);
             const dead = isDead(label);
-            const e = extOf(label.replace(/^\[(MISSING|DEAD)\] /, ""));
+            const e = extOf(label.replace(/^\\[(Missing|DEAD)\\] /, ""));
 
             let visible = true;
             if (dead) {
@@ -826,7 +835,7 @@ pub fn generate_full_directory_graph(
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.display().to_string());
-        let label = format!("[MISSING] {label}");
+        let label = format!("[Missing] {label}");
         let title = crate::fs_utils::to_assets_relative_display(path);
 
         nodes.push(FullGraphNode {
@@ -844,9 +853,16 @@ pub fn generate_full_directory_graph(
         if let Some(&src_idx) = path_to_idx.get(src) {
             for dst in dsts {
                 if let Some(&dst_idx) = path_to_idx.get(dst) {
+                    let is_missing = graph.missing_files.contains(dst);
                     edges.push(FullGraphEdge {
                         from: src_idx,
                         to: dst_idx,
+                        dashes: if is_missing { Some([4usize, 2usize]) } else { None },
+                        color: Some(if is_missing {
+                            "#ef4444".to_string()
+                        } else {
+                            "#6b7280".to_string()
+                        }),
                     });
                 }
             }
@@ -904,7 +920,7 @@ mod tests {
             &[],
             &[PathBuf::from("Assets\\Kuju\\Product\\missing.TgPcDx")],
         );
-        assert!(html.contains("[MISSING] missing.TgPcDx"));
+        assert!(html.contains("[Missing] missing.TgPcDx"));
         assert!(html.contains("missing.TgPcDx"));
     }
 }
