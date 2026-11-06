@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zip::ZipArchive;
 
-/// Auditor-compatible product-level archive index (flattened member set).
 #[derive(Default)]
 pub struct ApArchiveCache {
     pub inner: Mutex<HashMap<PathBuf, HashSet<String>>>,
@@ -17,7 +16,6 @@ impl ApArchiveCache {
     pub fn new() -> Self {
         Self::default()
     }
-
     pub fn ensure_indexed(&self, product_dir: &Path) {
         let norm_dir = crate::fs_utils::normalize_path(product_dir);
         {
@@ -28,7 +26,6 @@ impl ApArchiveCache {
                 return;
             }
         }
-
         let mut files = HashSet::new();
         if let Ok(entries) = fs::read_dir(product_dir) {
             for entry in entries.flatten() {
@@ -81,12 +78,10 @@ impl ApArchiveCache {
                 }
             }
         }
-
         if let Ok(mut guard) = self.inner.lock() {
             guard.insert(norm_dir, files);
         }
     }
-
     pub fn lookup(&self, product_dir: &Path, relative: &str) -> bool {
         self.ensure_indexed(product_dir);
         let Ok(guard) = self.inner.lock() else {

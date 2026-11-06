@@ -211,7 +211,6 @@ impl CheckerApp {
             Err(error) => self.status = format!("Не удалось открыть инвентарь ассетов: {error}"),
         }
     }
-
     fn start_inventory_scan(&mut self) {
         let Some(result) = self.result.as_ref() else {
             self.status = "Сначала выполните проверку маршрута.".to_owned();
@@ -233,7 +232,6 @@ impl CheckerApp {
             crate::schedule_ui_sync();
         });
     }
-
     pub(crate) fn start_asset_replacement(
         &mut self,
         missing: crate::domain::MissingAsset,
@@ -340,7 +338,6 @@ impl CheckerApp {
             crate::schedule_ui_sync();
         });
     }
-
     pub(crate) fn start_next_asset_replacement(&mut self) {
         if self.asset_replacement.is_some() {
             return;
@@ -357,11 +354,9 @@ impl CheckerApp {
             );
         }
     }
-
     pub(crate) fn start_route_scan(&mut self) {
         self.begin_route_scan(false, true);
     }
-
     fn begin_route_scan(&mut self, preserve_incomplete: bool, allow_cache: bool) {
         if self.route_scan.is_some() {
             return;
@@ -395,7 +390,6 @@ impl CheckerApp {
             crate::schedule_ui_sync();
         });
     }
-
     pub(crate) fn start_check(&mut self) {
         if self.is_checking() {
             return;
@@ -444,7 +438,6 @@ impl CheckerApp {
             crate::schedule_ui_sync();
         });
     }
-
     pub(crate) fn refresh_scenarios(&mut self) {
         let Some(route) = self.selected_route.and_then(|index| self.routes.get(index)) else {
             self.scenarios.clear();
@@ -463,7 +456,6 @@ impl CheckerApp {
         self.scenario_consist_info = None;
         self.scenario_vehicle_files = None;
     }
-
     fn pop_ephemeral_progress(&mut self) {
         if self.has_ephemeral_progress {
             if let Some(pos) = self.check_log.rfind('\n') {
@@ -479,7 +471,6 @@ impl CheckerApp {
             self.has_ephemeral_progress = false;
         }
     }
-
     fn flush_progress_log(&mut self, force: bool) {
         let Some(pending) = self.progress_pending.take() else {
             return;
@@ -498,18 +489,14 @@ impl CheckerApp {
         self.has_ephemeral_progress = true;
         self.last_progress_log = Some(Instant::now());
     }
-
     pub(crate) fn is_checking(&self) -> bool {
         self.check.is_some()
     }
-
     pub(crate) fn receive_background_results(&mut self) {
         while let Ok(InventoryAction::ScanUmlauts) = self.inventory_action_rx.try_recv() {
             self.start_inventory_scan();
         }
-
         self.flush_progress_log(false);
-
         let inventory_scan_result =
             self.inventory_scan
                 .as_ref()
@@ -571,7 +558,6 @@ impl CheckerApp {
                 }
             }
         }
-
         let asset_replacement_result =
             self.asset_replacement
                 .as_ref()
@@ -627,7 +613,6 @@ impl CheckerApp {
                     if !report.backups.is_empty() {
                         self.status = format!("Создано резервных копий: {}.", report.backups.len());
                     }
-
                     let all_done = remaining_assets == Some((0, 0));
                     if all_done {
                         self.status = "Все отсутствующие ассеты обработаны. Выполняется итоговая проверка маршрута...".to_owned();
@@ -645,7 +630,6 @@ impl CheckerApp {
                 }
             }
         }
-
         let was_queue_empty_before = self.asset_replacement_queue.is_empty();
         self.start_next_asset_replacement();
         if was_queue_empty_before
@@ -656,7 +640,6 @@ impl CheckerApp {
             self.inventory_replacement_pending_check = false;
             self.start_check();
         }
-
         let route_result = self.route_scan.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(TryRecvError::Disconnected) => Some(Err(
@@ -693,7 +676,6 @@ impl CheckerApp {
                 Err(error) => self.status = error,
             }
         }
-
         while self.check.is_some() {
             let check_message = {
                 let rx = self.check.as_ref().unwrap();
@@ -764,7 +746,6 @@ impl CheckerApp {
                                 self.check_log
                                     .push_str(&format!("Ошибка Serz/XML: {error}\n"));
                             }
-
                             if let Ok(mut state) = self.asset_inventory_state.lock()
                                 && state.open
                             {

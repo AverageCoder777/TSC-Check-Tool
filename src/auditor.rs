@@ -1,11 +1,14 @@
 use rayon::prelude::*;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use serde::{Deserialize, Serialize};
+pub use crate::archive::ApArchiveCache;
+pub use crate::fs_utils::normalize_path;
+pub use crate::fs_utils::strip_shader_prefix;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AssetResourceKind {
@@ -60,23 +63,14 @@ pub struct AuditReport {
     pub dependency_graph: DependencyGraph,
 }
 
-/// Complete directory-wide asset dependency graph produced by an audit run.
 #[derive(Debug, Clone, Default)]
 pub struct FullAssetGraph {
-    /// Every file found on disk during the scan (normalized, lowercase).
     pub files_on_disk: HashSet<PathBuf>,
-    /// Forward dependency edges: source file -> set of files it depends on.
     pub forward_edges: HashMap<PathBuf, HashSet<PathBuf>>,
-    /// Referenced files that do not exist on disk.
     pub missing_files: HashSet<PathBuf>,
-    /// Files present on disk but unused by anything (orphans).
     pub dead_files: HashSet<PathBuf>,
 }
 
-pub use crate::archive::ApArchiveCache;
-pub use crate::fs_utils::normalize_path;
-
-// Статические прекомпилированные регулярные выражения
 macro_rules! static_tag_regex {
     ($name:ident, $tag:expr) => {
         fn $name() -> &'static Regex {
@@ -194,8 +188,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             }
         }
     }
-
-    // Ссылки на геометрию сцепок (uncoupled/coupled/receiver)
     for re in [
         re_uncoupled_geometry(),
         re_coupled_geometry(),
@@ -210,8 +202,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             out.push((AssetResourceKind::Geometry, raw));
         }
     }
-
-    // Извлечение сечений (cross-section / loft) -> .xsec
     for re in [
         re_cross_section_id(),
         re_middle_section(),
@@ -234,14 +224,11 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             out.push((AssetResourceKind::Geometry, raw));
         }
     }
-
-    // Извлечение анимаций и звуков в один проход
     {
         static TAG_RE: OnceLock<Regex> = OnceLock::new();
         let re = TAG_RE.get_or_init(|| {
             Regex::new(r"(?is)<([A-Za-z0-9_]+)[^>]*>(.*?)</([A-Za-z0-9_]+)>").unwrap()
         });
-
         for cap in re.captures_iter(xml) {
             let tag = cap.get(1).map(|m| m.as_str()).unwrap_or("");
             let close = cap.get(3).map(|m| m.as_str()).unwrap_or("");
@@ -251,28 +238,23 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             if is_blacklisted_sound_tag(tag) {
                 continue;
             }
-
             let lower_tag = tag.to_lowercase();
             let is_anim = lower_tag.ends_with("animname") || lower_tag.ends_with("animationname");
             let is_sound = lower_tag.contains("sound")
                 || lower_tag.contains("audio")
                 || lower_tag.contains("proxy");
-
             if !is_anim && !is_sound {
                 continue;
             }
-
             let inner = cap.get(2).map(|m| m.as_str()).unwrap_or("");
             if inner.contains('<') {
                 continue;
             }
-
             let raw = unescape_xml_entities(strip_tags(inner).trim());
             let clean = raw.lines().next().unwrap_or("").trim().to_string();
             if clean.is_empty() || is_numeric_token(&clean) {
                 continue;
             }
-
             if is_anim {
                 out.push((AssetResourceKind::Animation, clean));
             } else if is_sound {
@@ -280,8 +262,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             }
         }
     }
-
-    // Скрипты
     for sc in re_script_component()
         .captures_iter(xml)
         .filter_map(|c| c.get(1))
@@ -296,8 +276,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             out.push((AssetResourceKind::Script, raw));
         }
     }
-
-    // Дочерние объекты (Blueprints)
     for block in re_blueprint_lib()
         .captures_iter(xml)
         .filter_map(|c| c.get(1))
@@ -309,7 +287,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
         if blueprint.is_empty() {
             continue;
         }
-
         if provider.is_empty() || product.is_empty() {
             let comps: Vec<_> = product_root.components().collect();
             let after_assets = comps
@@ -342,7 +319,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             provider = prov;
             product = prod;
         }
-
         blueprint = blueprint.trim().to_string();
         if blueprint.to_lowercase().ends_with(".xml") {
             blueprint = format!("{}.bin", &blueprint[..blueprint.len() - 4]);
@@ -352,25 +328,20 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
         {
             blueprint = format!("{blueprint}.bin");
         }
-
         let raw = format!("{provider}\\{product}\\{blueprint}");
         if !raw.is_empty() && !is_numeric_token(&blueprint) {
             out.push((AssetResourceKind::ChildBlueprint, raw));
         }
     }
-
-    // Terrain textures (cMixTexDescriptor + Wang tiles)
     {
         static RE_MIX_TEX: OnceLock<Regex> = OnceLock::new();
         let re_mix_tex = RE_MIX_TEX.get_or_init(|| {
             Regex::new(r"(?s)<cMixTexDescriptor[\s>].*?</cMixTexDescriptor>").unwrap()
         });
-
         static RE_TERRAIN_BASE_TEX: OnceLock<Regex> = OnceLock::new();
         let re_terrain_base_tex = RE_TERRAIN_BASE_TEX.get_or_init(|| {
             Regex::new(r"<(?:BaseTextureName|BaseSpringTextureName|BaseSummerTextureName|BaseAutumnTextureName|BaseWinterTextureName)[^>]*>([^<]+)</").unwrap()
         });
-
         for desc in re_mix_tex.captures_iter(xml).filter_map(|c| c.get(0)) {
             let desc = desc.as_str();
             let is_wang = desc.contains(">eTrue<") || desc.contains(">true<");
@@ -391,8 +362,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             }
         }
     }
-
-    // Procedural flora textures
     {
         static RE_FLORA_TEX: OnceLock<Regex> = OnceLock::new();
         let re_flora = RE_FLORA_TEX
@@ -406,11 +375,8 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
             }
         }
     }
-
     out
 }
-
-pub use crate::fs_utils::strip_shader_prefix;
 
 #[inline]
 fn is_valid_texture_path(raw: &str) -> bool {
@@ -494,7 +460,6 @@ fn filter_material_blocks(xml: &str) -> String {
 pub fn extract_geo_texture_references(xml: &str) -> Vec<String> {
     let filtered = filter_material_blocks(xml);
     let mut out = Vec::new();
-
     for cap in re_texture_by_name().captures_iter(&filtered) {
         let inner = cap.get(1).map(|m| m.as_str()).unwrap_or("");
         for ecap in re_e_tag().captures_iter(inner) {
@@ -511,7 +476,6 @@ pub fn extract_geo_texture_references(xml: &str) -> Vec<String> {
             out.push(normalize_texture_reference(raw.as_str()));
         }
     }
-
     for re in [re_texture_name(), re_texture()] {
         for cap in re.captures_iter(&filtered) {
             let raw = unescape_xml_entities(cap.get(1).map(|m| m.as_str()).unwrap_or("").trim());
@@ -520,7 +484,6 @@ pub fn extract_geo_texture_references(xml: &str) -> Vec<String> {
             }
         }
     }
-
     let mut seen = HashSet::new();
     out.retain(|p| seen.insert(p.clone()));
     out
@@ -530,10 +493,8 @@ pub fn extract_xsec_texture_references(xml: &str) -> Vec<String> {
     static RE_XSEC_TEXTURE_BLOCK: OnceLock<Regex> = OnceLock::new();
     let re_block = RE_XSEC_TEXTURE_BLOCK
         .get_or_init(|| Regex::new(r"(?s)<Texture\b[^>]*>(.*?)</Texture>").unwrap());
-
     static RE_E_TAG_XSEC: OnceLock<Regex> = OnceLock::new();
     let re_e = RE_E_TAG_XSEC.get_or_init(|| Regex::new(r"<e\b[^>]*>([^<]+)</e>").unwrap());
-
     let mut out = Vec::new();
     for block in re_block.captures_iter(xml) {
         if let Some(content) = block.get(1) {
@@ -567,14 +528,11 @@ pub fn product_root_for(path: &Path, assets_root: &Path) -> PathBuf {
     } else {
         path
     };
-
     if let Ok(rel) = dir.strip_prefix(assets_root) {
         let comps: Vec<_> = rel.components().collect();
         if comps.len() >= 2 {
-            // Assets\Provider\Product\... -> Assets\Provider\Product
             return assets_root.join(comps[0]).join(comps[1]);
         } else if comps.len() == 1 {
-            // Assets\Provider -> Assets\Provider (1-level umbrella)
             return assets_root.join(comps[0]);
         } else {
             return assets_root.to_path_buf();
@@ -620,13 +578,12 @@ fn ensure_extension(raw: &str, kind: AssetResourceKind) -> String {
 fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
     let raw_norm = raw.replace('/', "\\");
     let stripped = strip_lod_and_shader_prefix(&raw_norm);
-
     let mut bases = vec![stripped.clone()];
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
     if stripped != raw_norm {
         bases.push(raw_norm.clone());
     }
-
-    let mut out = Vec::new();
     for base in bases {
         let cleaned = base.replace('/', "\\");
         match kind {
@@ -704,8 +661,6 @@ fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
             }
         }
     }
-
-    let mut seen = HashSet::new();
     out.retain(|s| seen.insert(s.clone()));
     out
 }
@@ -714,24 +669,20 @@ fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) 
     if kind == AssetResourceKind::Texture {
         return false;
     }
-
     let clean = norm.trim_start_matches('/').replace('\\', "/");
     let lower = clean.to_lowercase();
-
     if lower.starts_with('.') || lower.starts_with("..") {
         return false;
     }
     if lower.starts_with("assets/") {
         return true;
     }
-
     let parts: Vec<&str> = lower.split('/').filter(|p| !p.is_empty()).collect();
     if parts.len() >= 2 {
         let p1 = parts[0];
         if p1 == ".." || p1 == "." {
             return false;
         }
-
         const KNOWN_PROVIDERS: &[&str] = &[
             "kuju",
             "dtg",
@@ -751,7 +702,6 @@ fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) 
         if KNOWN_PROVIDERS.contains(&p1) {
             return true;
         }
-
         let prov_dir = assets_root.join(p1);
         if prov_dir.is_dir() && !p1.starts_with('.') {
             return true;
@@ -773,7 +723,7 @@ fn candidate_paths(
     }
     let norm = strip_shader_prefix(&norm).replace('/', "\\");
     let rels = candidate_relatives(&norm, kind);
-
+    let mut seen = HashSet::new();
     let mut cands = Vec::new();
     if kind == AssetResourceKind::Texture {
         for rel in &rels {
@@ -825,7 +775,6 @@ fn candidate_paths(
                     | "animation"
                     | "animations"
             );
-
             if is_relative {
                 cands.push(normalize_path(&parent.join(&rel_norm)));
                 cands.push(normalize_path(&product_root.join(&rel_norm)));
@@ -842,8 +791,6 @@ fn candidate_paths(
             }
         }
     }
-
-    let mut seen = HashSet::new();
     cands.retain(|p| seen.insert(p.clone()));
     cands
 }
@@ -892,7 +839,6 @@ fn ap_exists(
         norm = norm["assets/".len()..].to_string();
     }
     let norm = strip_shader_prefix(&norm).replace('/', "\\");
-
     let mut is_global = is_global_asset_ref(&norm, kind, assets_root);
     let first = norm
         .split(['\\', '/'])
@@ -905,10 +851,8 @@ fn ap_exists(
     {
         is_global = true;
     }
-
     for rel in candidate_relatives(&norm, kind) {
         let cleaned = rel.replace('/', "\\");
-
         if is_global {
             let parts: Vec<&str> = cleaned.split('\\').filter(|p| !p.is_empty()).collect();
             if parts.len() >= 3 {
@@ -940,8 +884,6 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
         return;
     };
     let stem = stem_os.to_string_lossy();
-
-    // Strip a trailing seasonal suffix (any case) to derive the base stem.
     const SEASON_SUFFIXES_LOWER: [&str; 4] = ["_wi", "_su", "_sp", "_au"];
     let base: &str = if SEASON_SUFFIXES_LOWER
         .iter()
@@ -951,12 +893,9 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
     } else {
         &stem
     };
-
-    // All seasonal suffix variants, covering every case convention used by assets.
     const SEASONAL_VARIANTS: [&str; 12] = [
         "_Wi", "_wi", "_WI", "_Su", "_su", "_SU", "_Sp", "_sp", "_SP", "_Au", "_au", "_AU",
     ];
-
     for suf in SEASONAL_VARIANTS {
         let seasonal = dir.join(format!("{}{}.TgPcDx", base, suf));
         if loose_path_exists(&seasonal) {
@@ -966,8 +905,6 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
             }
         }
     }
-
-    // Normal-map companions.
     let lower_stem = stem.to_lowercase();
     if lower_stem.ends_with("_nm") {
         let base_nm = &stem[..stem.len().saturating_sub(3)];
@@ -1007,7 +944,6 @@ fn find_assets_root(start_path: &Path) -> Option<PathBuf> {
 }
 
 pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut Vec<PathBuf>) {
-    // 1. Same-Stem Safety Net
     for ext in &["GeoPcDx", "XSec"] {
         let paired = bin_path.with_extension(ext);
         if loose_path_exists(&paired) {
@@ -1017,43 +953,34 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
             }
         }
     }
-
-    // 2. Raw byte string regex matching
     let assets_root = find_assets_root(bin_path);
     let parent_dir = bin_path.parent();
     let lossy_text = String::from_utf8_lossy(bytes);
-
     static RE_EXT: OnceLock<Regex> = OnceLock::new();
     static RE_LOD: OnceLock<Regex> = OnceLock::new();
-
     let re_ext = RE_EXT.get_or_init(|| {
         Regex::new(r"(?i)[a-zA-Z0-9_\-\\/\[\]]+?\.(?:geopcdx|tgpcdx|xsec|bin|xml)").unwrap()
     });
     let re_lod = RE_LOD.get_or_init(|| {
         Regex::new(r"(?i)[a-zA-Z0-9_\-\\/]+?\[[0-9a-fA-F]{2}\][a-zA-Z0-9_\-]+").unwrap()
     });
-
     let mut try_register = |rel_str: &str| {
         let clean = rel_str
             .trim_matches(|c| c == '\0' || c == '"' || c == '\'')
             .replace('/', "\\");
         let clean = clean.trim_start_matches('\\');
-        // Strip any [xx] hex seasonal/LOD bitmask prefixes.
         static RE_HEX_BRACKET: OnceLock<Regex> = OnceLock::new();
         let re_hex = RE_HEX_BRACKET.get_or_init(|| Regex::new(r"\[[0-9a-fA-F]{2}\]").unwrap());
         let clean = re_hex.replace_all(clean, "").to_string();
         if clean.is_empty() {
             return;
         }
-
         let is_tgpcdx = clean
             .rsplit(['\\', '/'])
             .next()
             .and_then(|name| name.rsplit_once('.'))
             .map(|(_, ext)| ext.eq_ignore_ascii_case("tgpcdx"))
             .unwrap_or(false);
-
-        // Test relative to Assets root
         if let Some(root) = &assets_root {
             let candidate = root.join(&clean);
             if loose_path_exists(&candidate) {
@@ -1067,8 +994,6 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
                 return;
             }
         }
-
-        // Test relative to parent directory
         if let Some(dir) = parent_dir {
             let candidate = dir.join(&clean);
             if loose_path_exists(&candidate) {
@@ -1082,7 +1007,6 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
             }
         }
     };
-
     for mat in re_ext.find_iter(&lossy_text) {
         let s = mat.as_str();
         if s.to_ascii_lowercase().ends_with(".xml") {
@@ -1093,7 +1017,6 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
             try_register(s);
         }
     }
-
     for mat in re_lod.find_iter(&lossy_text) {
         let raw = mat.as_str();
         if let (Some(b_open), Some(b_close)) = (raw.find('['), raw.find(']'))

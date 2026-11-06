@@ -1,10 +1,9 @@
+use crate::AssetInventoryWindow;
 use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-use crate::AssetInventoryWindow;
 
 pub struct InventoryController {
     pub window: AssetInventoryWindow,
@@ -18,8 +17,6 @@ impl InventoryController {
         let weak = window.as_weak();
         Self { window, weak, app }
     }
-
-    /// Вспомогательный метод для согласованного обновления таблицы инвентаря
     pub(crate) fn update_inventory_view(
         inv: &AssetInventoryWindow,
         state: &crate::app::AssetInventoryWindowState,
@@ -29,9 +26,7 @@ impl InventoryController {
         inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
     }
-
     pub fn bind(&self) {
-        // Переключение отображения "Только отсутствующие"
         {
             let handle = self.weak.clone();
             let app = self.app.clone();
@@ -39,7 +34,6 @@ impl InventoryController {
                 let Some(inv) = handle.upgrade() else { return };
                 let cur = inv.get_show_missing_only();
                 inv.set_show_missing_only(!cur);
-
                 if let Ok(app) = app.lock()
                     && let Ok(state) = app.asset_inventory_state.lock()
                 {
@@ -47,8 +41,6 @@ impl InventoryController {
                 }
             });
         }
-
-        // Сортировка по возрастанию
         {
             let handle = self.weak.clone();
             let app = self.app.clone();
@@ -72,8 +64,6 @@ impl InventoryController {
                 }
             });
         }
-
-        // Сортировка по убыванию
         {
             let handle = self.weak.clone();
             let app = self.app.clone();
@@ -97,8 +87,6 @@ impl InventoryController {
                 }
             });
         }
-
-        // Изменение поискового запроса
         {
             let handle = self.weak.clone();
             let app = self.app.clone();
@@ -112,8 +100,6 @@ impl InventoryController {
                 }
             });
         }
-
-        // Выбор строки и двойной клик (переход в проводник)
         {
             let mut inv_last_row: i32 = -1;
             let mut inv_last_click = Instant::now();
@@ -124,40 +110,32 @@ impl InventoryController {
             self.window.on_row_selected(move |row| {
                 let Some(inv) = handle.upgrade() else { return };
                 inv.set_selected_asset(row);
-
                 let now = Instant::now();
                 let is_double = row == inv_last_row
                     && now.saturating_duration_since(inv_last_click)
                         <= Duration::from_millis(INV_DOUBLE_CLICK_MS);
                 inv_last_row = row;
                 inv_last_click = now;
-
                 if !is_double || row < 0 {
                     return;
                 }
-
                 let rows = inv.get_inventory_rows();
                 if (row as usize) >= rows.row_count() {
                     return;
                 }
-
                 let first_cell = rows.row_data(row as usize).and_then(|rm| rm.row_data(0));
                 let path_text = first_cell.map(|c| c.text.to_string()).unwrap_or_default();
                 if path_text.is_empty() {
                     return;
                 }
-
                 let rw_path = if let Ok(app) = app.lock() {
                     app.clean_rw_path()
                 } else {
                     return;
                 };
-
                 if rw_path.as_os_str().is_empty() {
                     return;
                 }
-
-                #[cfg(windows)]
                 {
                     let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                     if full.exists() {
@@ -168,13 +146,8 @@ impl InventoryController {
                         let _ = crate::windows::open_in_file_explorer(&target);
                     }
                 }
-                // Чтобы клиппи не ругался на "пустой" для не винды return; выше
-                #[cfg(not(windows))]
-                {}
             });
         }
-
-        // Открытие и синхронизация в VS Code
         {
             let handle = self.weak.clone();
             let app = self.app.clone();
@@ -184,28 +157,23 @@ impl InventoryController {
                 if row < 0 {
                     return;
                 }
-
                 let rows = inv.get_inventory_rows();
                 if (row as usize) >= rows.row_count() {
                     return;
                 }
-
                 let first_cell = rows.row_data(row as usize).and_then(|rm| rm.row_data(0));
                 let path_text = first_cell.map(|c| c.text.to_string()).unwrap_or_default();
                 if path_text.is_empty() {
                     return;
                 }
-
                 let rw_path = if let Ok(app) = app.lock() {
                     app.clean_rw_path()
                 } else {
                     return;
                 };
-
                 if rw_path.as_os_str().is_empty() {
                     return;
                 }
-
                 let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                 if full.is_file() {
                     let app_for_status = app.clone();
@@ -222,8 +190,6 @@ impl InventoryController {
                 }
             });
         }
-
-        // Замена ассета в маршруте
         {
             let handle = self.weak.clone();
             let app = self.app.clone();
@@ -236,7 +202,6 @@ impl InventoryController {
                 if (selected as usize) >= rows.row_count() {
                     return;
                 }
-
                 let first_cell = rows
                     .row_data(selected as usize)
                     .and_then(|rm| rm.row_data(0));
@@ -244,7 +209,6 @@ impl InventoryController {
                 if asset_path.is_empty() {
                     return;
                 }
-
                 let (rw_path, asset) = {
                     let Ok(app) = app.lock() else { return };
                     let rw = app.clean_rw_path();
@@ -255,14 +219,12 @@ impl InventoryController {
                     };
                     (rw, asset)
                 };
-
                 if rw_path.as_os_str().is_empty() {
                     return;
                 }
                 let Some(asset) = asset else {
                     return;
                 };
-
                 if !crate::assets::is_safe_for_global_replacement(&asset.path, &asset.uses) {
                     if let Ok(mut app) = app.lock() {
                         app.status =
@@ -271,31 +233,25 @@ impl InventoryController {
                     }
                     return;
                 }
-
                 let assets_dir = rw_path.join("Assets");
                 let start_dir = crate::inventory_ui::existing_directory_upwards(
                     &crate::inventory_ui::asset_directory(&assets_dir, &asset.path),
                 )
                 .unwrap_or_else(|| assets_dir.clone());
-
                 let selected_file = rfd::FileDialog::new()
                     .set_title("Заменить в маршруте...")
                     .add_filter("RailWorks Blueprint (*.bin)", &["bin"])
                     .set_directory(&start_dir)
                     .pick_file();
-
                 let Some(picked) = selected_file else {
                     return;
                 };
-
                 let replacement_relative = picked
                     .strip_prefix(&assets_dir)
                     .map(|rel| rel.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_else(|_| picked.to_string_lossy().replace('\\', "/"));
 
                 let asset_type = crate::assets::classify_route_asset_type(&asset.path, &asset.uses);
-
-                // Исключаем путевые мастер-файлы
                 let uses: Vec<_> = asset
                     .uses
                     .into_iter()
@@ -305,11 +261,9 @@ impl InventoryController {
                             && !u.source_file_search.contains("\\networks\\")
                     })
                     .collect();
-
                 if uses.is_empty() {
                     return;
                 }
-
                 let missing = crate::domain::MissingAsset {
                     path: asset.path,
                     uses,
@@ -317,7 +271,6 @@ impl InventoryController {
                     is_corrupted_link: false,
                     asset_type,
                 };
-
                 if let Ok(mut app) = app.lock() {
                     app.inventory_replacement_pending_check = true;
                     app.asset_replacement_queue
@@ -326,8 +279,6 @@ impl InventoryController {
                 }
             });
         }
-
-        // Сканирование умляутов
         {
             let app = self.app.clone();
             self.window.on_scan_umlauts(move || {
@@ -339,7 +290,6 @@ impl InventoryController {
             });
         }
     }
-
     pub fn refresh(&self) {
         let Ok(mut app) = self.app.lock() else {
             return;
@@ -350,7 +300,6 @@ impl InventoryController {
         let Some(inv) = self.weak.upgrade() else {
             return;
         };
-
         if let Ok(state) = app.asset_inventory_state.lock() {
             Self::update_inventory_view(&inv, &state);
         }

@@ -1,8 +1,7 @@
 use super::{
     ScenarioClueCollection, check_route, decode_xml_text, extract_asset_references,
-    extract_scenario_clues, inspect_route_folder,
-    is_skipped_route_scan_directory, parse_route_name, scan_routes,
-    scan_routes_with_ignored,
+    extract_scenario_clues, inspect_route_folder, is_skipped_route_scan_directory,
+    parse_route_name, scan_routes, scan_routes_with_ignored,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -62,8 +61,6 @@ fn route_check_only_collects_files_from_allowed_directories() {
     );
 }
 
-
-
 #[test]
 fn parses_english_route_name_and_xml_entities() {
     let xml = r#"<DisplayName><Localisation-cUserLocalisedString><English d:type="cDeltaString">London &amp; Brighton</English></Localisation-cUserLocalisedString></DisplayName>"#;
@@ -115,7 +112,6 @@ fn ignores_blueprint_paths_that_escape_the_assets_directory() {
 
     assert!(extract_asset_references(xml).is_empty());
 }
-
 
 #[test]
 fn separates_complete_routes_from_incomplete_folder_reports() {

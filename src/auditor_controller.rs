@@ -1,36 +1,27 @@
+use crate::{AuditorState, FolderAuditorWindow};
 use slint::ComponentHandle;
 use slint::Weak;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::{AuditorState, FolderAuditorWindow};
-
-/// Validates that `path` is a real directory strictly inside an `Assets` ancestor
-/// (at least one level deep: `Assets/<Provider>` or `Assets/<Provider>/<Product>`).
-/// Rejects the `Assets` root itself and any path not inside `Assets`.
 pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
         return Err(
             crate::gettext!("Указанный путь не существует или не является папкой!").to_string(),
         );
     }
-
-    // Locate the 'Assets' ancestor
     let assets_ancestor = path.ancestors().find(|p| {
         p.file_name()
             .map(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
             .unwrap_or(false)
     });
-
     let Some(assets_root) = assets_ancestor else {
         return Err(
             crate::gettext!("Папка должна находиться внутри каталога RailWorks/Assets!")
                 .to_string(),
         );
     };
-
-    // If path is identical to the Assets root itself, reject it
     if path == assets_root
         || path
             .file_name()
@@ -38,14 +29,11 @@ pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     {
         return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком! Выберите папку провайдера или продукта (например, Assets/Kuju).").to_string());
     }
-
-    // Ensure it is strictly inside Assets (rel components >= 1)
     if let Ok(rel) = path.strip_prefix(assets_root)
         && rel.components().count() == 0
     {
         return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком!").to_string());
     }
-
     Ok(path.to_path_buf())
 }
 
@@ -70,9 +58,7 @@ impl AuditorController {
             is_busy: Arc::new(AtomicBool::new(false)),
         }
     }
-
     pub fn bind(&self, _ui_weak: Weak<crate::MainWindow>) {
-        // Pick folder
         {
             let handle = self.weak.clone();
             self.window.on_pick_folder(move || {
@@ -90,12 +76,10 @@ impl AuditorController {
                         .into_iter()
                         .filter_map(|p| validate_audit_folder(&p).ok())
                         .collect();
-
                     if valid_folders.is_empty() {
                         w.set_scan_status_text(crate::gettext!("Ошибка: выбранные папки должны находится внутри каталога Assets и не быть самим каталогом Assets!").into());
                         return;
                     }
-
                     let joined = valid_folders
                         .iter()
                         .map(|p| p.to_string_lossy().to_string())
@@ -105,19 +89,15 @@ impl AuditorController {
                 }
             });
         }
-
-        // Start audit
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
             let audit_generation = self.audit_generation.clone();
             let is_busy = self.is_busy.clone();
-
             self.window.on_start_audit(move |folder_path| {
                 if is_busy.swap(true, Ordering::SeqCst) {
                     return;
                 }
-
                 let paths: Vec<PathBuf> = folder_path
                     .as_str()
                     .split([';', ','])
@@ -131,8 +111,6 @@ impl AuditorController {
                     is_busy.store(false, Ordering::SeqCst);
                     return;
                 }
-
-                // Validate every path strictly inside Assets (not the Assets root itself).
                 for p in &paths {
                     match validate_audit_folder(p) {
                         Ok(_) => {}
@@ -148,7 +126,6 @@ impl AuditorController {
                         }
                     }
                 }
-
                 if let Some(w) = handle.upgrade() {
                     w.set_scan_progress(0.0);
                     w.set_scan_status_text(crate::gettext!("Подготовка к аудиту...").into());
@@ -161,12 +138,10 @@ impl AuditorController {
                     w.set_is_scanning(true);
                     w.set_is_scan_completed(false);
                 }
-
                 let (rw_path, max_threads) = crate::app_state()
                     .lock()
                     .map(|a| (a.clean_rw_path(), a.serz_process_limit.max(1)))
                     .unwrap_or_else(|_| (PathBuf::new(), 8));
-
                 let assets_root = paths[0]
                     .ancestors()
                     .find(|p| {
@@ -187,19 +162,16 @@ impl AuditorController {
                                 .unwrap_or_else(|| paths[0].clone())
                         }
                     });
-
                 let filter = handle
                     .upgrade()
                     .map(|w| w.get_current_filter().to_string())
                     .unwrap_or_else(|| "all".to_string());
-
                 let generation_id = audit_generation.fetch_add(1, Ordering::SeqCst) + 1;
                 let generation = audit_generation.clone();
                 let thread_handle = handle.clone();
                 let thread_state = state.clone();
                 let is_busy_thread = is_busy.clone();
                 let ap_cache = crate::auditor::ApArchiveCache::new();
-
                 std::thread::spawn(move || {
                     let progress_handle = thread_handle.clone();
                     let progress_gen = generation.clone();
@@ -227,7 +199,6 @@ impl AuditorController {
                                 }
                             });
                         });
-
                     let audit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         crate::auditor::audit_folders_with_progress(
                             &paths,
@@ -237,7 +208,6 @@ impl AuditorController {
                             Some(progress_cb),
                         )
                     }));
-
                     let report = match audit_result {
                         Ok(r) => r,
                         Err(panic) => {
@@ -260,14 +230,11 @@ impl AuditorController {
                             return;
                         }
                     };
-
                     if generation.load(Ordering::SeqCst) != generation_id {
                         return;
                     }
-
                     let (report, full_graph) = report;
                     let total_issues = report.broken_references.len();
-
                     let mut items = report.broken_references;
                     let graph = report.dependency_graph;
                     let (col, asc) = if let Ok(mut s) = thread_state.lock() {
@@ -279,8 +246,6 @@ impl AuditorController {
                     } else {
                         (0, true)
                     };
-
-                    // counts from all items (before filter) need recompute; store all_items already
                     let all_for_counts = thread_state.lock().map(|s| s.all_items.clone()).unwrap_or_default();
                     let count_all = all_for_counts.len() as i32;
                     let count_geometry = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Geometry).count() as i32;
@@ -289,18 +254,14 @@ impl AuditorController {
                     let count_sounds = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Sound).count() as i32;
                     let count_children = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::ChildBlueprint).count() as i32;
                     let count_dead = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Unused).count() as i32;
-
                     crate::auditor::filter_items(&mut items, &filter);
                     crate::auditor::sort_items(&mut items, col, asc);
-
                     if let Ok(mut s) = thread_state.lock() {
                         s.display_items = items.clone();
                     }
-
                     if generation.load(Ordering::SeqCst) != generation_id {
                         return;
                     }
-
                     let h = thread_handle;
                     let _ = slint::invoke_from_event_loop(move || {
                         if generation.load(Ordering::Relaxed) != generation_id {
@@ -332,36 +293,28 @@ impl AuditorController {
                             w.set_is_scan_completed(true);
                         }
                     });
-
                     is_busy_thread.store(false, Ordering::SeqCst);
                 });
             });
         }
-
-        // Filter changed
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
-
             self.window.on_filter_changed(move |filter| {
                 let Some(w) = handle.upgrade() else { return };
                 let mut items = state
                     .lock()
                     .map(|s| s.all_items.clone())
                     .unwrap_or_default();
-
                 let (col, asc) = state
                     .lock()
                     .map(|s| (s.sort_col, s.sort_asc))
                     .unwrap_or((0, true));
-
                 crate::auditor::filter_items(&mut items, filter.as_str());
                 crate::auditor::sort_items(&mut items, col, asc);
-
                 if let Ok(mut s) = state.lock() {
                     s.display_items = items.clone();
                 }
-
                 w.set_current_filter(filter);
                 w.set_filtered_rows(map_broken_resources_to_ui(&items));
                 w.set_selected_row_index(-1);
@@ -371,8 +324,6 @@ impl AuditorController {
                 w.set_outgoing_refs_preview("".into());
             });
         }
-
-        // Row selected
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
@@ -386,12 +337,10 @@ impl AuditorController {
                     }
                     return;
                 }
-
                 let selected_item = state
                     .lock()
                     .ok()
                     .and_then(|s| s.display_items.get(row as usize).cloned());
-
                 let (is_tex, has_missing) = selected_item
                     .as_ref()
                     .map(|item| {
@@ -425,7 +374,6 @@ impl AuditorController {
                         (is_tex, has_missing)
                     })
                     .unwrap_or((false, false));
-
                 let (incoming, outgoing) = state.lock().ok().map(|s| {
                     let item = s.display_items.get(row as usize);
                     let path = item.map(|i| {
@@ -491,19 +439,15 @@ impl AuditorController {
                 }
             });
         }
-
-        // Show dependency graph in browser
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
-
             self.window.on_show_graph_clicked(move || {
                 let Some(w) = handle.upgrade() else { return };
                 let row = w.get_selected_row_index();
                 if row < 0 {
                     return;
                 }
-
                 let extracted = state.lock().ok().and_then(|s| {
                     let item = s.display_items.get(row as usize).cloned()?;
                     let path = if item.kind == crate::auditor::AssetResourceKind::Unused {
@@ -536,14 +480,11 @@ impl AuditorController {
                     };
                     Some((np, incoming, outgoing, missing_refs))
                 });
-
                 let Some((selected_path, incoming, outgoing, missing_refs)) = extracted else {
                     return;
                 };
-
                 let incoming: Vec<PathBuf> = incoming.into_iter().collect();
                 let outgoing: Vec<PathBuf> = outgoing.into_iter().collect();
-
                 let thread_handle = handle.clone();
                 std::thread::spawn(move || {
                     if let Err(e) = crate::graph_view::open_dependency_graph_in_browser(
@@ -563,12 +504,9 @@ impl AuditorController {
                 });
             });
         }
-
-        // Show full directory graph (all scanned files) in browser
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
-
             self.window.on_open_full_graph(move || {
                 let thread_handle = handle.clone();
                 let state_clone = state.clone();
@@ -599,8 +537,6 @@ impl AuditorController {
                 });
             });
         }
-
-        // Open source file folder
         {
             let state = self.state.clone();
             self.window.on_open_source_file(move |row| {
@@ -619,8 +555,6 @@ impl AuditorController {
                 }
             });
         }
-
-        // Open missing target folder
         {
             let state = self.state.clone();
             self.window.on_open_missing_target_folder(move |row| {
@@ -648,8 +582,6 @@ impl AuditorController {
                 }
             });
         }
-
-        // Sort
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
@@ -683,8 +615,6 @@ impl AuditorController {
                 w.set_outgoing_refs_preview("".into());
             });
         }
-
-        // Edit in VS Code
         {
             let handle = self.weak.clone();
             let state = self.state.clone();

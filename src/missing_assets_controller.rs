@@ -25,9 +25,7 @@ impl MissingAssetsController {
             clipboard,
         }
     }
-
     pub fn bind(&self) {
-        // Копирование пути в буфер обмена
         {
             let clipboard = self.clipboard.clone();
             self.window.on_copy_to_clipboard(move |text| {
@@ -41,8 +39,6 @@ impl MissingAssetsController {
                 }
             });
         }
-
-        // Копирование всех отсутствующих ассетов
         {
             let clipboard = self.clipboard.clone();
             let handle = self.weak.clone();
@@ -66,8 +62,6 @@ impl MissingAssetsController {
                 }
             });
         }
-
-        // Закрыть окно
         {
             let handle = self.weak.clone();
             self.window.on_close_missing(move || {
@@ -76,8 +70,6 @@ impl MissingAssetsController {
                 }
             });
         }
-
-        // Исправить одиночную поврежденную ссылку
         {
             let app = self.app.clone();
             self.window.on_repair_corrupted(move |idx| {
@@ -87,7 +79,6 @@ impl MissingAssetsController {
                     .as_ref()
                     .and_then(|r| r.missing_assets.get(idx as usize))
                     .cloned();
-
                 if let Some(missing) = missing
                     && let Some(repair) = missing.suggested_repair.clone()
                 {
@@ -104,8 +95,6 @@ impl MissingAssetsController {
                 }
             });
         }
-
-        // Исправить все поврежденные ссылки
         {
             let app = self.app.clone();
             self.window.on_repair_all_corrupted(move || {
@@ -127,19 +116,15 @@ impl MissingAssetsController {
                         .collect(),
                     None => VecDeque::new(),
                 };
-
                 let repairable_count = queue.len();
                 if repairable_count == 0 {
                     return;
                 }
-
                 app.asset_replacement_queue = queue;
                 app.missing_assets_shown = false;
                 app.start_next_asset_replacement();
             });
         }
-
-        // Инспекция размещения на тайлах
         {
             let app = self.app.clone();
             let handle = self.weak.clone();
@@ -177,15 +162,12 @@ impl MissingAssetsController {
                         Some((missing.path.clone(), tiles))
                     })
                     .unwrap_or_default();
-
                 if let Some(mw) = handle.upgrade() {
                     mw.set_active_tile_asset(asset.into());
                     mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::from(tiles)));
                 }
             });
         }
-
-        // Замена отсутствующего ассета
         {
             let app = self.app.clone();
             self.window.on_replace_missing(move |idx| {
@@ -194,7 +176,6 @@ impl MissingAssetsController {
                     let Some(missing) = app.result.as_ref().and_then(|r| r.missing_assets.get(idx as usize)).cloned() else { return };
                     (missing, app.clean_rw_path())
                 };
-
                 if !crate::assets::is_safe_for_global_replacement(&missing.path, &missing.uses) {
                     if let Ok(mut app) = app.lock() {
                         app.status = "Замена путевых объектов заблокирована для предотвращения повреждения маршрута.".to_owned();
@@ -202,13 +183,11 @@ impl MissingAssetsController {
                     }
                     return;
                 }
-
                 let assets_path = rw_path.join("Assets");
                 let start_dir = crate::inventory_ui::existing_directory_upwards(
                     &crate::inventory_ui::asset_directory(&assets_path, &missing.path),
                 )
                 .unwrap_or_else(|| assets_path.clone());
-
                 let selected = rfd::FileDialog::new()
                     .set_title("Выберите BIN/AP нового объекта")
                     .add_filter("RailWorks Assets (*.bin, *.ap)", &["bin", "ap"])
@@ -216,24 +195,20 @@ impl MissingAssetsController {
                     .add_filter("AP Archive (*.ap)", &["ap"])
                     .set_directory(&start_dir)
                     .pick_file();
-
                 let Some(replacement) = selected else { return };
                 let is_ap = replacement
                     .extension()
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| e.eq_ignore_ascii_case("ap"));
-
                 if is_ap {
                     let entries = crate::blueprint::ap_archive_entries(&replacement);
                     let archive_name = replacement
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
-
                     crate::AP_PICKER_CONTROLLER.with(|cell| {
                         let borrowed = cell.borrow();
                         let Some(pc) = borrowed.as_ref() else { return };
-
                         if let Ok(mut st) = pc.state.lock() {
                             *st = Some(crate::ap_picker_controller::ApPickerState {
                                 archive_path: replacement.clone(),
@@ -290,14 +265,12 @@ impl MissingAssetsController {
         };
         let missing_assets = &result.missing_assets;
         let n = missing_assets.len();
-
         let mut paths = Vec::with_capacity(n);
         let mut counts = Vec::with_capacity(n);
         let mut repairs = Vec::with_capacity(n);
         let mut corrupted = Vec::with_capacity(n);
         let mut types = Vec::with_capacity(n);
         let mut safe = Vec::with_capacity(n);
-
         for m in missing_assets {
             paths.push(slint::SharedString::from(m.path.as_str()));
             counts.push(m.uses.len() as i32);
@@ -312,7 +285,6 @@ impl MissingAssetsController {
                 &m.path, &m.uses,
             ));
         }
-
         if let Some(mw) = self.weak.upgrade() {
             mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
             mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));

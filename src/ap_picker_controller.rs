@@ -36,7 +36,6 @@ impl ApPickerController {
     }
 
     pub fn bind(&self) {
-        // Поиск по содержимому архива без избыточного клонирования памяти
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
@@ -62,8 +61,6 @@ impl ApPickerController {
                 }
             });
         }
-
-        // Выбор элемента
         {
             let handle = self.weak.clone();
             self.window.on_select_entry(move |idx| {
@@ -72,8 +69,6 @@ impl ApPickerController {
                 }
             });
         }
-
-        // Отмена
         {
             let handle = self.weak.clone();
             self.window.on_cancel(move || {
@@ -83,8 +78,6 @@ impl ApPickerController {
                 }
             });
         }
-
-        // Подтверждение выбора и фоновое извлечение
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
@@ -94,18 +87,15 @@ impl ApPickerController {
                     Some(p) => p,
                     None => return,
                 };
-
                 let idx = pw.get_selected_index();
                 if idx < 0 {
                     return;
                 }
-
                 let filtered = pw.get_filtered_entries();
                 let selected_entry = match filtered.row_data(idx as usize) {
                     Some(v) => v.to_string(),
                     None => return,
                 };
-
                 let (archive_path, missing, rw_path) = {
                     let guard = match state.lock() {
                         Ok(g) => g,
@@ -114,31 +104,25 @@ impl ApPickerController {
                     let Some(s) = guard.as_ref() else { return };
                     (s.archive_path.clone(), s.missing.clone(), s.rw_path.clone())
                 };
-
                 pw.set_extracting(true);
-
                 let handle_t = handle.clone();
                 let app_t = app.clone();
                 let entry = selected_entry;
-
                 std::thread::spawn(move || {
                     let assets_path = crate::app::clean_rw_path(&rw_path).join("Assets");
                     let target_file_path =
                         resolve_extraction_path(&assets_path, &archive_path, &entry);
-
                     let extract_result = crate::archive::extract_archive_member(
                         &archive_path,
                         &entry,
                         &target_file_path,
                     );
-
                     match extract_result {
                         Ok(()) => {
                             let replacement_relative = target_file_path
                                 .strip_prefix(&assets_path)
                                 .map(|p| p.to_string_lossy().replace('\\', "/"))
                                 .unwrap_or_else(|_| entry.replace('\\', "/"));
-
                             if let Ok(mut app) = app_t.lock() {
                                 app.start_asset_replacement(
                                     missing,
@@ -148,7 +132,6 @@ impl ApPickerController {
                                     BTreeMap::new(),
                                 );
                             }
-
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(pw) = handle_t.upgrade() {
                                     pw.set_extracting(false);
@@ -176,11 +159,9 @@ impl ApPickerController {
     }
 }
 
-/// Вычисляет правильный путь распаковки с сохранением иерархии папок чертежа RailWorks.
 fn resolve_extraction_path(assets_path: &Path, archive_path: &Path, entry: &str) -> PathBuf {
     let norm_entry = entry.replace('\\', "/");
     let norm_entry = norm_entry.trim_start_matches('/');
-
     let archive_rel = archive_path.strip_prefix(assets_path).ok();
     let mut parts: Vec<String> = archive_rel
         .map(|p| {
@@ -189,18 +170,13 @@ fn resolve_extraction_path(assets_path: &Path, archive_path: &Path, entry: &str)
                 .collect()
         })
         .unwrap_or_default();
-
     if !parts.is_empty() {
         parts.pop(); // Отбрасываем имя .ap файла
     }
-
     let provider = parts.first().map(|s| s.as_str()).unwrap_or("");
     let product = parts.get(1).map(|s| s.as_str()).unwrap_or("");
-
     let prefix_prov_prod = format!("{provider}/{product}/");
     let prefix_prod = format!("{product}/");
-
-    // Защита от дублирования каталогов, если запись в архиве уже содержала префикс продукта
     let relative_in_product = if !provider.is_empty()
         && !product.is_empty()
         && norm_entry
@@ -217,7 +193,6 @@ fn resolve_extraction_path(assets_path: &Path, archive_path: &Path, entry: &str)
     } else {
         norm_entry
     };
-
     if !provider.is_empty() && !product.is_empty() {
         assets_path
             .join(provider)

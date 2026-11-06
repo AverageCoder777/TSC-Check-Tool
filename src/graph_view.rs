@@ -1,10 +1,3 @@
-//! Self-contained dependency-graph viewer.
-//!
-//! Extracts the local dependency subgraph around a selected asset, compiles a
-//! self-contained HTML page with an interactive `vis-network` physics graph,
-//! saves it to the system temp directory and opens it in the default browser
-//! via the `open` crate.
-
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,16 +6,11 @@ const VIS_NETWORK_CDN: &str = "https://unpkg.com/vis-network/standalone/umd/vis-
 const GRAPH_HTML_NAME: &str = "tsc_graph_view.html";
 const FULL_GRAPH_HTML_NAME: &str = "tsc_full_graph.html";
 
-/// Visual categories for graph nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NodeKind {
-    /// The selected (central) asset.
     Center,
-    /// Blueprint referencing the selected asset (inbound).
     Inbound,
-    /// Asset referenced by the selected asset (outbound).
     Outbound,
-    /// Dependency that could not be resolved on disk.
     Missing,
 }
 
@@ -35,14 +23,12 @@ impl NodeKind {
             NodeKind::Missing => "#ef4444",  // red
         }
     }
-
     fn shape(self) -> &'static str {
         match self {
             NodeKind::Center => "box",
             NodeKind::Inbound | NodeKind::Outbound | NodeKind::Missing => "ellipse",
         }
     }
-
     fn label_prefix(self) -> Option<&'static str> {
         match self {
             NodeKind::Missing => Some("[MISSING] "),
@@ -51,7 +37,6 @@ impl NodeKind {
     }
 }
 
-/// Serialized node payload for vis-network.
 #[derive(Serialize)]
 struct GraphNode {
     id: usize,
@@ -72,7 +57,6 @@ struct GraphFont {
     color: String,
 }
 
-/// Serialized edge payload for vis-network.
 #[derive(Serialize)]
 struct GraphEdge {
     from: usize,
@@ -84,7 +68,6 @@ struct GraphEdge {
     color: Option<String>,
 }
 
-/// Build a single standalone HTML document embedding the vis-network graph.
 fn build_html(
     selected_path: &Path,
     inbound_refs: &[PathBuf],
@@ -137,9 +120,7 @@ fn build_html(
             }
         }};
     }
-
     let center_id = add_node!(selected_path, NodeKind::Center);
-
     for path in inbound_refs {
         let id = add_node!(path, NodeKind::Inbound);
         edges.push(GraphEdge {
@@ -170,10 +151,8 @@ fn build_html(
             color: Some(NodeKind::Missing.color().to_string()),
         });
     }
-
     let nodes_json = serde_json::to_string(&nodes).expect("nodes serialize");
     let edges_json = serde_json::to_string(&edges).expect("edges serialize");
-
     let mut html = r##"<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -277,8 +256,6 @@ fn build_html(
     html
 }
 
-/// Serialize the local dependency subgraph to a self-contained HTML file in
-/// the system temp directory and open it in the default browser.
 pub fn open_dependency_graph_in_browser(
     selected_path: &Path,
     inbound_refs: &[PathBuf],
@@ -292,7 +269,6 @@ pub fn open_dependency_graph_in_browser(
     Ok(())
 }
 
-/// Visual style for a global-graph node, derived from file kind and status.
 #[derive(Debug, Clone, Copy)]
 struct NodeStyle {
     color: &'static str,
@@ -301,8 +277,6 @@ struct NodeStyle {
     label_prefix: Option<&'static str>,
 }
 
-/// Determine the visual style for a full-directory-graph node based on extension
-/// and dead/missing status.
 fn full_graph_node_style(path: &Path, is_dead: bool, is_missing: bool) -> NodeStyle {
     if is_missing {
         return NodeStyle {
@@ -353,7 +327,6 @@ fn full_graph_node_style(path: &Path, is_dead: bool, is_missing: bool) -> NodeSt
     }
 }
 
-/// Serialized node payload for the full directory graph.
 #[derive(Serialize)]
 struct FullGraphNode {
     id: usize,
@@ -367,14 +340,12 @@ struct FullGraphNode {
     border_dash: Option<[usize; 2]>,
 }
 
-/// Serialized edge payload for the full directory graph.
 #[derive(Serialize)]
 struct FullGraphEdge {
     from: usize,
     to: usize,
 }
 
-/// Build the standalone HTML document for the full directory graph.
 fn build_full_html(
     nodes_json: &str,
     edges_json: &str,
@@ -783,7 +754,6 @@ fn build_full_html(
 </body>
 </html>"##
     .to_string();
-
     html = html.replace("__VIS_CDN__", VIS_NETWORK_CDN);
     html = html.replace("__TOTAL__", &total_files.to_string());
     html = html.replace("__ACTIVE__", &active_files.to_string());
@@ -804,15 +774,12 @@ pub fn generate_full_directory_graph(
     let mut path_to_idx: std::collections::HashMap<PathBuf, usize> =
         std::collections::HashMap::new();
     let mut nodes: Vec<FullGraphNode> = Vec::new();
-
     for path in &graph.files_on_disk {
         let idx = nodes.len();
         path_to_idx.insert(path.clone(), idx);
-
         let is_dead = graph.dead_files.contains(path);
         let is_missing = graph.missing_files.contains(path);
         let style = full_graph_node_style(path, is_dead, is_missing);
-
         let level = if is_dead {
             Some(3usize)
         } else {
@@ -828,7 +795,6 @@ pub fn generate_full_directory_graph(
                 _ => None,
             }
         };
-
         let label = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -838,7 +804,6 @@ pub fn generate_full_directory_graph(
             None => label,
         };
         let title = crate::fs_utils::to_assets_relative_display(path);
-
         nodes.push(FullGraphNode {
             id: idx,
             label,
@@ -849,8 +814,6 @@ pub fn generate_full_directory_graph(
             border_dash: style.border_dash,
         });
     }
-
-    // 2. Add missing-file nodes (not on disk).
     for path in &graph.missing_files {
         if path_to_idx.contains_key(path) {
             continue;
@@ -876,8 +839,6 @@ pub fn generate_full_directory_graph(
             border_dash: style.border_dash,
         });
     }
-
-    // 3. Build edges from forward_edges.
     let mut edges: Vec<FullGraphEdge> = Vec::new();
     for (src, dsts) in &graph.forward_edges {
         if let Some(&src_idx) = path_to_idx.get(src) {
@@ -891,19 +852,14 @@ pub fn generate_full_directory_graph(
             }
         }
     }
-
-    // 4. Deduplicate edges.
     let mut seen_edges: std::collections::HashSet<(usize, usize)> =
         std::collections::HashSet::new();
     edges.retain(|e| seen_edges.insert((e.from, e.to)));
-
     let total_files = graph.files_on_disk.len();
     let dead_count = graph.dead_files.len();
     let missing_count = graph.missing_files.len();
     let active_files = total_files.saturating_sub(dead_count);
-
     let _edge_count = edges.len();
-
     let nodes_json = serde_json::to_string(&nodes).expect("nodes serialize");
     let edges_json = serde_json::to_string(&edges).expect("edges serialize");
     let html = build_full_html(
@@ -914,7 +870,6 @@ pub fn generate_full_directory_graph(
         dead_count,
         missing_count,
     );
-
     let out_path = std::env::temp_dir().join(FULL_GRAPH_HTML_NAME);
     std::fs::write(&out_path, html)?;
     open::that(&out_path)?;
@@ -924,7 +879,6 @@ pub fn generate_full_directory_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn build_html_contains_cdn_and_colors() {
         let html = build_html(

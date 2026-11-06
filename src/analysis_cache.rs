@@ -13,14 +13,9 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-/// Имя файла кэша в папке маршрута.
 pub(crate) const ANALYSIS_CACHE_FILE_NAME: &str = ".ts-checker-analysis-cache.json";
-
-/// Версия формата кэша.
-/// Меняется при любом изменении формата: старый кэш тогда использовать нельзя.
 const CACHE_VERSION: u32 = 4;
 
-/// Признаки файла, по которым определяется его неизменность.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(crate) struct FileStamp {
     pub(crate) modified: u64,
@@ -36,7 +31,6 @@ impl FileStamp {
             hash,
         }
     }
-
     pub(crate) fn of(path: &Path) -> Option<Self> {
         let metadata = fs::metadata(path).ok()?;
         let modified = metadata
@@ -52,22 +46,14 @@ impl FileStamp {
     }
 }
 
-/// Вычисляет хэш содержимого потоково блоками по 64 КБ без выделения гигабайтных буферов в куче.
 fn compute_file_hash(path: &Path, size: u64) -> Option<u64> {
     use std::hash::{Hash, Hasher};
-
     let mut file = File::open(path).ok()?;
     let mut hasher = hash_map::DefaultHasher::new();
-
-    // Длина массива хэшируется первой для идентичности со стандартным [u8]::hash
     size.hash(&mut hasher);
-
     const CHUNK_SIZE: usize = 64 * 1024;
     let mut buf = [0u8; CHUNK_SIZE];
-
-    // Файлы маршрута (.bin / .xml) обычно меньше 16 МБ — хэшируем полностью
     const FULL_HASH_THRESHOLD: u64 = 16 * 1024 * 1024;
-
     if size <= FULL_HASH_THRESHOLD {
         loop {
             let n = file.read(&mut buf).ok()?;
@@ -77,10 +63,7 @@ fn compute_file_hash(path: &Path, size: u64) -> Option<u64> {
             hasher.write(&buf[..n]);
         }
     } else {
-        // Для огромных .ap архивов (1-4 ГБ) чтение целиком заблокирует диск на минуты.
-        // Вычисляем хэш по первому и последнему 1 МБ с учетом размера файла.
         const SAMPLE_SIZE: u64 = 1024 * 1024;
-
         let mut head_read = 0;
         while head_read < SAMPLE_SIZE {
             let to_read = (SAMPLE_SIZE - head_read).min(CHUNK_SIZE as u64) as usize;
@@ -91,7 +74,6 @@ fn compute_file_hash(path: &Path, size: u64) -> Option<u64> {
             hasher.write(&buf[..n]);
             head_read += n as u64;
         }
-
         if size > SAMPLE_SIZE * 2 && file.seek(SeekFrom::End(-(SAMPLE_SIZE as i64))).is_ok() {
             let mut tail_read = 0;
             while tail_read < SAMPLE_SIZE {
@@ -105,7 +87,6 @@ fn compute_file_hash(path: &Path, size: u64) -> Option<u64> {
             }
         }
     }
-
     Some(hasher.finish())
 }
 
@@ -124,7 +105,6 @@ impl AnalysisCache {
             files: HashMap::new(),
         }
     }
-
     pub(crate) fn load(route_path: &Path) -> Self {
         let path = cache_path(route_path);
         let Ok(data) = fs::read(&path) else {
@@ -156,26 +136,21 @@ impl AnalysisCache {
         }
         Self { files }
     }
-
     pub(crate) fn get(&self, name: &str, stamp: FileStamp) -> Option<&CachedFile> {
         let cached = self.files.get(name)?;
         (cached.stamp == stamp).then_some(cached)
     }
-
     pub(crate) fn put(&mut self, name: String, file: CachedFile) {
         self.files.insert(name, file);
     }
-
     pub(crate) fn retain(&mut self, names: &HashMap<String, ()>) {
         self.files.retain(|name, _| names.contains_key(name));
     }
-
     pub(crate) fn save(&self, route_path: &Path) -> Result<(), String> {
         let path = cache_path(route_path);
         let mut assets: Vec<String> = Vec::new();
         let mut asset_indexes: HashMap<&str, u32> = HashMap::new();
         let mut files = HashMap::with_capacity(self.files.len());
-
         for (name, file) in &self.files {
             let mut uses = Vec::with_capacity(file.uses.len());
             for (asset, count, kind) in &file.uses {
@@ -200,7 +175,6 @@ impl AnalysisCache {
                 },
             );
         }
-
         let stored = StoredCache {
             version: CACHE_VERSION,
             assets,
@@ -211,10 +185,7 @@ impl AnalysisCache {
         let temporary = path.with_extension("tmp");
         fs::write(&temporary, &data)
             .map_err(|error| format!("Не удалось записать кэш разбора: {error}"))?;
-
         if let Err(error) = fs::rename(&temporary, &path) {
-            // На Windows rename завершается ошибкой, если целевой файл заблокирован антивирусом
-            // или помечен как скрытый / только для чтения. Выполняем гарантированную перезапись.
             if fs::copy(&temporary, &path).is_ok() {
                 let _ = fs::remove_file(&temporary);
             } else {

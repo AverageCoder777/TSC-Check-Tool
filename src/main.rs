@@ -17,24 +17,10 @@ use std::thread;
 use tempfile::tempdir;
 use zip::ZipArchive;
 
-const DEFAULT_CONCURRENT_SERZ: usize = 8;
-
-thread_local! {
-    static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
-    static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = const { RefCell::new(None) };
-    static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = const { RefCell::new(None) };
-    static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = const { RefCell::new(None) };
-}
-
-pub(crate) fn clear_route_icon_cache() {
-    ROUTE_ICON_CACHE.with(|cache| cache.borrow_mut().clear());
-}
-
 mod analysis_cache;
 mod ap_picker_controller;
-mod archive;
-
 mod app;
+mod archive;
 mod assets;
 mod auditor;
 mod auditor_controller;
@@ -59,6 +45,22 @@ mod translit;
 mod windows;
 mod xml_scan;
 
+const DEFAULT_CONCURRENT_SERZ: usize = 8;
+static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
+static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
+static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
+
+thread_local! {
+    static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
+    static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = const { RefCell::new(None) };
+    static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = const { RefCell::new(None) };
+    static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn clear_route_icon_cache() {
+    ROUTE_ICON_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
 fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     if let Ok(data) = std::fs::read(icon_path) {
         if data.starts_with(&[0x89, 0x50, 0x4E, 0x47])
@@ -74,9 +76,6 @@ fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     slint::Image::load_from_path(icon_path).unwrap_or_default()
 }
 
-static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
-static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
-
 pub(crate) fn schedule_ui_sync() {
     let Some(weak) = UI_WEAK.get().cloned() else {
         return;
@@ -91,8 +90,6 @@ pub(crate) fn schedule_ui_sync() {
         }
     });
 }
-
-static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
 
 fn app_state() -> Arc<Mutex<app::CheckerApp>> {
     APP.get().cloned().expect("app state not initialized")
@@ -133,7 +130,6 @@ fn sync_ui(ui: &MainWindow) {
                     }
                 }
             }
-
             let query = q.trim().to_lowercase();
             let filtered_routes: Vec<&domain::Route> = app
                 .routes
@@ -270,16 +266,13 @@ fn handle_cli_args() {
         }
         std::process::exit(0);
     }
-
     if let Some(target) = cli_args.get(1) {
         if target.eq_ignore_ascii_case("view-texture")
             && let Some(p) = cli_args.get(2)
         {
             open_texture_viewer(Path::new(p));
         }
-
         let path = PathBuf::from(target);
-
         if path.is_file()
             && path
                 .extension()
@@ -288,7 +281,6 @@ fn handle_cli_args() {
         {
             open_texture_viewer(&path);
         }
-
         let is_asset = path.is_file()
             && path
                 .extension()
@@ -364,26 +356,22 @@ fn main() {
     let _ = UI_WEAK.set(ui.as_weak());
     crate::settings::apply_saved_language(&crate::settings::load_language());
     let ui_handle = ui.as_weak();
-
     if let Ok(mut app) = app.lock() {
         app.start_route_scan();
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
-
     let missing_controller =
         missing_assets_controller::MissingAssetsController::new(app_for_controllers.clone());
     missing_controller.bind();
     MISSING_ASSETS_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(missing_controller);
     });
-
     let ap_picker_controller =
         ap_picker_controller::ApPickerController::new(app_for_controllers.clone());
     ap_picker_controller.bind();
     AP_PICKER_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(ap_picker_controller);
     });
-
     let ui_handle2 = ui.as_weak();
     let app = app_for_controllers.clone();
     ui.on_route_selected(move |idx| {
@@ -397,7 +385,6 @@ fn main() {
                 .iter()
                 .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
                 .collect();
-
             if idx >= 0 && ((idx as usize) < filtered.len()) {
                 let target_path = &filtered[idx as usize].path;
                 app.selected_route = app.routes.iter().position(|r| &r.path == target_path);
@@ -429,7 +416,6 @@ fn main() {
             }
         }
     });
-
     let app = app_for_controllers.clone();
     ui.on_search_changed(move |query| {
         if let Ok(mut app) = app.lock() {
@@ -437,7 +423,6 @@ fn main() {
             crate::schedule_ui_sync();
         }
     });
-
     let ui_handle_start_check = ui_handle.clone();
     let app = app_for_controllers.clone();
     ui.on_start_check(move || {
@@ -448,7 +433,6 @@ fn main() {
             app.start_check();
         }
     });
-
     let ui_handle_reset = ui_handle;
     let app = app_for_controllers.clone();
     ui.on_reset_log(move || {
@@ -458,33 +442,25 @@ fn main() {
             ui.set_check_log(app.check_log.clone().into());
         }
     });
-
     let inventory = inventory_controller::InventoryController::new(app_for_controllers.clone());
     inventory.bind();
     let inventory_weak_for_show = inventory.weak.clone();
     INVENTORY_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(inventory);
     });
-
     let settings = settings_controller::SettingsController::new(app_for_controllers.clone());
     settings.bind();
-
     let scenario = scenario_controller::ScenarioController::new(app_for_controllers.clone());
     scenario.bind(&ui);
-
-    #[cfg(windows)]
-    {
-        let app = app_for_controllers.clone();
-        ui.on_open_route_folder(move || {
-            if let Ok(app) = app.lock()
-                && let Some(idx) = app.selected_route
-                && let Some(route) = app.routes.get(idx)
-            {
-                let _ = windows::open_in_file_explorer(&route.path);
-            }
-        });
-    }
-
+    let app = app_for_controllers.clone();
+    ui.on_open_route_folder(move || {
+        if let Ok(app) = app.lock()
+            && let Some(idx) = app.selected_route
+            && let Some(route) = app.routes.get(idx)
+        {
+            let _ = windows::open_in_file_explorer(&route.path);
+        }
+    });
     let app = app_for_controllers.clone();
     ui.on_show_inventory(move || {
         if let Ok(mut app) = app.lock() {
@@ -502,11 +478,9 @@ fn main() {
             }
         }
     });
-
     ui.on_open_settings(move || {
         settings.show();
     });
-
     let auditor = auditor_controller::AuditorController::new();
     let auditor_weak_for_open_folder = auditor.weak.clone();
     ui.on_open_folder_auditor(move || {
@@ -515,10 +489,8 @@ fn main() {
         }
     });
     auditor.bind(ui.as_weak());
-
     let texture_controller = texture_controller::TextureController::new(auditor.state.clone());
     texture_controller.bind(&auditor);
-
     sync_ui(&ui);
     ui.run().unwrap();
 }
