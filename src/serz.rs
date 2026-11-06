@@ -67,25 +67,6 @@ impl SerzNode {
             out
         }
 
-        fn parse_next<I>(iter: &mut I) -> Result<Option<SerzNode>, String>
-        where
-            I: Iterator<Item = Result<XmlEvent, xml::reader::Error>>,
-        {
-            loop {
-                match iter.next() {
-                    None => return Ok(None),
-                    Some(Err(e)) => return Err(e.to_string()),
-                    Some(Ok(XmlEvent::StartElement {
-                        name, attributes, ..
-                    })) => {
-                        return parse_element(iter, name.local_name.clone(), attributes).map(Some);
-                    }
-                    Some(Ok(XmlEvent::EndElement { .. })) => return Ok(None),
-                    Some(Ok(_)) => continue,
-                }
-            }
-        }
-
         fn parse_element<I>(
             iter: &mut I,
             name: String,
@@ -177,10 +158,36 @@ impl SerzNode {
                 });
             }
 
-            // Element
+            // Element or default cDeltaString property
+            let mut text = String::new();
             let mut children = Vec::new();
-            while let Some(child) = parse_next(iter)? {
-                children.push(child);
+            let mut has_child_element = false;
+            loop {
+                match iter.next() {
+                    None => break,
+                    Some(Err(e)) => return Err(e.to_string()),
+                    Some(Ok(XmlEvent::StartElement {
+                        name, attributes, ..
+                    })) => {
+                        has_child_element = true;
+                        let child = parse_element(iter, name.local_name.clone(), attributes)?;
+                        children.push(child);
+                    }
+                    Some(Ok(XmlEvent::Characters(s)))
+                    | Some(Ok(XmlEvent::Whitespace(s))) => {
+                        text.push_str(&s);
+                    }
+                    Some(Ok(XmlEvent::EndElement { .. })) => break,
+                    Some(Ok(_)) => continue,
+                }
+            }
+            if !has_child_element {
+                return Ok(SerzNode::Property {
+                    name,
+                    type_name: "cDeltaString".to_string(),
+                    value: text.trim().to_string(),
+                    alt_encoding: None,
+                });
             }
             Ok(SerzNode::Element {
                 name,
@@ -205,6 +212,69 @@ impl SerzNode {
             }
         };
         Ok((root, None))
+    }
+
+    pub fn replace_blueprint_references(
+        &mut self,
+        old_provider: &str,
+        old_product: &str,
+        new_provider: &str,
+        new_product: &str,
+    ) -> usize {
+        match self {
+            SerzNode::Element { name, children, .. } => {
+                let is_target = name == "iBlueprintLibrary-cBlueprintSetID"
+                    || name == "iBlueprintLibrary::cBlueprintSetID"
+                    || name.replace("::", "-") == "iBlueprintLibrary-cBlueprintSetID";
+                let mut count = 0;
+                if is_target {
+                    let mut provider_ok = false;
+                    let mut product_ok = false;
+                    for child in children.iter() {
+                        if let SerzNode::Property {
+                            name: pname,
+                            value,
+                            ..
+                        } = child
+                        {
+                            if pname == "Provider" && value == old_provider {
+                                provider_ok = true;
+                            }
+                            if pname == "Product" && value == old_product {
+                                product_ok = true;
+                            }
+                        }
+                    }
+                    if provider_ok && product_ok {
+                        for child in children.iter_mut() {
+                            if let SerzNode::Property {
+                                name: pname,
+                                value,
+                                ..
+                            } = child
+                            {
+                                if pname == "Provider" {
+                                    *value = new_provider.to_string();
+                                } else if pname == "Product" {
+                                    *value = new_product.to_string();
+                                }
+                            }
+                        }
+                        count += 1;
+                    }
+                }
+                for child in children.iter_mut() {
+                    count += child.replace_blueprint_references(
+                        old_provider,
+                        old_product,
+                        new_provider,
+                        new_product,
+                    );
+                }
+                count
+            }
+            _ => 0,
+        }
     }
 }
 
@@ -1127,3 +1197,4 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
         Err(err) => eprintln!("\n[!] Ошибка чтения: {}", err),
     }
 }
+

@@ -189,6 +189,10 @@ pub(crate) fn replace_missing_asset(
         old_asset, new_asset
     );
 
+    let old_parts: Vec<&str> = old_asset.split(['/', '\\']).collect();
+    let old_provider = old_parts.first().copied().unwrap_or_default();
+    let old_product = old_parts.get(1).copied().unwrap_or_default();
+
     let mut staged = Vec::new();
     let mut replaced_instances = 0;
     for source_file in source_files {
@@ -218,6 +222,7 @@ pub(crate) fn replace_missing_asset(
         let temp = create_temporary_work_directory(&source_parent)?;
         let file_path = source_file.materialize(temp.path())?;
         let xml_path = temp.path().join("source.xml");
+
         if is_binary {
             let bytes = std::fs::read(&file_path).map_err(|error| {
                 format!(
@@ -226,105 +231,33 @@ pub(crate) fn replace_missing_asset(
                 )
             })?;
             let mut reader = crate::serz::SerzReader::new(&bytes);
-            let node = reader.parse().map_err(|error| {
+            let mut root = reader.parse().map_err(|error| {
                 format!(
                     "Не удалось прочитать {} перед заменой: {error}",
                     source_file.display()
                 )
             })?;
-            let xml_text = crate::serz::SerzReader::to_xml(&node, 0, true);
-            fs::write(&xml_path, xml_text).map_err(|error| {
-                format!(
-                    "Не удалось подготовить {} перед заменой: {error}",
-                    source_file.display()
-                )
-            })?;
-        } else {
-            fs::copy(&file_path, &xml_path).map_err(|error| {
-                format!(
-                    "Не удалось подготовить {} перед заменой: {error}",
-                    source_file.display()
-                )
-            })?;
-        }
-
-        let mut xml = fs::read_to_string(&xml_path).map_err(|error| {
-            format!(
-                "Не удалось прочитать XML для {}: {error}",
-                source_file.display()
-            )
-        })?;
-        let references = crate::reference::extract_asset_references_with_locations(&xml);
-        let edits: Vec<_> = references
-            .into_iter()
-            .filter(|reference| reference.path.eq_ignore_ascii_case(old_asset))
-            .flat_map(|reference| {
-                [
-                    (
-                        reference.provider_range,
-                        escape_xml_text(&replacement_provider),
-                    ),
-                    (
-                        reference.product_range,
-                        escape_xml_text(&replacement_product),
-                    ),
-                    (
-                        reference.blueprint_range,
-                        escape_xml_text(&replacement_blueprint),
-                    ),
-                ]
-            })
-            .collect();
-        let instances = edits.len() / 3;
-        if instances == 0 {
-            continue;
-        }
-        let mut edits = edits;
-        edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
-        for (range, value) in edits {
-            xml.replace_range(range, &value);
-        }
-        validate_xml_document(&xml).map_err(|error| {
-            format!(
-                "Замена в {} создала некорректный XML: {error}",
-                source_file.display()
-            )
-        })?;
-        fs::write(&xml_path, xml).map_err(|error| {
-            format!(
-                "Не удалось записать временный XML для {}: {error}",
-                source_file.display()
-            )
-        })?;
-
-        let converted_path = if is_binary {
-            let converted_path = temp.path().join("replacement.bin");
-            let xml = fs::read_to_string(&xml_path).map_err(|error| {
+            let count = root.replace_blueprint_references(
+                old_provider,
+                old_product,
+                &replacement_provider,
+                &replacement_product,
+            );
+            if count == 0 {
+                continue;
+            }
+            let bytes = crate::serz::encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
                     source_file.display()
                 )
             })?;
-            let (node, preamble) = crate::serz::SerzNode::from_xml_str(&xml).map_err(|error| {
-                format!(
-                    "Не удалось подготовить изменённый BIN {}: {error}",
-                    source_file.display()
-                )
-            })?;
-            let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|error| {
-                format!(
-                    "Не удалось подготовить изменённый BIN {}: {error}",
-                    source_file.display()
-                )
-            })?;
-            // Sanity check: файл тайла TSC физически не может весить 71 байт.
             if bytes.len() < 1024 {
                 return Err(format!(
                     "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена, оригинал не затронут.",
                     bytes.len()
                 ));
             }
-            // Self-test (roundtrip): пробуем распарсить то, что только что сгенерировали.
             let mut validation_reader = crate::serz::SerzReader::new(&bytes);
             if let Err(error) = validation_reader.parse() {
                 return Err(format!(
@@ -336,18 +269,75 @@ pub(crate) fn replace_missing_asset(
                 bytes.len(),
                 source_file.display()
             );
-            fs::write(&converted_path, &bytes).map_err(|error| {
+            let converted_path = temp.path().join("replacement.bin");
+            std::fs::write(&converted_path, &bytes).map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
                     source_file.display()
                 )
             })?;
-            converted_path
+            replaced_instances += count;
+            staged.push((source_file, temp, converted_path));
         } else {
-            xml_path
-        };
-        replaced_instances += instances;
-        staged.push((source_file, temp, converted_path));
+            fs::copy(&file_path, &xml_path).map_err(|error| {
+                format!(
+                    "Не удалось подготовить {} перед заменой: {error}",
+                    source_file.display()
+                )
+            })?;
+
+            let mut xml = fs::read_to_string(&xml_path).map_err(|error| {
+                format!(
+                    "Не удалось прочитать XML для {}: {error}",
+                    source_file.display()
+                )
+            })?;
+            let references = crate::reference::extract_asset_references_with_locations(&xml);
+            let edits: Vec<_> = references
+                .into_iter()
+                .filter(|reference| reference.path.eq_ignore_ascii_case(old_asset))
+                .flat_map(|reference| {
+                    [
+                        (
+                            reference.provider_range,
+                            escape_xml_text(&replacement_provider),
+                        ),
+                        (
+                            reference.product_range,
+                            escape_xml_text(&replacement_product),
+                        ),
+                        (
+                            reference.blueprint_range,
+                            escape_xml_text(&replacement_blueprint),
+                        ),
+                    ]
+                })
+                .collect();
+            let instances = edits.len() / 3;
+            if instances == 0 {
+                continue;
+            }
+            let mut edits = edits;
+            edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+            for (range, value) in edits {
+                xml.replace_range(range, &value);
+            }
+            validate_xml_document(&xml).map_err(|error| {
+                format!(
+                    "Замена в {} создала некорректный XML: {error}",
+                    source_file.display()
+                )
+            })?;
+            fs::write(&xml_path, xml).map_err(|error| {
+                format!(
+                    "Не удалось записать временный XML для {}: {error}",
+                    source_file.display()
+                )
+            })?;
+
+            replaced_instances += instances;
+            staged.push((source_file, temp, xml_path));
+        }
     }
 
     if staged.is_empty() {
