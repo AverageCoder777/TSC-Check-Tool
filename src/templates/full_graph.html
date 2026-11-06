@@ -1,663 +1,555 @@
 <!DOCTYPE html>
 <html lang="ru">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Полный граф каталога зависимостей</title>
-    <script src="__VIS_CDN__"></script>
-    <style>
-        html,
-        body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background: #0f172a;
-            color: #e5e7eb;
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        }
-
-        #network {
-            width: 100vw;
-            height: 100vh;
-            background: #0f172a;
-            display: block;
-        }
-
-        .controls {
-            position: absolute;
-            top: 12px;
-            left: 12px;
-            z-index: 50;
-            background: rgba(15, 23, 42, 0.9);
-            backdrop-filter: blur(8px);
-            border: 1px solid #334155;
-            border-radius: 10px;
-            padding: 10px 12px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-            user-select: none;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            align-items: flex-start;
-            min-width: 260px;
-        }
-
-        .controls-title {
-            font-weight: 700;
-            font-size: 13px;
-            color: #fbbf24;
-            margin: 0;
-        }
-
-        .badge-row {
-            display: flex;
-            gap: 8px;
-            font-size: 12px;
-            color: #cbd5e1;
-            flex-wrap: wrap;
-        }
-
-        .badge {
-            background: #1e293b;
-            border: 1px solid #475569;
-            border-radius: 6px;
-            padding: 2px 8px;
-            color: #e5e7eb;
-            font-weight: 600;
-            white-space: nowrap;
-        }
-
-        .badge .num {
-            color: #60a5fa;
-        }
-
-        .search-box {
-            width: 100%;
-            display: flex;
-            gap: 6px;
-            margin-top: 4px;
-        }
-
-        .search-box input {
-            flex: 1;
-            background: #0f172a;
-            border: 1px solid #475569;
-            border-radius: 6px;
-            padding: 6px 8px;
-            color: #e5e7eb;
-            font-size: 12px;
-            outline: none;
-        }
-
-        .search-box input:focus {
-            border-color: #3b82f6;
-        }
-
-        .search-box button {
-            background: #3b82f6;
-            border: none;
-            border-radius: 6px;
-            padding: 6px 10px;
-            color: #ffffff;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .search-box button:hover {
-            background: #60a5fa;
-        }
-
-        .filter-group {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            width: 100%;
-            margin-top: 4px;
-        }
-
-        .filter-label {
-            font-size: 11px;
-            color: #94a3b8;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .filter-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            color: #e5e7eb;
-            cursor: pointer;
-        }
-
-        .filter-item input {
-            accent-color: #3b82f6;
-            width: 14px;
-            height: 14px;
-        }
-
-        .cluster-info {
-            font-size: 12px;
-            color: #94a3b8;
-            margin-top: 2px;
-            line-height: 1.4;
-        }
-
-        .hint {
-            font-size: 11px;
-            color: #94a3b8;
-            margin-top: 4px;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Полный граф каталога зависимостей</title>
+<script src="__VIS_CDN__"></script>
+<style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0f172a; color: #e5e7eb; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #network { width: 100vw; height: 100vh; background: #0f172a; display: block; }
+    .controls {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 50;
+        background: rgba(15, 23, 42, 0.9);
+        backdrop-filter: blur(8px);
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 10px 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        user-select: none;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: flex-start;
+        min-width: 260px;
+    }
+    .controls-title { font-weight: 700; font-size: 13px; color: #fbbf24; margin: 0; }
+    .badge-row { display: flex; gap: 8px; font-size: 12px; color: #cbd5e1; flex-wrap: wrap; }
+    .badge { background: #1e293b; border: 1px solid #475569; border-radius: 6px; padding: 2px 8px; color: #e5e7eb; font-weight: 600; white-space: nowrap; }
+    .badge .num { color: #60a5fa; }
+    .search-box { width: 100%; display: flex; gap: 6px; margin-top: 4px; }
+    .search-box input { flex: 1; background: #0f172a; border: 1px solid #475569; border-radius: 6px; padding: 6px 8px; color: #e5e7eb; font-size: 12px; outline: none; }
+    .search-box input:focus { border-color: #3b82f6; }
+    .search-box button { background: #3b82f6; border: none; border-radius: 6px; padding: 6px 10px; color: #ffffff; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .search-box button:hover { background: #60a5fa; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 4px; }
+    .filter-label { font-size: 11px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+    .filter-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #e5e7eb; cursor: pointer; }
+    .filter-item input { accent-color: #3b82f6; width: 14px; height: 14px; }
+    .cluster-info { font-size: 12px; color: #94a3b8; margin-top: 2px; line-height: 1.4; }
+    .hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+</style>
 </head>
-
 <body>
-    <div class="controls">
-        <div class="controls-title">Полный граф каталога</div>
-        <div class="badge-row">
-            <span>Всего файлов: <span class="badge"><span class="num" id="total-count">__TOTAL__</span></span></span>
-            <span>Активных: <span class="badge"><span class="num" id="active-count">__ACTIVE__</span></span></span>
-            <span>Мёртвых: <span class="badge"><span class="num" id="dead-count">__DEAD__</span></span></span>
-            <span>Ошибок: <span class="badge"><span class="num" id="missing-count">__MISSING__</span></span></span>
-        </div>
-        <div class="search-box">
-            <input type="text" id="graph-search" placeholder="Поиск файла...">
-            <button id="graph-center">Центр</button>
-        </div>
-        <div class="filter-group">
-            <div class="filter-label">Фильтры:</div>
-            <label class="filter-item"><input type="checkbox" id="filter-bin" checked><span>Чертежи (.bin,
-                    .xml)</span></label>
-            <label class="filter-item"><input type="checkbox" id="filter-mesh" checked><span>Меши (.GeoPcDx,
-                    .XSec)</span></label>
-            <label class="filter-item"><input type="checkbox" id="filter-tex" checked><span>Текстуры
-                    (.TgPcDx)</span></label>
-            <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Мёртвые ресурсы</span></label>
-            <label class="filter-item"><input type="checkbox" id="toggle-edges"><span>Показывать фоновые
-                    связи</span></label>
-        </div>
-        <button class="fit-view" id="graph-fit"
-            style="background: #334155; border: none; border-radius: 6px; padding: 6px 10px; color: #ffffff; font-size: 12px; font-weight: 600; cursor: pointer; width: 100%;">Сбросить
-            камеру</button>
-        <div class="cluster-info">Все сканированные файлы каталога. Наведите на узел для полного пути.</div>
-        <div class="hint">Введите часть имени файла и нажмите Enter или "Центр" для камеры на узле.</div>
+<div class="controls">
+    <div class="controls-title">Полный граф каталога</div>
+    <div class="badge-row">
+        <span>Всего файлов: <span class="badge"><span class="num" id="total-count">__TOTAL__</span></span></span>
+        <span>Активных: <span class="badge"><span class="num" id="active-count">__ACTIVE__</span></span></span>
+        <span>Мёртвых: <span class="badge"><span class="num" id="dead-count">__DEAD__</span></span></span>
+        <span>Ошибок: <span class="badge"><span class="num" id="missing-count">__MISSING__</span></span></span>
     </div>
-    <div id="network"></div>
-    <script>
-        const nodeMap = new Map();
-        const edgeMap = new Map();
-        const adjEdges = new Map();
-        const adjNodes = new Map();
+    <div class="search-box">
+        <input type="text" id="graph-search" placeholder="Поиск файла...">
+        <button id="graph-center">Центр</button>
+    </div>
+    <div class="filter-group">
+        <div class="filter-label">Фильтры:</div>
+        <label class="filter-item"><input type="checkbox" id="filter-bin" checked><span>Чертежи (.bin, .xml)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-mesh" checked><span>Меши (.GeoPcDx, .XSec)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-tex" checked><span>Текстуры (.TgPcDx)</span></label>
+        <label class="filter-item"><input type="checkbox" id="filter-dead"><span>Мёртвые ресурсы</span></label>
+        <label class="filter-item"><input type="checkbox" id="toggle-edges"><span>Показывать фоновые связи</span></label>
+    </div>
+    <button class="fit-view" id="graph-fit" style="background: #334155; border: none; border-radius: 6px; padding: 6px 10px; color: #ffffff; font-size: 12px; font-weight: 600; cursor: pointer; width: 100%;">Сбросить камеру</button>
+    <div class="cluster-info">Все сканированные файлы каталога. Наведите на узел для полного пути.</div>
+    <div class="hint">Введите часть имени файла и нажмите Enter или "Центр" для камеры на узле.</div>
+</div>
+<div id="network"></div>
+<script>
+    const rawNodes = __NODES_JSON__;
+    const rawEdges = __EDGES_JSON__;
 
-        const binSet = new Set();
-        const foldersMap = new Map();
+    const nodeMap = new Map();
+    const edgeMap = new Map();
+    const adjEdges = new Map();
+    const adjNodes = new Map();
 
-        const tempCanvas = document.createElement("canvas");
-        const tempCtx = tempCanvas.getContext("2d");
-        tempCtx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
+    const binSet = new Set();
+    const binsAll = [];
+    const meshes = [];
+    const textures = [];
+    const dead = [];
 
-        rawNodes.forEach(n => {
-            n.realLabel = n.label || "";
-            n.label = "";
-            n.shape = "box";
+    rawNodes.forEach(n => {
+        n.realLabel = n.label || "";
+        n.label = "";
+        n.shape = "box";
 
-            const measured = tempCtx.measureText(n.realLabel).width;
-            const clampedWidth = Math.max(50, Math.ceil(measured) + 16);
-            const halfPad = Math.floor(clampedWidth / 2);
+        // Динамическая ширина плашки точно под длину названия файла (без медленного measureText)
+        const textWidth = Math.ceil(n.realLabel.length * 6.1) + 14;
+        const clampedWidth = Math.max(48, Math.min(textWidth, 260));
+        const halfPad = Math.floor(clampedWidth / 2);
 
-            n.boxW = clampedWidth;
-            n.boxH = 20;
-            n.margin = { top: 8, bottom: 8, left: halfPad, right: halfPad };
+        n.boxW = clampedWidth;
+        n.boxH = 20;
+        n.margin = { top: 8, bottom: 8, left: halfPad, right: halfPad };
 
-            nodeMap.set(n.id, n);
-            adjEdges.set(n.id, []);
-            adjNodes.set(n.id, []);
+        nodeMap.set(n.id, n);
+        adjEdges.set(n.id, []);
+        adjNodes.set(n.id, []);
 
-            const titlePath = n.title || "";
-            const lastSlash = Math.max(titlePath.lastIndexOf("\\"), titlePath.lastIndexOf("/"));
-            const folderKey = lastSlash !== -1 ? titlePath.slice(0, lastSlash) : "root";
-
-            if (!foldersMap.has(folderKey)) {
-                foldersMap.set(folderKey, { bins: [], meshes: [], textures: [], others: [] });
-            }
-            const group = foldersMap.get(folderKey);
-
-            const isDead = n.realLabel.startsWith("[DEAD] ");
-            const clean = n.realLabel.replace(/^\[(DEAD\vert{}Missing)\] /, "").toLowerCase();
-            if (isDead) {
-                group.others.push(n);
-            } else if (clean.endsWith(".bin") || clean.endsWith(".xml")) {
-                group.bins.push(n);
-                binSet.add(n.id);
-            } else if (clean.endsWith(".geopcdx") || clean.endsWith(".xsec")) {
-                group.meshes.push(n);
-            } else {
-                group.textures.push(n);
-            }
-        });
-
-        const inBinEdges = new Map();
-        const inEdges = new Map();
-        rawEdges.forEach((e, i) => {
-            e.id = i;
-            e.isMissingEdge = (e.color === "#ef4444");
-            edgeMap.set(e.id, e);
-
-            adjEdges.get(e.from)?.push(e.id);
-            adjEdges.get(e.to)?.push(e.id);
-            adjNodes.get(e.from)?.push(e.to);
-            adjNodes.get(e.to)?.push(e.from);
-
-            if (!inEdges.has(e.to)) inEdges.set(e.to, []);
-            inEdges.get(e.to).push(e.from);
-
-            if (binSet.has(e.from) && binSet.has(e.to)) {
-                if (!inBinEdges.has(e.to)) inBinEdges.set(e.to, []);
-                inBinEdges.get(e.to).push(e.from);
-            }
-        });
-
-        let currentY = 0;
-        const colSpacingX = 420;
-
-        foldersMap.forEach((group, folderKey) => {
-            const groupMaxItems = Math.max(
-                group.bins.length,
-                group.meshes.length,
-                Math.ceil(group.textures.length / 3),
-                group.others.length
-            );
-            if (groupMaxItems === 0) return;
-
-            group.bins.forEach((n, idx) => {
-                n.x = 0;
-                n.y = currentY + (idx * 24);
-            });
-
-            group.meshes.forEach((n, idx) => {
-                n.x = colSpacingX;
-                n.y = currentY + (idx * 24);
-            });
-
-            const texCols = 3;
-            group.textures.forEach((n, idx) => {
-                const c = idx % texCols;
-                const r = Math.floor(idx / texCols);
-                n.x = (colSpacingX * 2) + (c * 240);
-                n.y = currentY + (r * 24);
-            });
-
-            group.others.forEach((n, idx) => {
-                const c = idx % 4;
-                const r = Math.floor(idx / 4);
-                n.x = (colSpacingX * 5) + (c * 200);
-                n.y = currentY + (r * 24);
-            });
-
-            const blockHeight = Math.max(
-                group.bins.length,
-                group.meshes.length,
-                Math.ceil(group.textures.length / texCols),
-                Math.ceil(group.others.length / 4)
-            ) * 24;
-
-            currentY += blockHeight + 60;
-        });
-
-        const nodes = new vis.DataSet(rawNodes);
-        const edges = new vis.DataSet([]);
-        const container = document.getElementById("network");
-        const data = { nodes, edges };
-        const options = {
-            nodes: {
-                borderWidth: 0,
-                shapeProperties: { borderRadius: 3 },
-                shadow: false,
-                chosen: false
-            },
-            renderer: { type: "canvas" },
-            physics: false,
-            interaction: {
-                hover: true,
-                hoverConnectedEdges: false,
-                tooltipDelay: 120,
-                hideEdgesOnDrag: true,
-                hideEdgesOnZoom: true,
-                hideNodesOnDrag: false,
-                navigationButtons: true,
-                keyboard: { enabled: true, bindToWindow: false }
-            }
-        };
-        const network = new vis.Network(container, data, options);
-
-        const toggleEdges = document.getElementById("toggle-edges");
-        let selectedNodeIds = [];
-        let highlightedEdgeIds = [];
-        let highlightedNodeIds = [];
-        let hoverNodeId = null;
-        let isDraggingOrZooming = false;
-        let zoomTimer = null;
-
-        network.on("dragStart", () => { isDraggingOrZooming = true; });
-        network.on("dragEnd", () => { isDraggingOrZooming = false; network.redraw(); });
-        network.on("zoom", () => {
-            isDraggingOrZooming = true;
-            clearTimeout(zoomTimer);
-            zoomTimer = setTimeout(() => {
-                isDraggingOrZooming = false;
-                network.redraw();
-            }, 120);
-        });
-
-        function activateSelection(nodeIds) {
-            selectedNodeIds = nodeIds.slice();
-            const nodeSet = new Set(selectedNodeIds);
-            const edgeSet = new Set();
-
-            selectedNodeIds.forEach(id => {
-                (adjNodes.get(id) || []).forEach(nId => nodeSet.add(nId));
-                (adjEdges.get(id) || []).forEach(eId => edgeSet.add(eId));
-            });
-
-            highlightedNodeIds = Array.from(nodeSet);
-            highlightedEdgeIds = Array.from(edgeSet);
-            network.redraw();
+        const isDead = n.realLabel.startsWith("[DEAD] ");
+        const clean = n.realLabel.replace(/^\[(DEAD|Missing)\] /, "").toLowerCase();
+        if (isDead) {
+            dead.push(n);
+        } else if (clean.endsWith(".bin") || clean.endsWith(".xml")) {
+            binsAll.push(n);
+            binSet.add(n.id);
+        } else if (clean.endsWith(".geopcdx") || clean.endsWith(".xsec")) {
+            meshes.push(n);
+        } else {
+            textures.push(n);
         }
+    });
 
-        function resetSelectionState() {
-            selectedNodeIds = [];
-            highlightedNodeIds = [];
-            highlightedEdgeIds = [];
+    const inBinEdges = new Map();
+    const inEdges = new Map();
+    rawEdges.forEach((e, i) => {
+        e.id = i;
+        e.isMissingEdge = (e.color === "#ef4444");
+        edgeMap.set(e.id, e);
+
+        adjEdges.get(e.from)?.push(e.id);
+        adjEdges.get(e.to)?.push(e.id);
+        adjNodes.get(e.from)?.push(e.to);
+        adjNodes.get(e.to)?.push(e.from);
+
+        if (!inEdges.has(e.to)) inEdges.set(e.to, []);
+        inEdges.get(e.to).push(e.from);
+
+        if (binSet.has(e.from) && binSet.has(e.to)) {
+            if (!inBinEdges.has(e.to)) inBinEdges.set(e.to, []);
+            inBinEdges.get(e.to).push(e.from);
+        }
+    });
+
+    const rootBins = [];
+    const subBins = [];
+    binsAll.forEach(b => {
+        if ((inBinEdges.get(b.id)?.length || 0) === 0) {
+            rootBins.push(b);
+        } else {
+            subBins.push(b);
+        }
+    });
+
+    const colSpacing = 260;
+
+    const rootCols = 3;
+    rootBins.forEach((n, i) => {
+        n.x = (i % rootCols) * colSpacing;
+        n.y = Math.floor(i / rootCols) * 42;
+    });
+
+    subBins.sort((a, b) => (inBinEdges.get(a.id)?.[0] ?? 999999) - (inBinEdges.get(b.id)?.[0] ?? 999999));
+    const subCols = 3;
+    const subXOffset = rootCols * colSpacing + 140;
+    subBins.forEach((n, i) => {
+        n.x = subXOffset + (i % subCols) * colSpacing;
+        n.y = Math.floor(i / subCols) * 42;
+    });
+
+    meshes.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
+    const meshCols = 3;
+    const meshXOffset = subXOffset + subCols * colSpacing + 140;
+    meshes.forEach((n, i) => {
+        n.x = meshXOffset + (i % meshCols) * colSpacing;
+        n.y = Math.floor(i / meshCols) * 40;
+    });
+
+    textures.sort((a, b) => (inEdges.get(a.id)?.[0] ?? 999999) - (inEdges.get(b.id)?.[0] ?? 999999));
+    const texCols = 9;
+    const texXOffset = meshXOffset + meshCols * colSpacing + 160;
+    textures.forEach((n, i) => {
+        n.x = texXOffset + (i % texCols) * colSpacing;
+        n.y = Math.floor(i / texCols) * 36;
+    });
+
+    const maxY = Math.max(
+        (rootBins.length / rootCols) * 42,
+        (subBins.length / subCols) * 42,
+        (meshes.length / meshCols) * 40,
+        (textures.length / texCols) * 36
+    );
+    dead.forEach((n, i) => {
+        n.x = (i % 12) * colSpacing;
+        n.y = maxY + 220 + Math.floor(i / 12) * 35;
+    });
+
+    const nodes = new vis.DataSet(rawNodes);
+    const edges = new vis.DataSet([]);
+    const container = document.getElementById("network");
+    const data = { nodes, edges };
+    const options = {
+        nodes: {
+            borderWidth: 0,
+            shapeProperties: { borderRadius: 3 },
+            shadow: false,
+            chosen: false
+        },
+        renderer: { type: "canvas" },
+        physics: false,
+        interaction: {
+            hover: true,
+            hoverConnectedEdges: false,
+            tooltipDelay: 120,
+            hideEdgesOnDrag: true,
+            hideEdgesOnZoom: true,
+            hideNodesOnDrag: false,
+            navigationButtons: true,
+            keyboard: { enabled: true, bindToWindow: false }
+        }
+    };
+    const network = new vis.Network(container, data, options);
+
+    const toggleEdges = document.getElementById("toggle-edges");
+    let selectedNodeIds = [];
+    let highlightedEdgeIds = [];
+    let highlightedNodeIds = [];
+    let hoverNodeId = null;
+    let isDraggingOrZooming = false;
+    let zoomTimer = null;
+
+    network.on("dragStart", () => { isDraggingOrZooming = true; });
+    network.on("dragEnd", () => { isDraggingOrZooming = false; network.redraw(); });
+    network.on("zoom", () => {
+        isDraggingOrZooming = true;
+        clearTimeout(zoomTimer);
+        zoomTimer = setTimeout(() => {
+            isDraggingOrZooming = false;
+            network.redraw();
+        }, 120);
+    });
+
+    function activateSelection(nodeIds) {
+        selectedNodeIds = nodeIds.slice();
+        const nodeSet = new Set(selectedNodeIds);
+        const edgeSet = new Set();
+
+        selectedNodeIds.forEach(id => {
+            (adjNodes.get(id) || []).forEach(nId => nodeSet.add(nId));
+            (adjEdges.get(id) || []).forEach(eId => edgeSet.add(eId));
+        });
+
+        highlightedNodeIds = Array.from(nodeSet);
+        highlightedEdgeIds = Array.from(edgeSet);
+        network.redraw();
+    }
+
+    function resetSelectionState() {
+        selectedNodeIds = [];
+        highlightedNodeIds = [];
+        highlightedEdgeIds = [];
+        hoverNodeId = null;
+        network.redraw();
+    }
+
+    network.on("selectNode", function (params) {
+        activateSelection(params.nodes);
+    });
+
+    network.on("deselectNode", function () {
+        resetSelectionState();
+    });
+
+    network.on("click", function (params) {
+        if (params.nodes.length === 0 && selectedNodeIds.length > 0) {
+            network.unselectAll();
+            resetSelectionState();
+        }
+    });
+
+    network.on("hoverNode", function (params) {
+        if (selectedNodeIds.length > 0 || isDraggingOrZooming) return;
+        if (network.getScale() < 0.15) return;
+        hoverNodeId = params.node;
+        network.redraw();
+    });
+
+    network.on("blurNode", function () {
+        if (selectedNodeIds.length > 0) return;
+        if (hoverNodeId !== null) {
             hoverNodeId = null;
             network.redraw();
         }
+    });
 
-        network.on("selectNode", function (params) {
-            activateSelection(params.nodes);
-        });
+    toggleEdges.addEventListener("change", function () {
+        network.redraw();
+    });
 
-        network.on("deselectNode", function () {
-            resetSelectionState();
-        });
+    // 1. Фоновые связи рисуем В ПЕРЕД отрисовкой блоков (beforeDrawing), чтобы они лежали ПОД блоками!
+    network.on("beforeDrawing", function (ctx) {
+        const isSelectedMode = selectedNodeIds.length > 0;
+        if (isSelectedMode || !toggleEdges.checked || isDraggingOrZooming) return;
 
-        network.on("click", function (params) {
-            if (params.nodes.length === 0 && selectedNodeIds.length > 0) {
-                network.unselectAll();
-                resetSelectionState();
-            }
-        });
+        const scale = network.getScale();
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.16)";
+        ctx.lineWidth = 1.0 / Math.max(scale, 0.2);
 
-        network.on("hoverNode", function (params) {
-            if (selectedNodeIds.length > 0 || isDraggingOrZooming) return;
-            if (network.getScale() < 0.15) return;
-            hoverNodeId = params.node;
-            network.redraw();
-        });
+        for (let i = 0; i < rawEdges.length; i++) {
+            const e = rawEdges[i];
+            const nFrom = nodeMap.get(e.from);
+            const nTo = nodeMap.get(e.to);
+            if (!nFrom || !nTo || nFrom.hidden || nTo.hidden) continue;
+            ctx.moveTo(nFrom.x, nFrom.y);
+            ctx.lineTo(nTo.x, nTo.y);
+        }
+        ctx.stroke();
+        ctx.restore();
+    });
 
-        network.on("blurNode", function () {
-            if (selectedNodeIds.length > 0) return;
-            if (hoverNodeId !== null) {
-                hoverNodeId = null;
-                network.redraw();
-            }
-        });
+    // 2. Текст, затенение и выделенные связи рисуем ПОСЛЕ базовых блоков (afterDrawing)
+    network.on("afterDrawing", function (ctx) {
+        const scale = network.getScale();
+        const isSelectedMode = selectedNodeIds.length > 0;
+        const isHoverMode = !isSelectedMode && !toggleEdges.checked && hoverNodeId !== null;
 
-        toggleEdges.addEventListener("change", function () {
-            network.redraw();
-        });
-
-        // 1. BACKGROUND EDGES DRAWN BEFORE NODES (underneath boxes)
-        network.on("beforeDrawing", function (ctx) {
-            const isSelectedMode = selectedNodeIds.length > 0;
-            if (isSelectedMode || !toggleEdges.checked || isDraggingOrZooming) return;
-
-            const scale = network.getScale();
-            ctx.save();
-            ctx.beginPath();
-            ctx.strokeStyle = "rgba(100, 116, 139, 0.16)";
-            ctx.lineWidth = 1.0 / Math.max(scale, 0.2);
-
-            for (let i = 0; i < rawEdges.length; i++) {
-                const e = rawEdges[i];
-                const nFrom = nodeMap.get(e.from);
-                const nTo = nodeMap.get(e.to);
-                if (!nFrom || !nTo || nFrom.hidden || nTo.hidden) continue;
-                ctx.moveTo(nFrom.x, nFrom.y);
-                ctx.lineTo(nTo.x, nTo.y);
-            }
-            ctx.stroke();
-            ctx.restore();
-        });
-
-        // 2. TEXT, SHADOW/DIMMING AND HIGHLIGHTED CONNECTIONS DRAWN AFTER NODES
-        network.on("afterDrawing", function (ctx) {
-            const scale = network.getScale();
-            const isSelectedMode = selectedNodeIds.length > 0;
-            const isHoverMode = !isSelectedMode && !toggleEdges.checked && hoverNodeId !== null;
-
-            if (!isSelectedMode && scale >= 0.22) {
-                const viewCenter = network.getViewPosition();
-                const halfW = (ctx.canvas.width / 2) / scale + 160;
-                const halfH = (ctx.canvas.height / 2) / scale + 40;
-                const minX = viewCenter.x - halfW;
-                const maxX = viewCenter.x + halfW;
-                const minY = viewCenter.y - halfH;
-                const maxY = viewCenter.y + halfH;
-
-                ctx.save();
-                ctx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
-                ctx.fillStyle = "#ffffff";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-
-                for (let i = 0; i < rawNodes.length; i++) {
-                    const n = rawNodes[i];
-                    if (n.hidden) continue;
-                    if (n.x < minX || n.x > maxX || n.y < minY || n.y > maxY) continue;
-                    ctx.fillText(n.realLabel, n.x, n.y);
-                }
-                ctx.restore();
-            }
-
-            if (!isSelectedMode && !isHoverMode) return;
-
-            if (isSelectedMode) {
-                ctx.save();
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.fillStyle = "rgba(15, 23, 42, 0.84)";
-                ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-                ctx.restore();
-            }
-
-            const edgesToDraw = isSelectedMode ? highlightedEdgeIds : (adjEdges.get(hoverNodeId) || []);
-            const nodesToDraw = isSelectedMode ? highlightedNodeIds : [hoverNodeId].concat(adjNodes.get(hoverNodeId) || []);
-            const selectedSet = new Set(selectedNodeIds);
-
-            ctx.save();
-            edgesToDraw.forEach(eId => {
-                const e = edgeMap.get(eId);
-                if (!e) return;
-                const pFrom = nodeMap.get(e.from);
-                const pTo = nodeMap.get(e.to);
-                if (!pFrom || !pTo) return;
-
-                ctx.beginPath();
-                if (e.isMissingEdge) {
-                    ctx.strokeStyle = "#ef4444";
-                    ctx.setLineDash([6 / scale, 4 / scale]);
-                    ctx.lineWidth = 2.4 / Math.max(scale, 0.35);
-                } else {
-                    ctx.strokeStyle = isSelectedMode ? "#38bdf8" : "rgba(56, 189, 248, 0.75)";
-                    ctx.setLineDash([]);
-                    ctx.lineWidth = (isSelectedMode ? 2.0 : 1.5) / Math.max(scale, 0.35);
-                }
-                ctx.moveTo(pFrom.x, pFrom.y);
-                ctx.lineTo(pTo.x, pTo.y);
-                ctx.stroke();
-
-                const angle = Math.atan2(pTo.y - pFrom.y, pTo.x - pFrom.x);
-                const arrowLen = 8 / Math.max(scale, 0.4);
-                const targetDist = 16;
-                const ax = pTo.x - Math.cos(angle) * targetDist;
-                const ay = pTo.y - Math.sin(angle) * targetDist;
-
-                ctx.setLineDash([]);
-                ctx.fillStyle = e.isMissingEdge ? "#ef4444" : "#38bdf8";
-                ctx.beginPath();
-                ctx.moveTo(ax, ay);
-                ctx.lineTo(ax - arrowLen * Math.cos(angle - Math.PI / 6), ay - arrowLen * Math.sin(angle - Math.PI / 6));
-                ctx.lineTo(ax - arrowLen * Math.cos(angle + Math.PI / 6), ay - arrowLen * Math.sin(angle + Math.PI / 6));
-                ctx.closePath();
-                ctx.fill();
-            });
-            ctx.restore();
+        // Отрисовка текста (ТОЛЬКО при приближении scale >= 0.22 и ТОЛЬКО в пределах экрана)
+        if (!isSelectedMode && scale >= 0.22) {
+            const viewCenter = network.getViewPosition();
+            const halfW = (ctx.canvas.width / 2) / scale + 160;
+            const halfH = (ctx.canvas.height / 2) / scale + 40;
+            const minX = viewCenter.x - halfW;
+            const maxX = viewCenter.x + halfW;
+            const minY = viewCenter.y - halfH;
+            const maxY = viewCenter.y + halfH;
 
             ctx.save();
             ctx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
+            ctx.fillStyle = "#ffffff";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
 
-            nodesToDraw.forEach(nId => {
-                const n = nodeMap.get(nId);
-                if (!n || n.hidden) return;
-
-                const isMain = isSelectedMode ? selectedSet.has(nId) : (nId === hoverNodeId);
-                const boxW = n.boxW || 120;
-                const boxH = n.boxH || 20;
-
-                ctx.fillStyle = n.color || "#3b82f6";
-                ctx.strokeStyle = isMain ? "#ffffff" : "rgba(255,255,255,0.5)";
-                ctx.lineWidth = isMain ? (2.5 / Math.max(scale, 0.4)) : (1.2 / Math.max(scale, 0.4));
-
-                if (n.border_dash) {
-                    ctx.setLineDash([5, 2]);
-                } else {
-                    ctx.setLineDash([]);
-                }
-
-                ctx.beginPath();
-                ctx.roundRect(n.x - boxW / 2, n.y - boxH / 2, boxW, boxH, 3);
-                ctx.fill();
-                ctx.stroke();
-
-                ctx.fillStyle = "#ffffff";
-                ctx.fillText(n.realLabel, n.x, n.y);
-            });
+            for (let i = 0; i < rawNodes.length; i++) {
+                const n = rawNodes[i];
+                if (n.hidden) continue;
+                if (n.x < minX || n.x > maxX || n.y < minY || n.y > maxY) continue;
+                let text = n.realLabel;
+                if (text.length > 42) text = text.slice(0, 40) + "…";
+                ctx.fillText(text, n.x, n.y);
+            }
             ctx.restore();
+        }
+
+        if (!isSelectedMode && !isHoverMode) return;
+
+        // Затенение неактивных узлов при выборе
+        if (isSelectedMode) {
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = "rgba(15, 23, 42, 0.84)";
+            ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            ctx.restore();
+        }
+
+        const edgesToDraw = isSelectedMode ? highlightedEdgeIds : (adjEdges.get(hoverNodeId) || []);
+        const nodesToDraw = isSelectedMode ? highlightedNodeIds : [hoverNodeId].concat(adjNodes.get(hoverNodeId) || []);
+        const selectedSet = new Set(selectedNodeIds);
+
+        // Активные связи рисуем сначала, чтобы выбранные блоки легли ПОВЕРХ линий
+        ctx.save();
+        edgesToDraw.forEach(eId => {
+            const e = edgeMap.get(eId);
+            if (!e) return;
+            const pFrom = nodeMap.get(e.from);
+            const pTo = nodeMap.get(e.to);
+            if (!pFrom || !pTo) return;
+
+            ctx.beginPath();
+            if (e.isMissingEdge) {
+                ctx.strokeStyle = "#ef4444";
+                ctx.setLineDash([6 / scale, 4 / scale]);
+                ctx.lineWidth = 2.4 / Math.max(scale, 0.35);
+            } else {
+                ctx.strokeStyle = isSelectedMode ? "#38bdf8" : "rgba(56, 189, 248, 0.75)";
+                ctx.setLineDash([]);
+                ctx.lineWidth = (isSelectedMode ? 2.0 : 1.5) / Math.max(scale, 0.35);
+            }
+            ctx.moveTo(pFrom.x, pFrom.y);
+            ctx.lineTo(pTo.x, pTo.y);
+            ctx.stroke();
+
+            const angle = Math.atan2(pTo.y - pFrom.y, pTo.x - pFrom.x);
+            const arrowLen = 8 / Math.max(scale, 0.4);
+            const targetDist = 16;
+            const ax = pTo.x - Math.cos(angle) * targetDist;
+            const ay = pTo.y - Math.sin(angle) * targetDist;
+
+            ctx.setLineDash([]);
+            ctx.fillStyle = e.isMissingEdge ? "#ef4444" : "#38bdf8";
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax - arrowLen * Math.cos(angle - Math.PI / 6), ay - arrowLen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(ax - arrowLen * Math.cos(angle + Math.PI / 6), ay - arrowLen * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fill();
+        });
+        ctx.restore();
+
+        // Поверх связей рисуем сами блоки выбранного подграфа (или ховер-узла)
+        ctx.save();
+        ctx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        nodesToDraw.forEach(nId => {
+            const n = nodeMap.get(nId);
+            if (!n || n.hidden) return;
+
+            const isMain = isSelectedMode ? selectedSet.has(nId) : (nId === hoverNodeId);
+            let labelText = n.realLabel || "";
+            if (labelText.length > 42) labelText = labelText.slice(0, 40) + "…";
+            const boxW = n.boxW || 120;
+            const boxH = n.boxH || 20;
+
+            ctx.fillStyle = n.color || "#3b82f6";
+            ctx.strokeStyle = isMain ? "#ffffff" : "rgba(255,255,255,0.5)";
+            ctx.lineWidth = isMain ? (2.5 / Math.max(scale, 0.4)) : (1.2 / Math.max(scale, 0.4));
+
+            if (n.border_dash) {
+                ctx.setLineDash([5, 2]);
+            } else {
+                ctx.setLineDash([]);
+            }
+
+            ctx.beginPath();
+            ctx.roundRect(n.x - boxW / 2, n.y - boxH / 2, boxW, boxH, 3);
+            ctx.fill();
+            ctx.stroke();
+
+            if (isSelectedMode || scale >= 0.22) {
+                ctx.fillStyle = "#ffffff";
+                ctx.fillText(labelText, n.x, n.y);
+            }
+        });
+        ctx.restore();
+    });
+
+    const searchInput = document.getElementById("graph-search");
+    const centerBtn = document.getElementById("graph-center");
+    const fitBtn = document.getElementById("graph-fit");
+    const filterBin = document.getElementById("filter-bin");
+    const filterMesh = document.getElementById("filter-mesh");
+    const filterTex = document.getElementById("filter-tex");
+    const filterDead = document.getElementById("filter-dead");
+
+    function extOf(label) {
+        const parts = label.split(".");
+        return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
+    }
+
+    function isMissing(label) { return label.startsWith("[Missing] "); }
+    function isDead(label) { return label.startsWith("[DEAD] "); }
+
+    function applyFilters() {
+        const showBin = filterBin.checked;
+        const showMesh = filterMesh.checked;
+        const showTex = filterTex.checked;
+        const showDead = filterDead.checked;
+
+        const updates = [];
+        rawNodes.forEach(n => {
+            const label = n.realLabel;
+            const missing = isMissing(label);
+            const deadNode = isDead(label);
+            const e = extOf(label.replace(/^\[(Missing|DEAD)\] /, ""));
+
+            let visible = true;
+            if (deadNode) {
+                visible = showDead;
+            } else if (missing) {
+                visible = true;
+            } else {
+                if (e === "bin" || e === "xml") visible = showBin;
+                else if (e === "geopcdx" || e === "xsec") visible = showMesh;
+                else if (e === "tgpcdx") visible = showTex;
+                else visible = true;
+            }
+
+            n.hidden = !visible;
+            updates.push({ id: n.id, hidden: !visible });
+        });
+        nodes.update(updates);
+    }
+
+    applyFilters();
+
+    function norm(str) {
+        return (str || "").toLowerCase().replace(/\\/g, "/");
+    }
+
+    function searchAndHighlightAll(query) {
+        const q = norm(query.trim());
+
+        if (!q) {
+            network.unselectAll();
+            resetSelectionState();
+            centerBtn.textContent = "Центр";
+            return;
+        }
+
+        const matchingNodes = rawNodes.filter(n => {
+            return !n.hidden && (norm(n.realLabel).includes(q) || norm(n.title).includes(q));
         });
 
-        const searchInput = document.getElementById("graph-search");
-        const centerBtn = document.getElementById("graph-center");
-        const fitBtn = document.getElementById("graph-fit");
-        const filterBin = document.getElementById("filter-bin");
-        const filterMesh = document.getElementById("filter-mesh");
-        const filterTex = document.getElementById("filter-tex");
-        const filterDead = document.getElementById("filter-dead");
-
-        function isMissing(label) { return label.startsWith("[Missing] "); }
-        function isDead(label) { return label.startsWith("[DEAD] "); }
-
-        function applyFilters() {
-            const showBin = filterBin.checked;
-            const showMesh = filterMesh.checked;
-            const showTex = filterTex.checked;
-            const showDead = filterDead.checked;
-
-            const updates = [];
-            rawNodes.forEach(n => {
-                const label = n.realLabel;
-                const missing = isMissing(label);
-                const deadNode = isDead(label);
-                const clean = label.replace(/^\[(Missing\vert{}DEAD)\] /, "").toLowerCase();
-
-                let visible = true;
-                if (deadNode) {
-                    visible = showDead;
-                } else if (missing) {
-                    visible = true;
-                } else {
-                    if (clean.endsWith(".bin") || clean.endsWith(".xml")) visible = showBin;
-                    else if (clean.endsWith(".geopcdx") || clean.endsWith(".xsec")) visible = showMesh;
-                    else if (clean.endsWith(".tgpcdx")) visible = showTex;
-                    else visible = true;
-                }
-
-                n.hidden = !visible;
-                updates.push({ id: n.id, hidden: !visible });
-            });
-            nodes.update(updates);
-        }
-
-        applyFilters();
-
-        function norm(str) {
-            return (str || "").toLowerCase().replace(/\\/g, "/");
-        }
-
-        function searchAndHighlightAll(query) {
-            const q = norm(query.trim());
-
-            if (!q) {
-                network.unselectAll();
-                resetSelectionState();
+        if (matchingNodes.length === 0) {
+            searchInput.style.borderColor = "#ef4444";
+            centerBtn.textContent = "0 совп.";
+            setTimeout(() => {
+                searchInput.style.borderColor = "#475569";
                 centerBtn.textContent = "Центр";
-                return;
-            }
-
-            const matchingNodes = rawNodes.filter(n => {
-                return !n.hidden && (norm(n.realLabel).includes(q) || norm(n.title).includes(q));
-            });
-
-            if (matchingNodes.length === 0) {
-                searchInput.style.borderColor = "#ef4444";
-                centerBtn.textContent = "0 совп.";
-                setTimeout(() => {
-                    searchInput.style.borderColor = "#475569";
-                    centerBtn.textContent = "Центр";
-                }, 1500);
-                return;
-            }
-
-            const matchingIds = matchingNodes.map(n => n.id);
-            network.selectNodes(matchingIds);
-            activateSelection(matchingIds);
-
-            centerBtn.textContent = matchingIds.length + " совп.";
-
-            network.fit({
-                nodes: matchingIds,
-                animation: { duration: 500 }
-            });
+            }, 1500);
+            return;
         }
 
-        centerBtn.addEventListener("click", () => searchAndHighlightAll(searchInput.value));
+        const matchingIds = matchingNodes.map(n => n.id);
+        network.selectNodes(matchingIds);
+        activateSelection(matchingIds);
 
-        searchInput.addEventListener("keydown", (e) => {
-            e.stopPropagation();
-            if (e.key === "Enter") searchAndHighlightAll(searchInput.value);
-        });
+        centerBtn.textContent = matchingIds.length + " совп.";
 
-        searchInput.addEventListener("input", (e) => {
-            if (!e.target.value.trim()) {
-                searchAndHighlightAll("");
-            }
+        network.fit({
+            nodes: matchingIds,
+            animation: { duration: 500 }
         });
-        searchInput.addEventListener("keyup", (e) => e.stopPropagation());
+    }
 
-        fitBtn.addEventListener("click", () => {
-            network.fit({ animation: { duration: 400 } });
-        });
+    centerBtn.addEventListener("click", () => searchAndHighlightAll(searchInput.value));
+    searchInput.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") searchAndHighlightAll(searchInput.value);
+    });
+    searchInput.addEventListener("input", (e) => {
+        if (!e.target.value.trim()) {
+            searchAndHighlightAll("");
+        }
+    });
+    searchInput.addEventListener("keyup", (e) => e.stopPropagation());
 
-        [filterBin, filterMesh, filterTex, filterDead].forEach(cb => {
-            cb.addEventListener("change", applyFilters);
-        });
-    </script>
+    fitBtn.addEventListener("click", () => {
+        network.fit({ animation: { duration: 400 } });
+    });
+
+    [filterBin, filterMesh, filterTex, filterDead].forEach(cb => {
+        cb.addEventListener("change", applyFilters);
+    });
+</script>
 </body>
-
 </html>
