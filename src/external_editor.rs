@@ -13,14 +13,8 @@ pub fn open_and_sync_with_vscode(
     status_callback: impl Fn(Result<String, String>) + Send + Sync + 'static,
 ) -> Result<(), String> {
     let temp_xml_path = generate_temp_xml_path(binary_asset_path);
-    let initial_xml = if temp_xml_path.is_file() {
-        fs::read_to_string(&temp_xml_path).unwrap_or_default()
-    } else {
-        let xml = read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?;
-        fs::write(&temp_xml_path, &xml)
-            .map_err(|e| format!("Не удалось записать {}: {e}", temp_xml_path.display()))?;
-        xml
-    };
+    // Разрешаем временный XML с проверкой mtime: перегенерируем, если .bin новее или .bin.xml отсутствует.
+    let initial_xml = resolve_temp_xml(binary_asset_path, &temp_xml_path)?;
 
     let binary_path = binary_asset_path.to_path_buf();
     let xml_path = temp_xml_path.clone();
@@ -118,6 +112,30 @@ pub fn open_and_sync_with_vscode(
         }
     });
     Ok(())
+}
+
+fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<String, String> {
+    let regenerate = match (fs::metadata(temp_xml_path), fs::metadata(binary_asset_path)) {
+        (Ok(xml_meta), Ok(bin_meta)) => {
+            let xml_mtime = xml_meta.modified().map_err(|e| e.to_string())?;
+            let bin_mtime = bin_meta.modified().map_err(|e| e.to_string())?;
+            bin_mtime > xml_mtime
+        }
+        (Err(_), _) => true,
+        (_, Err(e)) => return Err(e.to_string()),
+    };
+
+    if regenerate {
+        let xml = read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?;
+        fs::write(temp_xml_path, &xml).map_err(|e| {
+            format!("Не удалось записать {}: {e}", temp_xml_path.display())
+        })?;
+        Ok(xml)
+    } else {
+        fs::read_to_string(temp_xml_path).map_err(|e| {
+            format!("Не удалось прочитать {}: {e}", temp_xml_path.display())
+        })
+    }
 }
 
 fn generate_temp_xml_path(binary_path: &Path) -> PathBuf {
@@ -255,21 +273,8 @@ pub fn show_native_error(title: &str, message: &str) {
 
 pub fn run_headless(target: &Path) -> Result<(), String> {
     let temp_xml_path = generate_temp_xml_path(target);
-    let initial_xml = if temp_xml_path.is_file() {
-        fs::read_to_string(&temp_xml_path).unwrap_or_default()
-    } else {
-        let xml = read_serz_xml(target)
-            .inspect_err(|e| {
-                show_native_error("Ошибка", &e.to_string());
-            })
-            .map_err(|e| e.to_string())?;
-        fs::write(&temp_xml_path, &xml).map_err(|e| {
-            let err = format!("Не удалось записать {}: {e}", temp_xml_path.display());
-            show_native_error("Ошибка", &err);
-            err
-        })?;
-        xml
-    };
+    let initial_xml = resolve_temp_xml(target, &temp_xml_path)
+        .inspect_err(|e| show_native_error("Ошибка", e))?;
     loop {
         let mut child =
             launch_editor(&temp_xml_path, true).inspect_err(|e| show_native_error("Ошибка", e))?;
