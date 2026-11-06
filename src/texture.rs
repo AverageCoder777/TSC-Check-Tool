@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! TgPcDx texture decoding, DDS export/import.
 
 use std::fmt::Write as FmtWrite;

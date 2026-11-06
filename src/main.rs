@@ -74,34 +74,6 @@ fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     slint::Image::load_from_path(icon_path).unwrap_or_default()
 }
 
-#[allow(dead_code)]
-pub(crate) fn map_broken_resources_to_ui(
-    items: &[auditor::BrokenResourceRef],
-) -> slint::ModelRc<IssueRowData> {
-    let rows: Vec<IssueRowData> = items
-        .iter()
-        .map(|b| {
-            let is_dead = b.kind == auditor::AssetResourceKind::Unused;
-            let kind = if b.count > 1 {
-                format!("{} (×{})", b.kind.label(), b.count)
-            } else {
-                b.kind.label().to_string()
-            };
-            IssueRowData {
-                kind_text: kind.into(),
-                missing_file: if is_dead {
-                    "".into()
-                } else {
-                    crate::fs_utils::to_assets_relative_display(&b.expected_path).into()
-                },
-                source_file: crate::fs_utils::to_assets_relative_display(&b.parent_file).into(),
-                is_dead_resource: is_dead,
-            }
-        })
-        .collect();
-    slint::ModelRc::new(slint::VecModel::from(rows))
-}
-
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 
