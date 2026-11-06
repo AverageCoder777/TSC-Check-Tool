@@ -727,7 +727,19 @@ pub(crate) fn repair_umlaut_asset_chain(
                 crate::serz::SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
             let bytes =
                 crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
-            fs::write(&staged, bytes).map_err(|e| e.to_string())?;
+            if bytes.len() < 1024 {
+                return Err(format!(
+                    "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена.",
+                    bytes.len()
+                ));
+            }
+            let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+            if let Err(error) = validation_reader.parse() {
+                return Err(format!(
+                    "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
+                ));
+            }
+            fs::write(&staged, &bytes).map_err(|e| e.to_string())?;
             staged
         } else {
             xml_path

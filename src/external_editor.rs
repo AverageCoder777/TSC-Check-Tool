@@ -65,8 +65,29 @@ pub fn open_and_sync_with_vscode(
                 Ok((node, preamble)) => {
                     match crate::serz::encode_to_vec(&node, preamble.as_ref()) {
                         Ok(bytes) => {
-                            let _ = create_backup_file(&binary_path);
-                            if let Err(e) = fs::write(&binary_path, bytes) {
+                            if bytes.len() < 1024 {
+                                let err = format!(
+                                    "Ошибка записи: размер файла аномально мал ({} байт).",
+                                    bytes.len()
+                                );
+                                show_native_error("Ошибка записи", &err);
+                                status_callback(Err(err));
+                                return;
+                            }
+                            let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+                            if let Err(e) = validation_reader.parse() {
+                                let err = format!(
+                                    "Ошибка сериализации: сгенерированный бинарник поврежден: {e}"
+                                );
+                                show_native_error("Ошибка записи", &err);
+                                status_callback(Err(err));
+                                return;
+                            }
+                            let backup = create_backup_file(&binary_path).ok().flatten();
+                            if let Err(e) = write_binary_atomic(&binary_path, &bytes) {
+                                if let Some(backup_path) = backup {
+                                    let _ = fs::rename(&backup_path, &binary_path);
+                                }
                                 let err = format!("Ошибка записи в бинарник: {e}");
                                 show_native_error("Ошибка записи", &err);
                                 status_callback(Err(err));
@@ -234,6 +255,34 @@ pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<std::process::Child,
         .map_err(|e| format!("Не удалось запустить Блокнот: {e}"))
 }
 
+pub fn write_binary_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("Некорректный путь к файлу: {}", target.display()))?;
+    let file_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "asset.bin".to_owned());
+    let temp_path = parent.join(format!("{file_name}.tmp"));
+    fs::write(&temp_path, bytes).map_err(|error| {
+        format!(
+            "Не удалось записать временный файл {}: {error}",
+            temp_path.display()
+        )
+    })?;
+    if target.exists() {
+        fs::remove_file(target).map_err(|error| {
+            let _ = fs::remove_file(&temp_path);
+            format!("Не удалось подготовить {}: {error}", target.display())
+        })?;
+    }
+    fs::rename(&temp_path, target).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        format!("Не удалось установить {}: {error}", target.display())
+    })?;
+    Ok(())
+}
+
 pub fn create_backup_file(target_bin: &Path) -> Result<Option<PathBuf>, String> {
     if !target_bin.exists() {
         return Ok(None);
@@ -292,8 +341,26 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
         match crate::serz::SerzNode::from_xml_str(&final_xml) {
             Ok((node, preamble)) => match crate::serz::encode_to_vec(&node, preamble.as_ref()) {
                 Ok(bytes) => {
-                    let _ = create_backup_file(target);
-                    fs::write(target, bytes).map_err(|e| e.to_string())?;
+                    if bytes.len() < 1024 {
+                        show_native_error(
+                            "Ошибка записи",
+                            &format!("Размер файла аномально мал ({} байт).", bytes.len()),
+                        );
+                        return Err("Размер файла аномально мал".to_string());
+                    }
+                    let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+                    if let Err(e) = validation_reader.parse() {
+                        show_native_error("Ошибка записи", &format!("Сгенерированный бинарник поврежден: {e}"));
+                        return Err(e);
+                    }
+                    let backup = create_backup_file(target).ok().flatten();
+                    if let Err(e) = write_binary_atomic(target, &bytes) {
+                        if let Some(backup_path) = backup {
+                            let _ = fs::rename(&backup_path, target);
+                        }
+                        show_native_error("Ошибка записи", &e);
+                        return Err(e);
+                    }
                     let _ = fs::remove_file(&temp_xml_path);
                     return Ok(());
                 }

@@ -184,9 +184,15 @@ pub(crate) fn replace_missing_asset(
         source_files.insert(source);
     }
 
+    println!(
+        "[Replacement] Замена ассета: {} -> {}",
+        old_asset, new_asset
+    );
+
     let mut staged = Vec::new();
     let mut replaced_instances = 0;
     for source_file in source_files {
+        println!("[Replacement] Обработка файла: {}", source_file.display());
         let is_binary = source_file
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
@@ -311,7 +317,26 @@ pub(crate) fn replace_missing_asset(
                     source_file.display()
                 )
             })?;
-            fs::write(&converted_path, bytes).map_err(|error| {
+            // Sanity check: файл тайла TSC физически не может весить 71 байт.
+            if bytes.len() < 1024 {
+                return Err(format!(
+                    "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена, оригинал не затронут.",
+                    bytes.len()
+                ));
+            }
+            // Self-test (roundtrip): пробуем распарсить то, что только что сгенерировали.
+            let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+            if let Err(error) = validation_reader.parse() {
+                return Err(format!(
+                    "Ошибка сериализации: сгенерированный бинарник поврежден и не может быть прочитан обратно: {error}"
+                ));
+            }
+            println!(
+                "[Replacement] Сериализовано {} байт для {}",
+                bytes.len(),
+                source_file.display()
+            );
+            fs::write(&converted_path, &bytes).map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
                     source_file.display()
@@ -336,9 +361,11 @@ pub(crate) fn replace_missing_asset(
     let mut transaction = FileTransaction::new();
     let mut replaced_files = 0;
     for (source_file, _temp, converted_path) in staged {
+        println!("[Replacement] Установка файла: {}", source_file.display());
         match install_route_file(route_path, &source_file, &converted_path) {
             Ok(backup) => {
                 if let Some(backup_path) = &backup {
+                    println!("[Replacement] Создан бэкап: {}", backup_path.display());
                     transaction.record(source_file.install_target(route_path), backup_path.clone());
                 }
                 replaced_files += 1;
