@@ -67,6 +67,25 @@ impl SerzNode {
             out
         }
 
+        fn parse_next<I>(iter: &mut I) -> Result<Option<SerzNode>, String>
+        where
+            I: Iterator<Item = Result<XmlEvent, xml::reader::Error>>,
+        {
+            loop {
+                match iter.next() {
+                    None => return Ok(None),
+                    Some(Err(e)) => return Err(e.to_string()),
+                    Some(Ok(XmlEvent::StartElement {
+                        name, attributes, ..
+                    })) => {
+                        return parse_element(iter, name.local_name.clone(), attributes).map(Some);
+                    }
+                    Some(Ok(XmlEvent::EndElement { .. })) => return Ok(None),
+                    Some(Ok(_)) => continue,
+                }
+            }
+        }
+
         fn parse_element<I>(
             iter: &mut I,
             name: String,
@@ -158,36 +177,10 @@ impl SerzNode {
                 });
             }
 
-            // Element or default cDeltaString property
-            let mut text = String::new();
+            // Element
             let mut children = Vec::new();
-            let mut has_child_element = false;
-            loop {
-                match iter.next() {
-                    None => break,
-                    Some(Err(e)) => return Err(e.to_string()),
-                    Some(Ok(XmlEvent::StartElement {
-                        name, attributes, ..
-                    })) => {
-                        has_child_element = true;
-                        let child = parse_element(iter, name.local_name.clone(), attributes)?;
-                        children.push(child);
-                    }
-                    Some(Ok(XmlEvent::Characters(s)))
-                    | Some(Ok(XmlEvent::Whitespace(s))) => {
-                        text.push_str(&s);
-                    }
-                    Some(Ok(XmlEvent::EndElement { .. })) => break,
-                    Some(Ok(_)) => continue,
-                }
-            }
-            if !has_child_element {
-                return Ok(SerzNode::Property {
-                    name,
-                    type_name: "cDeltaString".to_string(),
-                    value: text.trim().to_string(),
-                    alt_encoding: None,
-                });
+            while let Some(child) = parse_next(iter)? {
+                children.push(child);
             }
             Ok(SerzNode::Element {
                 name,
@@ -233,13 +226,24 @@ impl SerzNode {
 
                 for child in children.iter() {
                     match child {
-                        SerzNode::Element { name: c_name, children: sub_children, .. }
-                            if c_name.replace("::", "-") == "BlueprintSetID" =>
-                        {
+                        SerzNode::Element {
+                            name: c_name,
+                            children: sub_children,
+                            ..
+                        } if c_name.replace("::", "-") == "BlueprintSetID" => {
                             for sub in sub_children.iter() {
-                                if let SerzNode::Element { children: set_children, .. } = sub {
+                                if let SerzNode::Element {
+                                    children: set_children,
+                                    ..
+                                } = sub
+                                {
                                     for prop in set_children.iter() {
-                                        if let SerzNode::Property { name: p_name, value, .. } = prop {
+                                        if let SerzNode::Property {
+                                            name: p_name,
+                                            value,
+                                            ..
+                                        } = prop
+                                        {
                                             if p_name == "Provider"
                                                 && value.eq_ignore_ascii_case(old_provider)
                                             {
@@ -255,7 +259,11 @@ impl SerzNode {
                                 }
                             }
                         }
-                        SerzNode::Property { name: p_name, value, .. } if p_name == "BlueprintID" => {
+                        SerzNode::Property {
+                            name: p_name,
+                            value,
+                            ..
+                        } if p_name == "BlueprintID" => {
                             let norm_val = value.replace('/', "\\").to_lowercase();
                             let norm_old = old_blueprint.replace('/', "\\").to_lowercase();
 
@@ -278,19 +286,27 @@ impl SerzNode {
                     }
                 }
 
-                if prov_match
-                    && prod_match
-                    && (old_blueprint.is_empty() || blueprint_match)
-                {
+                if prov_match && prod_match && (old_blueprint.is_empty() || blueprint_match) {
                     for child in children.iter_mut() {
                         match child {
-                            SerzNode::Element { name: c_name, children: sub_children, .. }
-                                if c_name.replace("::", "-") == "BlueprintSetID" =>
-                            {
+                            SerzNode::Element {
+                                name: c_name,
+                                children: sub_children,
+                                ..
+                            } if c_name.replace("::", "-") == "BlueprintSetID" => {
                                 for sub in sub_children.iter_mut() {
-                                    if let SerzNode::Element { children: set_children, .. } = sub {
+                                    if let SerzNode::Element {
+                                        children: set_children,
+                                        ..
+                                    } = sub
+                                    {
                                         for prop in set_children.iter_mut() {
-                                            if let SerzNode::Property { name: p_name, value, .. } = prop {
+                                            if let SerzNode::Property {
+                                                name: p_name,
+                                                value,
+                                                ..
+                                            } = prop
+                                            {
                                                 if p_name == "Provider" {
                                                     *value = new_provider.to_string();
                                                 }
@@ -302,9 +318,11 @@ impl SerzNode {
                                     }
                                 }
                             }
-                            SerzNode::Property { name: p_name, value, .. } if p_name == "BlueprintID"
-                                && !new_blueprint.is_empty() =>
-                            {
+                            SerzNode::Property {
+                                name: p_name,
+                                value,
+                                ..
+                            } if p_name == "BlueprintID" && !new_blueprint.is_empty() => {
                                 *value = new_blueprint.replace('/', "\\");
                             }
                             _ => {}
@@ -867,9 +885,20 @@ impl<W: Write> SerzWriter<W> {
     }
 
     fn write_token(&mut self, opcode: u8, name: &str, type_name: &str) -> Result<(), String> {
+        let canonical_name = if name.contains('-')
+            && (name.starts_with("iBrowseableBlueprint-")
+                || name.starts_with("Localisation-")
+                || name.starts_with("iBlueprintLibrary-")
+                || name.starts_with("cSceneryRenderBlueprint-")
+                || name.starts_with("cControl-"))
+        {
+            name.replace('-', "::")
+        } else {
+            name.to_string()
+        };
         let key = SerzTokenKey {
             opcode,
-            name: name.to_string(),
+            name: canonical_name.clone(),
             type_name: type_name.to_string(),
         };
 
@@ -881,7 +910,7 @@ impl<W: Write> SerzWriter<W> {
                 .map_err(|e| e.to_string())?;
 
             if opcode != 0x42 && opcode != 0x4E && opcode != 0x43 {
-                self.write_string(name)?;
+                self.write_string(&canonical_name)?;
             }
             if opcode == 0x56 || opcode == 0x41 {
                 self.write_string(type_name)?;
@@ -969,7 +998,7 @@ impl<W: Write> SerzWriter<W> {
                     .parse::<i8>()
                     .map_err(|e| format!("{}: {}", e, value))?;
                 self.writer
-                    .write_all(&[v as u8])
+                    .write_all(&v.to_le_bytes())
                     .map_err(|e| e.to_string())?;
             }
             "sFloat32" => {
@@ -1249,6 +1278,3 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
         Err(err) => eprintln!("\n[!] Ошибка чтения: {}", err),
     }
 }
-
-
-
