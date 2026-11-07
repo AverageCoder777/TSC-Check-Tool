@@ -309,7 +309,7 @@ type BlueprintRanges = (
     usize,
 );
 /// Разбирает «голую» ссылку `<Provider>…</Provider><Product>…</Product><BlueprintID>…</BlueprintID>`.
-/// /// Между элементами допускается только текст: как и в исходном шаблоне
+/// Между элементами допускается только текст: как и в исходном шаблоне
 /// `[^<]*`, никакой другой тег между ними стоять не может.
 pub(crate) fn match_bare_blueprint(haystack: &[u8], start: usize) -> Option<BlueprintRanges> {
     let (provider_range, after_provider) = parse_tagged_value(haystack, "Provider", start)?;

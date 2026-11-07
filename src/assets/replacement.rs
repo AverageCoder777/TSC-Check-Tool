@@ -192,6 +192,14 @@ pub(crate) fn replace_missing_asset(
     let old_parts: Vec<&str> = old_asset.split(['/', '\\']).collect();
     let old_provider = old_parts.first().copied().unwrap_or_default();
     let old_product = old_parts.get(1).copied().unwrap_or_default();
+    let mut old_blueprint_path = PathBuf::new();
+    for part in old_parts.iter().skip(2) {
+        old_blueprint_path.push(part);
+    }
+    let old_blueprint = old_blueprint_path
+        .with_extension("xml")
+        .to_string_lossy()
+        .replace('/', "\\");
 
     let mut staged = Vec::new();
     let mut replaced_instances = 0;
@@ -237,11 +245,21 @@ pub(crate) fn replace_missing_asset(
                     source_file.display()
                 )
             })?;
+            println!(
+                "[Replacement Debug] Ищем: Provider='{}', Product='{}', Blueprint='{}'",
+                old_provider, old_product, old_blueprint
+            );
+            println!(
+                "[Replacement Debug] Меняем на: Provider='{}', Product='{}', Blueprint='{}'",
+                replacement_provider, replacement_product, replacement_blueprint
+            );
             let count = root.replace_blueprint_references(
                 old_provider,
                 old_product,
+                &old_blueprint,
                 &replacement_provider,
                 &replacement_product,
+                &replacement_blueprint,
             );
             if count == 0 {
                 continue;
