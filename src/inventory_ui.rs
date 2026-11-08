@@ -15,6 +15,10 @@ pub(crate) struct InventorySort {
     pub(crate) descending: bool,
 }
 
+pub fn has_suspicious_chars(value: &str) -> bool {
+    value.chars().any(|c| !c.is_ascii() || matches!(c, '╞' | '¤' | '�'))
+}
+
 pub(crate) fn asset_directory(assets_path: &Path, asset_path: &str) -> PathBuf {
     let normalized = asset_path.replace('/', "\\");
     let relative = Path::new(&normalized);
@@ -38,12 +42,22 @@ pub(crate) fn existing_directory_upwards(path: &Path) -> Option<PathBuf> {
 pub fn build_inventory_rows(
     state: &crate::app::AssetInventoryWindowState,
     show_missing: bool,
-) -> (Vec<slint::ModelRc<slint::StandardListViewItem>>, Vec<bool>) {
+) -> (Vec<slint::ModelRc<slint::StandardListViewItem>>, Vec<bool>, Vec<bool>, Vec<usize>) {
     let search = state.search.trim().to_lowercase();
-    let mut matched: Vec<(&crate::domain::ReferencedAsset, usize)> = Vec::new();
-    for a in &state.assets {
+    let mut matched: Vec<(&crate::domain::ReferencedAsset, usize, usize)> = Vec::new();
+    for (index, a) in state.assets.iter().enumerate() {
         if show_missing && !a.missing {
             continue;
+        }
+        if state.umlaut_filter {
+            let suspicious = crate::inventory_ui::has_suspicious_chars(&a.path)
+                || a.uses.iter().any(|u| {
+                    crate::inventory_ui::has_suspicious_chars(&u.tile)
+                        || crate::inventory_ui::has_suspicious_chars(&u.source_file_search)
+                });
+            if !suspicious {
+                continue;
+            }
         }
         if !search.is_empty() {
             let matches = a.path_search.contains(&search)
@@ -55,27 +69,29 @@ pub fn build_inventory_rows(
             }
         }
         let usage_count: usize = a.uses.iter().map(|u| u.count as usize).sum();
-        matched.push((a, usage_count));
+        matched.push((a, usage_count, index));
     }
     match state.sort.column {
         InventorySortColumn::Path => {
             if state.sort.descending {
-                matched.sort_by(|(a, _), (b, _)| b.path.cmp(&a.path));
+                matched.sort_by(|(a, _, _), (b, _, _)| b.path.cmp(&a.path));
             } else {
-                matched.sort_by(|(a, _), (b, _)| a.path.cmp(&b.path));
+                matched.sort_by(|(a, _, _), (b, _, _)| a.path.cmp(&b.path));
             }
         }
         InventorySortColumn::Usage => {
             if state.sort.descending {
-                matched.sort_by(|(_, count_a), (_, count_b)| count_b.cmp(count_a));
+                matched.sort_by(|(_, count_a, _), (_, count_b, _)| count_b.cmp(count_a));
             } else {
-                matched.sort_by_key(|(_, count_a)| *count_a);
+                matched.sort_by_key(|(_, count_a, _)| *count_a);
             }
         }
     }
     let mut rows = Vec::with_capacity(matched.len());
     let mut safe_flags = Vec::with_capacity(matched.len());
-    for (a, usage_count) in matched {
+    let mut delete_flags = Vec::with_capacity(matched.len());
+    let mut filtered_indices = Vec::with_capacity(matched.len());
+    for (a, usage_count, original_index) in matched {
         // Заимствуем срезы &str в BTreeMap без аллокаций строк
         let mut by_tile: BTreeMap<&str, usize> = BTreeMap::new();
         for u in &a.uses {
@@ -101,6 +117,8 @@ pub fn build_inventory_rows(
         safe_flags.push(crate::assets::is_safe_for_global_replacement(
             &a.path, &a.uses,
         ));
+        delete_flags.push(a.uses.iter().all(|u| u.tile_kind == crate::domain::TileKind::Scenery));
+        filtered_indices.push(original_index);
     }
-    (rows, safe_flags)
+    (rows, safe_flags, delete_flags, filtered_indices)
 }

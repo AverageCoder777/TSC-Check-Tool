@@ -44,6 +44,52 @@ pub enum SerzNode {
     },
 }
 
+fn entity_matches_blueprint(node: &SerzNode, provider: &str, product: &str, blueprint: &str) -> bool {
+    let mut prov: Option<String> = None;
+    let mut prod: Option<String> = None;
+    let mut bp: Option<String> = None;
+    collect_blueprint_ids(node, &mut prov, &mut prod, &mut bp);
+    let Some(prov) = prov else { return false; };
+    let Some(prod) = prod else { return false; };
+    let Some(bp) = bp else { return false; };
+    if !prov.eq_ignore_ascii_case(provider) || !prod.eq_ignore_ascii_case(product) {
+        return false;
+    }
+    let norm_bp = bp.replace('/', "\\").to_lowercase();
+    let norm_target = blueprint.replace('/', "\\").to_lowercase();
+    let bp_xml = if norm_bp.ends_with(".bin") {
+        format!("{}.xml", &norm_bp[..norm_bp.len() - 4])
+    } else {
+        norm_bp
+    };
+    let target_xml = if norm_target.ends_with(".bin") {
+        format!("{}.xml", &norm_target[..norm_target.len() - 4])
+    } else {
+        norm_target
+    };
+    bp_xml == target_xml
+}
+
+fn collect_blueprint_ids(node: &SerzNode, prov: &mut Option<String>, prod: &mut Option<String>, bp: &mut Option<String>) {
+    match node {
+        SerzNode::Element { children, .. } => {
+            for child in children {
+                collect_blueprint_ids(child, prov, prod, bp);
+            }
+        }
+        SerzNode::Property { name, value, .. } => {
+            if name == "Provider" {
+                *prov = Some(value.clone());
+            } else if name == "Product" {
+                *prod = Some(value.clone());
+            } else if name == "BlueprintID" {
+                *bp = Some(value.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 impl SerzNode {
     pub fn from_xml_str(xml: &str) -> Result<(Self, Option<SerzPreamble>), String> {
         use xml::reader::{EventReader, XmlEvent};
@@ -345,6 +391,33 @@ impl SerzNode {
             }
         }
         count
+    }
+
+    pub fn remove_c_dynamic_entities(
+        &mut self,
+        provider: &str,
+        product: &str,
+        blueprint: &str,
+    ) -> usize {
+        let mut removed = 0;
+        if let SerzNode::Element { children, .. } = self {
+            let mut kept = Vec::with_capacity(children.len());
+            for mut child in children.drain(..) {
+                if let SerzNode::Element { name: child_name, .. } = &child
+                    && child_name == "cDynamicEntity"
+                    && entity_matches_blueprint(&child, provider, product, blueprint)
+                {
+                    removed += 1;
+                    continue;
+                }
+                if let SerzNode::Element { .. } = &child {
+                    removed += child.remove_c_dynamic_entities(provider, product, blueprint);
+                }
+                kept.push(child);
+            }
+            *children = kept;
+        }
+        removed
     }
 }
 

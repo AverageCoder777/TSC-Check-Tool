@@ -405,6 +405,7 @@ export component AssetInventoryWindow inherits Window {
 
     in property <[ [StandardListViewItem] ]> inventory-rows;
     in property <[bool]> inventory-is-safe: [];
+    in property <[bool]> inventory-can-delete: [];
     in property <bool> show-missing-only: false;
     in-out property <string> search-query: "";
     in-out property <int> current-row: -1;
@@ -415,6 +416,7 @@ export component AssetInventoryWindow inherits Window {
     callback row-selected(int);
     callback open-in-editor();
     callback replace-inventory-asset(int);
+    callback delete-inventory-asset(int);
     callback scan-umlauts();
     callback sort-ascending(int);
     callback sort-descending(int);
@@ -449,6 +451,27 @@ export component AssetInventoryWindow inherits Window {
                 Text {
                     text: @tr("Заменить в маршруте");
                     color: !can_replace ? #666666 : #ffffff;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle {
+                property <bool> can_delete: selected-asset >= 0 && selected-asset < inventory-can-delete.length && inventory-can-delete[selected-asset];
+                min-width: 170px;
+                preferred-height: 32px;
+                border-radius: 4px;
+                background: !can_delete ? #262626 : (delete_touch.pressed ? #991b1b : (delete_touch.has-hover ? #dc2626 : #991b1b));
+
+                delete_touch := TouchArea {
+                    enabled: can_delete;
+                    clicked => { root.delete-inventory-asset(selected-asset); }
+                }
+
+                Text {
+                    text: @tr("Удалить из маршрута");
+                    color: !can_delete ? #666666 : #ffffff;
                     font-size: 13px;
                     font-weight: 600;
                     horizontal-alignment: center;

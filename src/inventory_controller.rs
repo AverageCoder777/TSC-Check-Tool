@@ -19,12 +19,14 @@ impl InventoryController {
     }
     pub(crate) fn update_inventory_view(
         inv: &AssetInventoryWindow,
-        state: &crate::app::AssetInventoryWindowState,
+        state: &mut crate::app::AssetInventoryWindowState,
     ) {
         let show_missing = inv.get_show_missing_only();
-        let (rows, safe) = crate::inventory_ui::build_inventory_rows(state, show_missing);
+        let (rows, safe, delete_flags, filtered_indices) = crate::inventory_ui::build_inventory_rows(state, show_missing);
         inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
+        inv.set_inventory_can_delete(slint::ModelRc::new(slint::VecModel::from(delete_flags)));
+        state.filtered_indices = filtered_indices;
     }
     pub fn bind(&self) {
         {
@@ -35,9 +37,9 @@ impl InventoryController {
                 let cur = inv.get_show_missing_only();
                 inv.set_show_missing_only(!cur);
                 if let Ok(app) = app.lock()
-                    && let Ok(state) = app.asset_inventory_state.lock()
+                    && let Ok(mut state) = app.asset_inventory_state.lock()
                 {
-                    Self::update_inventory_view(&inv, &state);
+                    Self::update_inventory_view(&inv, &mut state);
                 }
             });
         }
@@ -60,7 +62,7 @@ impl InventoryController {
                         }
                         _ => {}
                     }
-                    Self::update_inventory_view(&inv, &state);
+                    Self::update_inventory_view(&inv, &mut state);
                 }
             });
         }
@@ -83,7 +85,7 @@ impl InventoryController {
                         }
                         _ => {}
                     }
-                    Self::update_inventory_view(&inv, &state);
+                    Self::update_inventory_view(&inv, &mut state);
                 }
             });
         }
@@ -96,7 +98,7 @@ impl InventoryController {
                     && let Ok(mut state) = app.asset_inventory_state.lock()
                 {
                     state.search = text.to_string();
-                    Self::update_inventory_view(&inv, &state);
+                    Self::update_inventory_view(&inv, &mut state);
                 }
             });
         }
@@ -191,8 +193,77 @@ impl InventoryController {
             });
         }
         {
-            let handle = self.weak.clone();
             let app = self.app.clone();
+            let handle = self.weak.clone();
+            self.window.on_delete_inventory_asset(move |idx| {
+                let (asset, route_path) = {
+                    let Ok(app) = app.lock() else { return };
+                    let Ok(state) = app.asset_inventory_state.lock() else { return };
+                    let filtered_idx = idx as usize;
+                    let master_idx = state.filtered_indices.get(filtered_idx).copied();
+                    let Some(master_idx) = master_idx else { return };
+                    let Some(asset) = state.assets.get(master_idx).cloned() else {
+                        return;
+                    };
+                    let route_path = app
+                        .selected_route
+                        .and_then(|i| app.routes.get(i))
+                        .map(|r| r.path.clone());
+                    (asset, route_path)
+                };
+                let Some(route_path) = route_path else { return };
+
+                let tile_count = asset
+                    .uses
+                    .iter()
+                    .map(|u| u.source_file.display().to_string())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                let confirmed = rfd::MessageDialog::new()
+                    .set_title("Удаление объекта")
+                    .set_description(format!(
+                        "Удалить объект {} из всех Scenery-тайлов ({} шт.)? Это действие физически изменит файлы маршрута",
+                        asset.path, tile_count
+                    ))
+                    .set_buttons(rfd::MessageButtons::OkCancel)
+                    .show();
+                if confirmed != rfd::MessageDialogResult::Ok {
+                    return;
+                }
+
+                match crate::assets::delete_scenery_asset(&route_path, &asset.path, &asset.uses) {
+                    Ok((tiles, occurrences)) => {
+                        if let Ok(mut app) = app.lock() {
+                            if let Ok(mut state) = app.asset_inventory_state.lock() {
+                                state.assets.retain(|a| a.path != asset.path);
+                            }
+                            app.log_event(format!(
+                                "Удален объект {} из {} тайлов Scenery ({} вхождений)",
+                                asset.path, tiles, occurrences
+                            ));
+                            crate::schedule_ui_sync();
+                        }
+                        if let Some(inv) = handle.upgrade()
+                            && let Ok(app) = app.lock()
+                            && let Ok(mut state) = app.asset_inventory_state.lock()
+                        {
+                    Self::update_inventory_view(&inv, &mut state);
+                            inv.set_selected_asset(-1);
+                            inv.set_current_row(-1);
+                        }
+                    }
+                    Err(error) => {
+                        if let Ok(mut app) = app.lock() {
+                            app.log_event(error);
+                            crate::schedule_ui_sync();
+                        }
+                    }
+                }
+            });
+        }
+        {
+            let app = self.app.clone();
+            let handle = self.weak.clone();
             self.window.on_replace_inventory_asset(move |selected| {
                 if selected < 0 {
                     return;
@@ -282,11 +353,42 @@ impl InventoryController {
         }
         {
             let app = self.app.clone();
+            let handle = self.weak.clone();
             self.window.on_scan_umlauts(move || {
-                if let Ok(app) = app.lock() {
-                    let _ = app
-                        .inventory_action_tx
-                        .send(crate::app::InventoryAction::ScanUmlauts);
+                let (suspicious_count, new_filter_state) = {
+                    let Ok(app) = app.lock() else { return };
+                    let Ok(mut state) = app.asset_inventory_state.lock() else { return };
+                    state.umlaut_filter = !state.umlaut_filter;
+                    let suspicious_count = state
+                        .assets
+                        .iter()
+                        .filter(|a| {
+                            crate::inventory_ui::has_suspicious_chars(&a.path)
+                                || a.uses.iter().any(|u| {
+                                    crate::inventory_ui::has_suspicious_chars(&u.tile)
+                                        || crate::inventory_ui::has_suspicious_chars(&u.source_file_search)
+                                })
+                        })
+                        .count();
+                    if let Some(inv) = handle.upgrade() {
+                        Self::update_inventory_view(&inv, &mut state);
+                    }
+                    (suspicious_count, state.umlaut_filter)
+                };
+                if let Ok(mut app) = app.lock() {
+                    if new_filter_state {
+                        if suspicious_count == 0 {
+                            app.status = "Объектов с подозрительными символами не обнаружено".to_owned();
+                        } else {
+                            app.status = format!(
+                                "Найдено объектов с нестандартными символами: {} шт.",
+                                suspicious_count
+                            );
+                        }
+                    } else {
+                        app.status = "Фильтр по символам отключен.".to_owned();
+                    }
+                    crate::schedule_ui_sync();
                 }
             });
         }
@@ -301,8 +403,8 @@ impl InventoryController {
         let Some(inv) = self.weak.upgrade() else {
             return;
         };
-        if let Ok(state) = app.asset_inventory_state.lock() {
-            Self::update_inventory_view(&inv, &state);
+        if let Ok(mut state) = app.asset_inventory_state.lock() {
+            Self::update_inventory_view(&inv, &mut state);
         }
         app.inventory_refresh_pending = false;
     }

@@ -9,6 +9,7 @@ enum CheckMessage {
     Finished(Result<crate::domain::CheckResult, String>),
 }
 
+#[allow(dead_code)]
 pub(crate) enum InventoryAction {
     ScanUmlauts,
 }
@@ -24,6 +25,8 @@ pub(crate) struct AssetInventoryWindowState {
     pub(crate) assets: Vec<crate::domain::ReferencedAsset>,
     umlaut_assets: Vec<crate::domain::UmlautAsset>,
     pub(crate) sort: crate::inventory_ui::InventorySort,
+    pub(crate) filtered_indices: Vec<usize>,
+    pub(crate) umlaut_filter: bool,
 }
 
 type InventoryScanOutcome = (Vec<crate::domain::UmlautAsset>, Vec<String>);
@@ -70,7 +73,9 @@ pub(crate) struct CheckerApp {
     pub(crate) locoswap_path: String,
     pub(crate) language: String,
     pub(crate) asset_inventory_state: Arc<Mutex<AssetInventoryWindowState>>,
+    #[allow(dead_code)]
     pub(crate) inventory_action_tx: Sender<InventoryAction>,
+    #[allow(dead_code)]
     inventory_action_rx: Receiver<InventoryAction>,
     inventory_scan: Option<Receiver<Result<InventoryScanOutcome, String>>>,
     pub(crate) missing_assets_popup: Option<Vec<String>>,
