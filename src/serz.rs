@@ -44,6 +44,18 @@ pub enum SerzNode {
     },
 }
 
+/// Нормализует расширение блюпринта к .xml: ссылки в тайлах могут быть с .xml,
+/// а сравниваемая цель уже приводится к .xml при удалении ассета.
+fn blueprint_ext_to_xml(path: &str) -> String {
+    if path.ends_with(".bin") {
+        format!("{}.xml", &path[..path.len() - 4])
+    } else if !path.ends_with(".xml") {
+        format!("{path}.xml")
+    } else {
+        path.to_owned()
+    }
+}
+
 fn entity_matches_blueprint(node: &SerzNode, provider: &str, product: &str, blueprint: &str) -> bool {
     let mut prov: Option<String> = None;
     let mut prod: Option<String> = None;
@@ -57,17 +69,7 @@ fn entity_matches_blueprint(node: &SerzNode, provider: &str, product: &str, blue
     }
     let norm_bp = bp.replace('/', "\\").to_lowercase();
     let norm_target = blueprint.replace('/', "\\").to_lowercase();
-    let bp_xml = if norm_bp.ends_with(".bin") {
-        format!("{}.xml", &norm_bp[..norm_bp.len() - 4])
-    } else {
-        norm_bp
-    };
-    let target_xml = if norm_target.ends_with(".bin") {
-        format!("{}.xml", &norm_target[..norm_target.len() - 4])
-    } else {
-        norm_target
-    };
-    bp_xml == target_xml
+    blueprint_ext_to_xml(&norm_bp) == blueprint_ext_to_xml(&norm_target)
 }
 
 fn collect_blueprint_ids(node: &SerzNode, prov: &mut Option<String>, prod: &mut Option<String>, bp: &mut Option<String>) {
