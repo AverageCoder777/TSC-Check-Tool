@@ -304,12 +304,7 @@ fn reports_empty_required_route_directories() {
             .any(|problem| problem.contains("RouteProperties"))
     );
     for directory in ["Networks", "Scenery", "Terrain"] {
-        assert!(
-            report
-                .problems
-                .iter()
-                .any(|problem| problem == directory)
-        );
+        assert!(report.problems.iter().any(|problem| problem == directory));
     }
 }
 

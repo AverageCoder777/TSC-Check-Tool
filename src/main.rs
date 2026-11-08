@@ -558,7 +558,11 @@ fn main() {
         if let Ok(mut app) = app.lock() {
             app.show_incomplete_warning = false;
             let items = build_incomplete_folder_items(&app.incomplete_folders);
-            let total_bytes: u64 = app.incomplete_folders.iter().map(|f| f.total_size_bytes).sum();
+            let total_bytes: u64 = app
+                .incomplete_folders
+                .iter()
+                .map(|f| f.total_size_bytes)
+                .sum();
             let count = app.incomplete_folders.len();
             let summary = format!(
                 "Всего: {} {} • общий вес: {}",
@@ -581,9 +585,7 @@ fn main() {
     INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
         if let Some(window) = cell.borrow().as_ref() {
             window.on_open_in_explorer(move |path| {
-                let _ = std::process::Command::new("explorer")
-                    .arg(&path)
-                    .spawn();
+                let _ = std::process::Command::new("explorer").arg(&path).spawn();
             });
         }
     });
@@ -611,8 +613,11 @@ fn main() {
                             app.incomplete_folders.remove(idx);
                             app.status = format!("Удалена неполная папка: {}.", path.display());
                             let items = build_incomplete_folder_items(&app.incomplete_folders);
-                            let total: u64 =
-                                app.incomplete_folders.iter().map(|f| f.total_size_bytes).sum();
+                            let total: u64 = app
+                                .incomplete_folders
+                                .iter()
+                                .map(|f| f.total_size_bytes)
+                                .sum();
                             let count = app.incomplete_folders.len();
                             let summary = format!(
                                 "Всего: {} {} • общий вес: {}",
@@ -622,7 +627,9 @@ fn main() {
                             );
                             INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
                                 if let Some(w) = cell2.borrow().as_ref() {
-                                    w.set_folders(slint::ModelRc::new(slint::VecModel::from(items)));
+                                    w.set_folders(slint::ModelRc::new(slint::VecModel::from(
+                                        items,
+                                    )));
                                     w.set_selected_index(-1);
                                     w.set_summary(summary.into());
                                 }
@@ -661,8 +668,11 @@ fn main() {
                     app.incomplete_folders = remaining;
                     app.status = format!("Удалено неполных папок: {removed}.");
                     let items = build_incomplete_folder_items(&app.incomplete_folders);
-                    let total: u64 =
-                        app.incomplete_folders.iter().map(|f| f.total_size_bytes).sum();
+                    let total: u64 = app
+                        .incomplete_folders
+                        .iter()
+                        .map(|f| f.total_size_bytes)
+                        .sum();
                     let count = app.incomplete_folders.len();
                     let summary = format!(
                         "Всего: {} {} • общий вес: {}",
