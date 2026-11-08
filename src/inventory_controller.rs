@@ -180,10 +180,10 @@ impl InventoryController {
                     let _ =
                         crate::external_editor::open_and_sync_with_vscode(&full, move |result| {
                             if let Ok(mut app) = app_for_status.lock() {
-                                app.status = match result {
+                                app.log_event(match result {
                                     Ok(msg) => msg,
                                     Err(err) => format!("✗ {err}"),
-                                };
+                                });
                                 crate::schedule_ui_sync();
                             }
                         });
@@ -227,8 +227,9 @@ impl InventoryController {
                 };
                 if !crate::assets::is_safe_for_global_replacement(&asset.path, &asset.uses) {
                     if let Ok(mut app) = app.lock() {
-                        app.status =
-                            "Замена этого ассета запрещена (путевая инфраструктура).".to_owned();
+                        app.log_event(
+                            "Замена этого ассета запрещена (путевая инфраструктура).".to_owned(),
+                        );
                         crate::schedule_ui_sync();
                     }
                     return;

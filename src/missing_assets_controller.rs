@@ -85,6 +85,7 @@ impl MissingAssetsController {
                     let clean_repair = repair.trim_start_matches(['/', '\\']).replace('/', "\\");
                     let assets_path = app.clean_rw_path().join("Assets");
                     let replacement = assets_path.join(&clean_repair);
+                    let corrupted = missing.path.clone();
                     app.start_asset_replacement(
                         missing,
                         replacement,
@@ -92,6 +93,8 @@ impl MissingAssetsController {
                         repair,
                         BTreeMap::new(),
                     );
+                    app.log_event(format!("Починен путь {} -> {}.", corrupted, clean_repair));
+                    crate::schedule_ui_sync();
                 }
             });
         }
@@ -122,6 +125,10 @@ impl MissingAssetsController {
                 }
                 app.asset_replacement_queue = queue;
                 app.missing_assets_shown = false;
+                app.log_event(format!(
+                    "Массовая починка путей: исправлено {} объектов.",
+                    repairable_count
+                ));
                 app.start_next_asset_replacement();
             });
         }
@@ -178,7 +185,7 @@ impl MissingAssetsController {
                 };
                 if !crate::assets::is_safe_for_global_replacement(&missing.path, &missing.uses) {
                     if let Ok(mut app) = app.lock() {
-                        app.status = "Замена путевых объектов заблокирована для предотвращения повреждения маршрута.".to_owned();
+                        app.log_event("Замена путевых объектов заблокирована для предотвращения повреждения маршрута.".to_owned());
                         crate::schedule_ui_sync();
                     }
                     return;

@@ -311,6 +311,7 @@ export component MainWindow inherits Window {
                     log_view := TextEdit {
                         text: check-log;
                         edited => { reset-log(); }
+                        read-only: true;
                         horizontal-stretch: 1;
                         vertical-stretch: 1;
                     }

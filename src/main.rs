@@ -96,6 +96,24 @@ fn app_state() -> Arc<Mutex<app::CheckerApp>> {
     APP.get().cloned().expect("app state not initialized")
 }
 
+pub(crate) fn log_event(ui: &MainWindow, message: &str) {
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    ui.set_status(message.into());
+    let current_log = ui.get_check_log().to_string();
+    let new_entry = format!("[{}] {}\n", timestamp, message);
+    let updated_log = if current_log.is_empty() {
+        new_entry
+    } else {
+        format!("{}{}", current_log, new_entry)
+    };
+    ui.set_check_log(updated_log.clone().into());
+    ui.set_show_log(true);
+    if let Ok(mut app) = app_state().lock() {
+        app.status = message.to_owned();
+        app.check_log = updated_log;
+    }
+}
+
 fn sync_ui(ui: &MainWindow) {
     if let Ok(mut app) = app_state().lock() {
         app.receive_background_results();
@@ -496,13 +514,18 @@ fn main() {
     settings.bind();
     let scenario = scenario_controller::ScenarioController::new(app_for_controllers.clone());
     scenario.bind(&ui);
+    let ui_weak_open = ui.as_weak();
     let app = app_for_controllers.clone();
     ui.on_open_route_folder(move || {
         if let Ok(app) = app.lock()
             && let Some(idx) = app.selected_route
             && let Some(route) = app.routes.get(idx)
         {
-            let _ = windows::open_in_file_explorer(&route.path);
+            let path = route.path.clone();
+            let _ = windows::open_in_file_explorer(&path);
+            if let Some(ui) = ui_weak_open.upgrade() {
+                crate::log_event(&ui, &format!("Открыта папка в проводнике: {}.", path.display()));
+            }
         }
     });
     let app = app_for_controllers.clone();
@@ -611,7 +634,7 @@ fn main() {
                     match std::fs::remove_dir_all(&path) {
                         Ok(()) => {
                             app.incomplete_folders.remove(idx);
-                            app.status = format!("Удалена неполная папка: {}.", path.display());
+                            app.log_event(format!("Удалена неполная папка: {}.", path.display()));
                             let items = build_incomplete_folder_items(&app.incomplete_folders);
                             let total: u64 = app
                                 .incomplete_folders
@@ -637,7 +660,7 @@ fn main() {
                             crate::schedule_ui_sync();
                         }
                         Err(error) => {
-                            app.status = format!("Не удалось удалить {}: {error}.", path.display());
+                            app.log_event(format!("Не удалось удалить {}: {error}.", path.display()));
                         }
                     }
                 }
@@ -666,7 +689,7 @@ fn main() {
                     }
                     let removed = app.incomplete_folders.len() - remaining.len();
                     app.incomplete_folders = remaining;
-                    app.status = format!("Удалено неполных папок: {removed}.");
+                    app.log_event(format!("Удалены все неполные папки ({removed} шт.)."));
                     let items = build_incomplete_folder_items(&app.incomplete_folders);
                     let total: u64 = app
                         .incomplete_folders

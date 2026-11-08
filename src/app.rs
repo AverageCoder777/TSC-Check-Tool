@@ -203,7 +203,7 @@ impl CheckerApp {
         let Some(result) = self.result.as_ref() else {
             return;
         };
-        match self.asset_inventory_state.lock() {
+        let window_error = match self.asset_inventory_state.lock() {
             Ok(mut state) => {
                 state.assets = result.asset_inventory.clone();
                 state.umlaut_assets = result.umlaut_assets.clone();
@@ -212,13 +212,17 @@ impl CheckerApp {
                 state.show_tiles = true;
                 state.error = None;
                 state.open = true;
+                None
             }
-            Err(error) => self.status = format!("Не удалось открыть инвентарь ассетов: {error}"),
+            Err(error) => Some(error.to_string()),
+        };
+        if let Some(error) = window_error {
+            self.log_event(format!("Не удалось открыть инвентарь ассетов: {error}"));
         }
     }
     fn start_inventory_scan(&mut self) {
         let Some(result) = self.result.as_ref() else {
-            self.status = "Сначала выполните проверку маршрута.".to_owned();
+            self.log_event("Сначала выполните проверку маршрута.".to_owned());
             return;
         };
         if self.inventory_scan.is_some() {
@@ -229,7 +233,7 @@ impl CheckerApp {
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
         self.inventory_scan = Some(rx);
-        self.status = "Проверка ассетов маршрута на умляуты...".to_owned();
+        self.log_event("Проверка ассетов маршрута на умляуты...".to_owned());
         thread::spawn(move || {
             let result =
                 crate::assets::scan_umlaut_assets(&inventory, &assets_path, max_concurrent_serz);
@@ -260,7 +264,7 @@ impl CheckerApp {
         let (tx, rx) = mpsc::channel();
         self.asset_replacement = Some(rx);
         self.asset_replacement_feedback = None;
-        self.status = format!("Подготовка замены ассета {}...", missing.path);
+        self.log_event(format!("Подготовка замены ассета {}...", missing.path));
         thread::spawn(move || {
             let missing_path = missing.path.clone();
             let replacement = if transliterate {
@@ -377,7 +381,7 @@ impl CheckerApp {
             self.selected_incomplete = None;
         }
         self.result = None;
-        self.status = "Сканирование маршрутов...".to_owned();
+        self.log_event("Сканирование маршрутов...".to_owned());
         crate::schedule_ui_sync();
         let ignored_route_ids = self.ignored_route_ids.clone();
         let max_threads = crate::settings::route_scan_max_threads(
@@ -425,7 +429,7 @@ impl CheckerApp {
             state.umlaut_assets.clear();
             state.scanning_umlauts = false;
         }
-        self.status = format!("Проверка маршрута «{}»...", route.name);
+        self.log_event(format!("Проверка маршрута «{}»...", route.name));
         crate::schedule_ui_sync();
         thread::spawn(move || {
             let progress_tx = tx.clone();
@@ -494,6 +498,17 @@ impl CheckerApp {
         self.has_ephemeral_progress = true;
         self.last_progress_log = Some(Instant::now());
     }
+    pub(crate) fn log_event(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        self.status = message.clone();
+        let new_entry = format!("[{}] {}\n", timestamp, message);
+        if self.check_log.is_empty() {
+            self.check_log = new_entry;
+        } else {
+            self.check_log.push_str(&new_entry);
+        }
+    }
     pub(crate) fn is_checking(&self) -> bool {
         self.check.is_some()
     }
@@ -539,7 +554,7 @@ impl CheckerApp {
                         }
                         Err(error) => Some(error.to_string()),
                     };
-                    self.status = if errors.is_empty() {
+                    self.log_event(if errors.is_empty() {
                         format!("Проверка умляутов завершена. Найдено: {}.", assets.len())
                     } else {
                         format!(
@@ -547,7 +562,7 @@ impl CheckerApp {
                             assets.len(),
                             errors.len()
                         )
-                    };
+                    });
                     if let Some(error) = window_error {
                         self.status.push_str(&format!(
                             " Не удалось обновить состояние окна инвентаря: {error}"
@@ -559,7 +574,7 @@ impl CheckerApp {
                         state.scanning_umlauts = false;
                         state.error = Some(error.clone());
                     }
-                    self.status = error;
+                    self.log_event(error);
                 }
             }
         }
@@ -614,23 +629,27 @@ impl CheckerApp {
                         "Заменено размещений: {}; изменено файлов тайлов: {}. {log_message}",
                         report.replaced_instances, report.replaced_files,
                     )));
+                    self.log_event(format!(
+                        "Замена объекта {} -> {} в маршруте ({} вхождений)",
+                        missing_path, report.replacement_asset, report.replaced_instances
+                    ));
                     self.inventory_refresh_pending = true;
                     if !report.backups.is_empty() {
-                        self.status = format!("Создано резервных копий: {}.", report.backups.len());
+                        self.log_event(format!("Создано резервных копий: {}.", report.backups.len()));
                     }
                     let all_done = remaining_assets == Some((0, 0));
                     if all_done {
-                        self.status = "Все отсутствующие ассеты обработаны. Выполняется итоговая проверка маршрута...".to_owned();
+                        self.log_event("Все отсутствующие ассеты обработаны. Выполняется итоговая проверка маршрута...".to_owned());
                         self.inventory_replacement_pending_check = false;
                         self.start_check();
                     } else if let Some((remaining, umlauts)) = remaining_assets {
-                        self.status = format!(
+                        self.log_event(format!(
                             "Замена завершена. Осталось отсутствующих ассетов: {remaining}; ассетов с умляутами: {umlauts}."
-                        );
+                        ));
                     }
                 }
                 Err(error) => {
-                    self.status = error.clone();
+                    self.log_event(error.clone());
                     self.asset_replacement_feedback = Some(Err(error));
                 }
             }
@@ -662,11 +681,11 @@ impl CheckerApp {
                     } else {
                         " (полное сканирование)"
                     };
-                    self.status = format!(
+                    self.log_event(format!(
                         "Найдено маршрутов: {}; неполных папок: {}.",
                         routes.routes.len(),
                         routes.incomplete_folders.len()
-                    );
+                    ));
                     self.status.push_str(source);
                     if let Some(notice) = outcome.notice {
                         self.status.push(' ');
@@ -681,7 +700,7 @@ impl CheckerApp {
                         self.show_incomplete_warning = true;
                     }
                 }
-                Err(error) => self.status = error,
+                Err(error) => self.log_event(error),
             }
         }
         while self.check.is_some() {
@@ -739,11 +758,11 @@ impl CheckerApp {
                                     result.structure_issues.len()
                                 ));
                             }
-                            self.status = if summary.is_empty() {
+                            self.log_event(if summary.is_empty() {
                                 "Проверка завершена: ошибки не найдены.".to_owned()
                             } else {
                                 format!("Проверка завершена: {}.", summary.join(", "))
-                            };
+                            });
                             self.flush_progress_log(true);
                             self.pop_ephemeral_progress();
                             for issue in &result.structure_issues {
@@ -762,12 +781,12 @@ impl CheckerApp {
                             self.result = Some(result);
                             self.inventory_refresh_pending = true;
                         }
-                        Err(error) => self.status = error,
+                Err(error) => self.log_event(error),
                     }
                 }
                 Err(error) => {
                     self.check = None;
-                    self.status = error;
+                    self.log_event(error);
                 }
             }
         }
