@@ -496,16 +496,221 @@ export component IgnoreListWindow inherits Window {
     }
 }
 
-export component IncompleteFoldersWindow inherits Window {
-    title: @tr("Сломанные маршруты");
-    min-width: 500px;
-    min-height: 300px;
+export struct IncompleteFolderItem {
+    folder_name: string,
+    full_path: string,
+    missing_criteria: string,
+    file_count: int,
+    size_mb: string,
+}
 
-    in property <[string]> folders;
+export component IncompleteFoldersWindow inherits Window {
+    title: @tr("Неполные и повреждённые маршруты");
+    min-width: 850px;
+    min-height: 520px;
+
+    in property <[IncompleteFolderItem]> folders;
+    in-out property <int> selected-index: -1;
+
+    in property <string> summary: "";
+
+    callback open-in-explorer(string);
+    callback delete-selected(int);
+    callback delete-all();
+    callback close-window();
 
     VerticalBox {
-        ListView {
-            for f in folders: Text { text: f; }
+        padding: 10px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: @tr("Неполные и повреждённые маршруты");
+                font-size: 18px;
+                font-weight: 700;
+                color: #ffffff;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                background: #3b1d24;
+                border-radius: 4px;
+                min-width: 32px;
+                height: 22px;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    Text {
+                        text: folders.length;
+                        color: #f87171;
+                        font-size: 11px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Text {
+                text: summary;
+                font-size: 12px;
+                color: #9ca3af;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: #181b20;
+            border-color: #333333;
+            border-width: 1px;
+            border-radius: 6px;
+            clip: true;
+
+            if folders.length == 0 : VerticalBox {
+                alignment: center;
+                Text {
+                    text: @tr("Неполных папок не найдено");
+                    color: #6b7280;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                }
+            }
+
+            ListView {
+                for item[i] in folders: Rectangle {
+                    min-height: 78px;
+                    preferred-height: 86px;
+                    background: i == selected-index ? #2c2d30 : (row_touch.has-hover ? #252932 : transparent);
+                    border-color: i == selected-index ? #10b981 : (row_touch.has-hover ? #3d4452 : #2a2e37);
+                    border-width: 1px;
+                    border-radius: 6px;
+
+                    row_touch := TouchArea {
+                        clicked => { selected-index = i; }
+                        double-clicked => { root.open-in-explorer(item.full_path); }
+                    }
+
+                    HorizontalLayout {
+                        padding: 8px;
+                        spacing: 10px;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 4px;
+
+                            Text {
+                                text: item.folder_name;
+                                font-size: 14px;
+                                font-weight: 700;
+                                color: #e5e5e5;
+                                wrap: TextWrap.no-wrap;
+                                overflow: TextOverflow.elide;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: @tr("{} файлов", item.file_count);
+                                    font-size: 11px;
+                                    color: #94a3b8;
+                                }
+                                Text {
+                                    text: item.size_mb;
+                                    font-size: 11px;
+                                    color: #94a3b8;
+                                }
+                            }
+
+                            Text {
+                                text: @tr("Отсутствуют: ") + item.missing_criteria;
+                                font-size: 12px;
+                                color: #fca5a5;
+                                wrap: TextWrap.word-wrap;
+                            }
+                        }
+
+                        VerticalLayout {
+                            horizontal-stretch: 0;
+                            alignment: center;
+                            Rectangle {
+                                min-width: 96px;
+                                preferred-height: 26px;
+                                border-radius: 4px;
+                                border-color: #3d4452;
+                                border-width: 1px;
+                                background: explorer_touch.pressed ? #333742 : (explorer_touch.has-hover ? #323640 : #2a2e37);
+                                explorer_touch := TouchArea {
+                                    clicked => { root.open-in-explorer(item.full_path); }
+                                }
+                                Text {
+                                    text: @tr("📁 Проводник");
+                                    color: #e5e5e5;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            min-height: 36px;
+            padding: 4px;
+            spacing: 6px;
+
+            Rectangle {
+                min-width: 150px;
+                preferred-height: 32px;
+                border-radius: 4px;
+                background: (selected-index < 0) ? #262626 : (delete_selected_touch.pressed ? #7f1d1d : (delete_selected_touch.has-hover ? #991b1b : #dc2626));
+                delete_selected_touch := TouchArea {
+                    enabled: selected-index >= 0;
+                    clicked => {
+                        if (selected-index >= 0) {
+                            root.delete-selected(selected-index);
+                        }
+                    }
+                }
+                Text {
+                    text: @tr("Удалить выбранный");
+                    color: (selected-index < 0) ? #666666 : #ffffff;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle {
+                min-width: 130px;
+                preferred-height: 32px;
+                border-radius: 4px;
+                background: (folders.length == 0) ? #262626 : (delete_all_touch.pressed ? #7f1d1d : (delete_all_touch.has-hover ? #991b1b : #dc2626));
+                delete_all_touch := TouchArea {
+                    enabled: folders.length > 0;
+                    clicked => { root.delete-all(); }
+                }
+                Text {
+                    text: @tr("Удалить все");
+                    color: (folders.length == 0) ? #666666 : #ffffff;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Button {
+                text: @tr("Закрыть");
+                clicked => { root.close-window(); }
+            }
         }
     }
 }
@@ -605,9 +810,9 @@ export component ScenarioWindow inherits Window {
                             Text { text: @tr("Сезон: {}", scenario-season); font-size: 12px; }
                         }
                     }
-                    Rectangle { horizontal-stretch: 1; }
                 }
             }
+            Rectangle { horizontal-stretch: 1; }
         }
         HorizontalBox {
             spacing: 6px;
@@ -848,7 +1053,7 @@ export component MissingAssetsWindow inherits Window {
             Rectangle {
                 background: #3b1d24;
                 border-radius: 4px;
-                min-width: 26px;
+                min-width: 32px;
                 height: 22px;
                 HorizontalLayout {
                     padding-left: 6px;
@@ -865,12 +1070,8 @@ export component MissingAssetsWindow inherits Window {
             }
             Rectangle { horizontal-stretch: 1; }
         }
+
         Rectangle {
-            background: #181818;
-            border-color: #333333;
-            border-width: 1px;
-            border-radius: 4px;
-            clip: true;
             vertical-stretch: 1;
             ListView {
                 for asset[i] in missing-assets: Rectangle {

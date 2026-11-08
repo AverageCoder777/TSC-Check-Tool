@@ -344,6 +344,44 @@ impl Default for AuditorState {
     }
 }
 
+fn format_size_bytes(bytes: u64) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1} МБ", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.0} КБ", bytes as f64 / 1024.0)
+    } else {
+        "< 1 КБ".to_owned()
+    }
+}
+
+fn folder_count_word(count: usize) -> &'static str {
+    let n = count % 100;
+    if (5..=20).contains(&n) {
+        "папок"
+    } else {
+        match n % 10 {
+            1 => "папка",
+            2..=4 => "папки",
+            _ => "папок",
+        }
+    }
+}
+
+fn build_incomplete_folder_items(
+    folders: &[crate::domain::IncompleteRouteFolder],
+) -> Vec<crate::IncompleteFolderItem> {
+    folders
+        .iter()
+        .map(|folder| crate::IncompleteFolderItem {
+            folder_name: folder.id.clone().into(),
+            full_path: folder.path.display().to_string().into(),
+            missing_criteria: folder.problems.join(" • ").into(),
+            file_count: folder.file_count as i32,
+            size_mb: format_size_bytes(folder.total_size_bytes).into(),
+        })
+        .collect()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 4 && args[1] == "--serz-diff" {
@@ -519,20 +557,144 @@ fn main() {
     ui.on_show_incomplete_folders_list(move || {
         if let Ok(mut app) = app.lock() {
             app.show_incomplete_warning = false;
-            let folders: Vec<slint::SharedString> = app
-                .incomplete_folders
-                .iter()
-                .map(|f| f.id.clone().into())
-                .collect();
+            let items = build_incomplete_folder_items(&app.incomplete_folders);
+            let total_bytes: u64 = app.incomplete_folders.iter().map(|f| f.total_size_bytes).sum();
+            let count = app.incomplete_folders.len();
+            let summary = format!(
+                "Всего: {} {} • общий вес: {}",
+                count,
+                folder_count_word(count),
+                format_size_bytes(total_bytes)
+            );
             crate::schedule_ui_sync();
             INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
                 if let Some(window) = cell.borrow().as_ref() {
-                    window.set_folders(slint::ModelRc::new(slint::VecModel::from(folders.clone())));
+                    window.set_folders(slint::ModelRc::new(slint::VecModel::from(items)));
+                    window.set_selected_index(-1);
+                    window.set_summary(summary.clone().into());
                     let _ = window.show();
                 }
             });
         }
     });
+    // Привязка колбэков окна неполных папок.
+    INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
+        if let Some(window) = cell.borrow().as_ref() {
+            window.on_open_in_explorer(move |path| {
+                let _ = std::process::Command::new("explorer")
+                    .arg(&path)
+                    .spawn();
+            });
+        }
+    });
+
+    let app = app_for_controllers.clone();
+    INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
+        if let Some(window) = cell.borrow().as_ref() {
+            window.on_delete_selected(move |index| {
+                let confirmed = rfd::MessageDialog::new()
+                    .set_title("Удаление папки")
+                    .set_description("Удалить выбранную неполную папку навсегда?")
+                    .set_buttons(rfd::MessageButtons::OkCancel)
+                    .show();
+                if confirmed != rfd::MessageDialogResult::Ok {
+                    return;
+                }
+                if let Ok(mut app) = app.lock() {
+                    let idx = index as usize;
+                    if idx >= app.incomplete_folders.len() {
+                        return;
+                    }
+                    let path = app.incomplete_folders[idx].path.clone();
+                    match std::fs::remove_dir_all(&path) {
+                        Ok(()) => {
+                            app.incomplete_folders.remove(idx);
+                            app.status = format!("Удалена неполная папка: {}.", path.display());
+                            let items = build_incomplete_folder_items(&app.incomplete_folders);
+                            let total: u64 =
+                                app.incomplete_folders.iter().map(|f| f.total_size_bytes).sum();
+                            let count = app.incomplete_folders.len();
+                            let summary = format!(
+                                "Всего: {} {} • общий вес: {}",
+                                count,
+                                folder_count_word(count),
+                                format_size_bytes(total)
+                            );
+                            INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
+                                if let Some(w) = cell2.borrow().as_ref() {
+                                    w.set_folders(slint::ModelRc::new(slint::VecModel::from(items)));
+                                    w.set_selected_index(-1);
+                                    w.set_summary(summary.into());
+                                }
+                            });
+                            crate::schedule_ui_sync();
+                        }
+                        Err(error) => {
+                            app.status = format!("Не удалось удалить {}: {error}.", path.display());
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    let app = app_for_controllers.clone();
+    INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
+        if let Some(window) = cell.borrow().as_ref() {
+            window.on_delete_all(move || {
+                let confirmed = rfd::MessageDialog::new()
+                    .set_title("Удаление папок")
+                    .set_description("Удалить все найденные неполные папки навсегда?")
+                    .set_buttons(rfd::MessageButtons::OkCancel)
+                    .show();
+                if confirmed != rfd::MessageDialogResult::Ok {
+                    return;
+                }
+                if let Ok(mut app) = app.lock() {
+                    let mut remaining = Vec::new();
+                    for folder in app.incomplete_folders.clone() {
+                        if std::fs::remove_dir_all(&folder.path).is_err() {
+                            remaining.push(folder);
+                        }
+                    }
+                    let removed = app.incomplete_folders.len() - remaining.len();
+                    app.incomplete_folders = remaining;
+                    app.status = format!("Удалено неполных папок: {removed}.");
+                    let items = build_incomplete_folder_items(&app.incomplete_folders);
+                    let total: u64 =
+                        app.incomplete_folders.iter().map(|f| f.total_size_bytes).sum();
+                    let count = app.incomplete_folders.len();
+                    let summary = format!(
+                        "Всего: {} {} • общий вес: {}",
+                        count,
+                        folder_count_word(count),
+                        format_size_bytes(total)
+                    );
+                    INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
+                        if let Some(w) = cell2.borrow().as_ref() {
+                            w.set_folders(slint::ModelRc::new(slint::VecModel::from(items)));
+                            w.set_selected_index(-1);
+                            w.set_summary(summary.into());
+                        }
+                    });
+                    crate::schedule_ui_sync();
+                }
+            });
+        }
+    });
+
+    INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
+        if let Some(window) = cell.borrow().as_ref() {
+            window.on_close_window(move || {
+                INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
+                    if let Some(w) = cell2.borrow().as_ref() {
+                        let _ = w.hide();
+                    }
+                });
+            });
+        }
+    });
+
     sync_ui(&ui);
     ui.run().unwrap();
 }

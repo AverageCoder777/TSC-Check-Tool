@@ -31,7 +31,7 @@ const INTERESTING_TAGS: [&str; 12] = [
     "StopName",
 ];
 
-const REQUIRED_DIRECTORIES: [&str; 4] = ["Networks", "RouteInformation", "Scenery", "Terrain"];
+const REQUIRED_DIRECTORIES: [&str; 1] = ["Networks"];
 
 static STRIP_TAGS_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<[^>]+>").expect("valid regex"));
@@ -142,7 +142,7 @@ pub(crate) fn scan_routes_with_cache(
                     match serde_json::from_slice::<crate::domain::RouteScanCache>(&contents) {
                         Ok(cache)
                             if cache.game_path == game_path
-                                && cache.icon_scan_version == 4
+                                && cache.icon_scan_version == 6
                                 && cache.folder_ids == folder_ids
                                 && cache.ignored_route_ids == ignored_ids =>
                         {
@@ -176,7 +176,7 @@ pub(crate) fn scan_routes_with_cache(
     let result = scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads)?;
     if let Some(cache_path) = cache_file {
         let cache = crate::domain::RouteScanCache {
-            icon_scan_version: 4,
+            icon_scan_version: 6,
             game_path,
             folder_ids,
             ignored_route_ids: ignored_ids,
@@ -339,7 +339,7 @@ pub(crate) fn inspect_route_folder(
 
     // Fast path: streaming boolean checks only, no inventory allocations.
     let mut has_archived_route_properties = path.join("RouteProperties.xml").is_file();
-    let mut archived_required = [false; 4];
+    let mut archived_required = [false; 1];
     for (child_path, name, is_directory) in &children {
         if *is_directory {
             continue;
@@ -393,7 +393,7 @@ pub(crate) fn inspect_route_folder(
 
     let mut problems = Vec::new();
     if !route_properties_exists {
-        problems.push("нет RouteProperties.xml".to_owned());
+        problems.push("RouteProperties.xml".to_owned());
     }
 
     for (required_index, required) in REQUIRED_DIRECTORIES.iter().enumerate() {
@@ -409,11 +409,7 @@ pub(crate) fn inspect_route_folder(
         };
         let has_archived_files = archived_required[required_index];
         if !has_disk_files && !has_archived_files {
-            problems.push(if found_path.is_some() {
-                format!("папка {required} пуста (файлы не найдены на диске или в .ap)")
-            } else {
-                format!("нет папки {required} с файлами на диске или в .ap")
-            });
+            problems.push((*required).to_owned());
         }
     }
 
@@ -495,6 +491,7 @@ pub(crate) fn inspect_route_folder(
     // Single WalkDir pass: clues + inventory concurrently.
     let mut inventory = Vec::new();
     let mut file_count = 0usize;
+    let mut total_size_bytes = 0u64;
     for entry in WalkDir::new(path).follow_links(false) {
         let entry =
             entry.map_err(|error| format!("Ошибка при обходе {}: {error}", path.display()))?;
@@ -529,6 +526,7 @@ pub(crate) fn inspect_route_folder(
                     format!("Не удалось прочитать {}: {error}", entry.path().display())
                 })?
                 .len();
+            total_size_bytes += size;
             inventory.push(format!("[файл, {size} байт] {}", relative.display()));
         } else if entry.file_type().is_symlink() {
             inventory.push(format!("[ссылка, не обходилась] {}", relative.display()));
@@ -544,13 +542,10 @@ pub(crate) fn inspect_route_folder(
     inventory.sort();
     let scenario_clues = scenario_clues.into_clues();
 
-    let suggested_name = if problems.len() == 2
+    let suggested_name = if problems.len() == 1
         && problems
             .iter()
-            .any(|problem| problem == "нет RouteProperties.xml")
-        && problems
-            .iter()
-            .any(|problem| problem.contains("RouteInformation"))
+            .any(|problem| problem == "RouteProperties.xml")
     {
         archived_route_name.or_else(|| {
             children
@@ -596,6 +591,7 @@ pub(crate) fn inspect_route_folder(
         inventory,
         scenario_clues,
         file_count,
+        total_size_bytes,
         suggested_name,
     }))
 }

@@ -21,6 +21,8 @@ pub(crate) struct IncompleteRouteFolder {
     pub(crate) inventory: Vec<String>,
     pub(crate) scenario_clues: Vec<String>,
     pub(crate) file_count: usize,
+    #[serde(default)]
+    pub(crate) total_size_bytes: u64,
     pub(crate) suggested_name: Option<String>,
 }
 

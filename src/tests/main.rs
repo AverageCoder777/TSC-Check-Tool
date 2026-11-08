@@ -303,12 +303,12 @@ fn reports_empty_required_route_directories() {
             .iter()
             .any(|problem| problem.contains("RouteProperties"))
     );
-    for directory in ["Networks", "RouteInformation", "Scenery", "Terrain"] {
+    for directory in ["Networks", "Scenery", "Terrain"] {
         assert!(
             report
                 .problems
                 .iter()
-                .any(|problem| problem.contains(directory) && problem.contains("пуста"))
+                .any(|problem| problem == directory)
         );
     }
 }
