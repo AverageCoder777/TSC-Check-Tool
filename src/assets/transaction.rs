@@ -46,7 +46,10 @@ pub(crate) fn install_converted_asset(
     converted_path: &Path,
 ) -> Result<PathBuf, String> {
     let backup_path = next_backup_path(source_path)?;
-    println!("[Backup] Создаётся резервная копия: {}", backup_path.display());
+    println!(
+        "[Backup] Создаётся резервная копия: {}",
+        backup_path.display()
+    );
     fs::rename(source_path, &backup_path).map_err(|error| {
         format!(
             "Не удалось сохранить резервную копию {}: {error}",
@@ -186,7 +189,10 @@ pub fn install_route_file(
                 backup_path.display()
             )
         })?;
-        println!("[Backup] Создана резервная копия: {}", backup_path.display());
+        println!(
+            "[Backup] Создана резервная копия: {}",
+            backup_path.display()
+        );
         Some(backup_path)
     } else {
         None

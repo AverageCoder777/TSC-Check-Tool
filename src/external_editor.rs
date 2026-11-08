@@ -138,8 +138,12 @@ pub fn open_and_sync_with_vscode(
 fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<String, String> {
     let regenerate = match (fs::metadata(temp_xml_path), fs::metadata(binary_asset_path)) {
         (Ok(xml_meta), Ok(bin_meta)) => {
-            let xml_mtime = xml_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            let bin_mtime = bin_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let xml_mtime = xml_meta
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let bin_mtime = bin_meta
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             bin_mtime > xml_mtime
         }
         (Err(_), _) => true,
@@ -148,14 +152,12 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
 
     if regenerate {
         let xml = read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?;
-        fs::write(temp_xml_path, &xml).map_err(|e| {
-            format!("Не удалось записать {}: {e}", temp_xml_path.display())
-        })?;
+        fs::write(temp_xml_path, &xml)
+            .map_err(|e| format!("Не удалось записать {}: {e}", temp_xml_path.display()))?;
         Ok(xml)
     } else {
-        fs::read_to_string(temp_xml_path).map_err(|e| {
-            format!("Не удалось прочитать {}: {e}", temp_xml_path.display())
-        })
+        fs::read_to_string(temp_xml_path)
+            .map_err(|e| format!("Не удалось прочитать {}: {e}", temp_xml_path.display()))
     }
 }
 
@@ -322,8 +324,8 @@ pub fn show_native_error(title: &str, message: &str) {
 
 pub fn run_headless(target: &Path) -> Result<(), String> {
     let temp_xml_path = generate_temp_xml_path(target);
-    let initial_xml = resolve_temp_xml(target, &temp_xml_path)
-        .inspect_err(|e| show_native_error("Ошибка", e))?;
+    let initial_xml =
+        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error("Ошибка", e))?;
     loop {
         let mut child =
             launch_editor(&temp_xml_path, true).inspect_err(|e| show_native_error("Ошибка", e))?;
@@ -350,7 +352,10 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
                     }
                     let mut validation_reader = crate::serz::SerzReader::new(&bytes);
                     if let Err(e) = validation_reader.parse() {
-                        show_native_error("Ошибка записи", &format!("Сгенерированный бинарник поврежден: {e}"));
+                        show_native_error(
+                            "Ошибка записи",
+                            &format!("Сгенерированный бинарник поврежден: {e}"),
+                        );
                         return Err(e);
                     }
                     let backup = create_backup_file(target).ok().flatten();

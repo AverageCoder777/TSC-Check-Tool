@@ -55,6 +55,7 @@ thread_local! {
     static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = const { RefCell::new(None) };
     static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = const { RefCell::new(None) };
     static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = const { RefCell::new(None) };
+    static INCOMPLETE_FOLDERS_WINDOW: RefCell<Option<IncompleteFoldersWindow>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn clear_route_icon_cache() {
@@ -200,6 +201,7 @@ fn sync_ui(ui: &MainWindow) {
                 .unwrap_or(0),
         );
         ui.set_is_checking(app.is_checking());
+        ui.set_show_incomplete_warning(app.show_incomplete_warning);
         if app.is_checking() {
             ui.set_show_log(true);
         }
@@ -353,6 +355,10 @@ fn main() {
     let _ = APP.set(app.clone());
     let app_for_controllers = app.clone();
     let ui = MainWindow::new().unwrap();
+    let incomplete_folders_window = IncompleteFoldersWindow::new().unwrap();
+    INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
+        *cell.borrow_mut() = Some(incomplete_folders_window);
+    });
     let _ = UI_WEAK.set(ui.as_weak());
     crate::settings::apply_saved_language(&crate::settings::load_language());
     let ui_handle = ui.as_weak();
@@ -491,6 +497,42 @@ fn main() {
     auditor.bind(ui.as_weak());
     let texture_controller = texture_controller::TextureController::new(auditor.state.clone());
     texture_controller.bind(&auditor);
+    let app = app_for_controllers.clone();
+    ui.on_dismiss_incomplete_warning_once(move || {
+        if let Ok(mut app) = app.lock() {
+            app.show_incomplete_warning = false;
+            crate::schedule_ui_sync();
+        }
+    });
+    let app = app_for_controllers.clone();
+    ui.on_dismiss_incomplete_warning_forever(move || {
+        if let Ok(mut app) = app.lock() {
+            app.show_incomplete_warning = false;
+            app.ignore_incomplete_warning = true;
+            let mut config = crate::settings::load_config();
+            config.ignore_incomplete_warning = true;
+            let _ = crate::settings::save_config(&config);
+            crate::schedule_ui_sync();
+        }
+    });
+    let app = app_for_controllers.clone();
+    ui.on_show_incomplete_folders_list(move || {
+        if let Ok(mut app) = app.lock() {
+            app.show_incomplete_warning = false;
+            let folders: Vec<slint::SharedString> = app
+                .incomplete_folders
+                .iter()
+                .map(|f| f.id.clone().into())
+                .collect();
+            crate::schedule_ui_sync();
+            INCOMPLETE_FOLDERS_WINDOW.with(|cell| {
+                if let Some(window) = cell.borrow().as_ref() {
+                    window.set_folders(slint::ModelRc::new(slint::VecModel::from(folders.clone())));
+                    let _ = window.show();
+                }
+            });
+        }
+    });
     sync_ui(&ui);
     ui.run().unwrap();
 }

@@ -49,6 +49,8 @@ pub(crate) struct CheckerApp {
     pub(crate) last_progress_log: Option<Instant>,
     pub(crate) has_ephemeral_progress: bool,
     pub(crate) incomplete_folders: Vec<crate::domain::IncompleteRouteFolder>,
+    pub(crate) show_incomplete_warning: bool,
+    pub(crate) ignore_incomplete_warning: bool,
     selected_incomplete: Option<usize>,
     pub(crate) ignored_route_ids: HashSet<String>,
     route_scan: Option<Receiver<Result<crate::domain::RouteScanOutcome, String>>>,
@@ -116,6 +118,7 @@ impl Default for CheckerApp {
                 Ok(value) => (value, None),
                 Err(error) => (false, Some(error)),
             };
+        let ignore_incomplete_warning = crate::settings::load_config().ignore_incomplete_warning;
         let language = crate::settings::load_language();
         let (inventory_action_tx, inventory_action_rx) = mpsc::channel();
         if let Some(warning) = settings_warning {
@@ -138,6 +141,8 @@ impl Default for CheckerApp {
             rw_path,
             routes: Vec::new(),
             incomplete_folders: Vec::new(),
+            show_incomplete_warning: false,
+            ignore_incomplete_warning,
             selected_incomplete: None,
             ignored_route_ids,
             selected_route: None,
@@ -672,6 +677,9 @@ impl CheckerApp {
                     self.routes_revision = self.routes_revision.wrapping_add(1);
                     self.selected_incomplete = (!self.incomplete_folders.is_empty()).then_some(0);
                     self.selected_route = (!self.routes.is_empty()).then_some(0);
+                    if !self.incomplete_folders.is_empty() && !self.ignore_incomplete_warning {
+                        self.show_incomplete_warning = true;
+                    }
                 }
                 Err(error) => self.status = error,
             }

@@ -38,6 +38,7 @@ export component MainWindow inherits Window {
     in-out property <bool> ignore-list-open: false;
     in property <[string]> ignored-routes: [];
     in property <[string]> incomplete-folders: [];
+    in-out property <bool> show-incomplete-warning: false;
     in property <string> check-log: "";
 
     in property <float> check_progress: 0.0;
@@ -62,6 +63,9 @@ export component MainWindow inherits Window {
     callback open-folder-auditor();
     callback open-settings();
     callback scenario-selected(int);
+    callback dismiss-incomplete-warning-once();
+    callback dismiss-incomplete-warning-forever();
+    callback show-incomplete-folders-list();
 
     HorizontalLayout {
         // Left master: compact route list
@@ -316,6 +320,78 @@ export component MainWindow inherits Window {
                 text: status;
                 font-size: 13px;
                 color: missing-assets-count > 0 ? #ef4444 : #22c55e;
+            }
+        }
+    }
+
+    if show-incomplete-warning: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #000000a0;
+
+        TouchArea {}
+
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 460px;
+                    background: #1f1f1f;
+                    border-color: #383838;
+                    border-width: 1px;
+                    border-radius: 8px;
+                    drop-shadow-blur: 16px;
+                    drop-shadow-color: #00000080;
+
+                    VerticalLayout {
+                        padding: 20px;
+                        spacing: 12px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "⚠";
+                                font-size: 20px;
+                                color: #f59e0b;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: @tr("Обнаружены повреждённые папки ({})", incomplete-folders.length);
+                                font-size: 16px;
+                                font-weight: 700;
+                                color: #ffffff;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            text: @tr("В папке Content/Routes найдены неполные папки маршрутов. Эти папки не будут показаны как маршруты. Вы можете проигнорировать предупреждение, отключить его навсегда или просмотреть список.");
+                            font-size: 13px;
+                            color: #cccccc;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: end;
+
+                            Button {
+                                text: @tr("Проигнорировать");
+                                clicked => { root.dismiss-incomplete-warning-once(); }
+                            }
+                            Button {
+                                text: @tr("Больше не показывать");
+                                clicked => { root.dismiss-incomplete-warning-forever(); }
+                            }
+                            Button {
+                                text: @tr("Показать список");
+                                primary: true;
+                                clicked => { root.show-incomplete-folders-list(); }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

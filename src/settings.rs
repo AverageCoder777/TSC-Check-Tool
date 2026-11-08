@@ -13,12 +13,15 @@ fn default_language() -> String {
 pub struct AppConfig {
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default)]
+    pub ignore_incomplete_warning: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             language: "ru".to_owned(),
+            ignore_incomplete_warning: false,
         }
     }
 }

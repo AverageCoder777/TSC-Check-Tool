@@ -264,12 +264,13 @@ pub(crate) fn replace_missing_asset(
             if count == 0 {
                 continue;
             }
-            let bytes = crate::serz::encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
-                format!(
-                    "Не удалось подготовить изменённый BIN {}: {error}",
-                    source_file.display()
-                )
-            })?;
+            let bytes =
+                crate::serz::encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+                    format!(
+                        "Не удалось подготовить изменённый BIN {}: {error}",
+                        source_file.display()
+                    )
+                })?;
             if bytes.len() < 1024 {
                 return Err(format!(
                     "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена, оригинал не затронут.",

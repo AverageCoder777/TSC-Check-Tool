@@ -365,7 +365,11 @@ pub fn generate_full_directory_graph(
                     edges.push(FullGraphEdge {
                         from: src_idx,
                         to: dst_idx,
-                        dashes: if is_missing { Some([4usize, 2usize]) } else { None },
+                        dashes: if is_missing {
+                            Some([4usize, 2usize])
+                        } else {
+                            None
+                        },
                         color: Some(if is_missing {
                             "#ef4444".to_string()
                         } else {
