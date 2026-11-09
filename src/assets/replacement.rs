@@ -27,16 +27,9 @@ pub fn delete_scenery_asset(
                     .to_owned(),
             );
         }
-        let path = usage.source_file.display().to_lowercase();
-        if path.contains("tracks.bin")
-            || path.contains("/networks/")
-            || path.contains("\\networks\\")
-            || path.contains("routeproperties")
-            || path.contains("roads")
-        {
+        if usage.source_file.is_protected_pathway() {
             return Err(
-                "Удаление путевых объектов и параметров маршрута доступно только в редакторе игры."
-                    .to_owned(),
+                "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
             );
         }
     }
@@ -183,6 +176,184 @@ pub fn delete_scenery_asset(
     transaction.commit();
     let _ = backups;
     Ok((replaced_files, removed_instances))
+}
+
+/// Удаляет вхождения лофта/дороги из тайлов `Loft Tiles` / `Road Tiles`
+/// (декоративные ленты без привязки к Tracks.bin). Путевые тайлы и
+/// Tracks.bin remain protected: такой объект не попадёт в эту функцию.
+pub fn delete_loft_asset(
+    route_path: &Path,
+    asset_path: &str,
+    uses: &[crate::domain::AssetUse],
+) -> Result<(usize, usize), String> {
+    if uses.is_empty() {
+        return Err("Для объекта не найдены места использования.".to_owned());
+    }
+    for usage in uses {
+        if usage.source_file.is_protected_pathway() {
+            return Err(
+                "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
+            );
+        }
+        if usage.tile_kind != crate::domain::TileKind::Loft
+            && usage.tile_kind != crate::domain::TileKind::Road
+        {
+            return Err(format!(
+                "Удаление поддерживается только для тайлов Loft/Road: {}",
+                usage.source_file.display()
+            ));
+        }
+    }
+
+    let (provider, product, blueprint) = asset_blueprint_ref(asset_path);
+
+    let canonical_route = route_path
+        .canonicalize()
+        .map_err(|error| format!("Не удалось проверить папку маршрута: {error}"))?;
+    let mut source_files = HashSet::new();
+    for usage in uses {
+        let source = usage.source_file.clone();
+        if source.route_name(route_path).is_none() {
+            return Err(format!(
+                "Файл для удаления находится вне маршрута: {}",
+                source.display()
+            ));
+        }
+        if let crate::domain::RouteFile::Path(path) = &source {
+            let canonical_source = path.canonicalize().map_err(|error| {
+                format!(
+                    "Не удалось проверить файл маршрута {}: {error}",
+                    source.display()
+                )
+            })?;
+            if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
+                return Err(format!(
+                    "Файл для удаления находится вне маршрута или недоступен: {}",
+                    source.display()
+                ));
+            }
+        }
+        source_files.insert(source);
+    }
+
+    let mut staged = Vec::new();
+    let mut removed_instances = 0usize;
+    for source_file in source_files {
+        let is_binary = source_file
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
+        if !is_binary {
+            return Err(format!(
+                "Удаление поддерживается только для BIN-тайлов Loft/Road: {}",
+                source_file.display()
+            ));
+        }
+        let source_parent = match &source_file {
+            crate::domain::RouteFile::Path(path) => path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| route_path.to_path_buf()),
+            crate::domain::RouteFile::Archive { .. } => route_path.to_path_buf(),
+        };
+        let temp = create_temporary_work_directory(&source_parent)?;
+        let file_path = source_file.materialize(temp.path())?;
+        let bytes = std::fs::read(&file_path).map_err(|error| {
+            format!(
+                "Не удалось прочитать {} перед удалением: {error}",
+                source_file.display()
+            )
+        })?;
+        let mut reader = crate::serz::SerzReader::new(&bytes);
+        let mut root = reader.parse().map_err(|error| {
+            format!(
+                "Не удалось прочитать {} перед удалением: {error}",
+                source_file.display()
+            )
+        })?;
+        let count = root.remove_loft_ribbons(&provider, &product, &blueprint);
+        if count == 0 {
+            continue;
+        }
+        let bytes =
+            crate::serz::encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+                format!(
+                    "Не удалось подготовить изменённый BIN {}: {error}",
+                    source_file.display()
+                )
+            })?;
+        if bytes.len() < 1024 {
+            return Err(format!(
+                "Ошибка генерации: размер файла аномально мал ({} байт). Удаление отменено.",
+                bytes.len()
+            ));
+        }
+        let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+        if let Err(error) = validation_reader.parse() {
+            return Err(format!(
+                "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
+            ));
+        }
+        let converted_path = temp.path().join("deleted.bin");
+        std::fs::write(&converted_path, &bytes).map_err(|error| {
+            format!(
+                "Не удалось подготовить изменённый BIN {}: {error}",
+                source_file.display()
+            )
+        })?;
+        removed_instances += count;
+        staged.push((source_file, temp, converted_path));
+    }
+
+    if staged.is_empty() {
+        return Err(format!(
+            "В тайлах Loft/Road не найдено использований {}. Обновите проверку и повторите.",
+            asset_path
+        ));
+    }
+
+    let mut backups = Vec::new();
+    let mut transaction = FileTransaction::new();
+    let mut replaced_files = 0usize;
+    for (source_file, _temp, converted_path) in staged {
+        match install_route_file(route_path, &source_file, &converted_path) {
+            Ok(backup) => {
+                if let Some(backup_path) = &backup {
+                    transaction.record(source_file.install_target(route_path), backup_path.clone());
+                }
+                replaced_files += 1;
+                if let Some(backup) = backup {
+                    backups.push(backup);
+                }
+            }
+            Err(error) => {
+                transaction.rollback();
+                return Err(format!(
+                    "Удалено вхождений: {removed_instances}; успешно изменено файлов: {replaced_files}. Ошибка в {}: {error}.",
+                    source_file.display()
+                ));
+            }
+        }
+    }
+    transaction.commit();
+    let _ = backups;
+    Ok((replaced_files, removed_instances))
+}
+
+/// Разбирает путь ассета `Provider/Product/....xml` на provider, product и
+/// нормализованный blueprint (с расширением .xml, обратными слешами).
+fn asset_blueprint_ref(asset_path: &str) -> (String, String, String) {
+    let parts: Vec<&str> = asset_path.split(['/', '\\']).collect();
+    let provider = parts.first().copied().unwrap_or_default().to_string();
+    let product = parts.get(1).copied().unwrap_or_default().to_string();
+    let mut blueprint_path = PathBuf::new();
+    for part in parts.iter().skip(2) {
+        blueprint_path.push(part);
+    }
+    let blueprint = blueprint_path
+        .with_extension("xml")
+        .to_string_lossy()
+        .replace('/', "\\");
+    (provider, product, blueprint)
 }
 
 /// Ключ ассета в списке: игра не различает регистр, поэтому пути, отличающиеся

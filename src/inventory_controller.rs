@@ -1,7 +1,9 @@
 use crate::AssetInventoryWindow;
+use crate::domain::TileKind;
 use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -214,51 +216,145 @@ impl InventoryController {
                 };
                 let Some(route_path) = route_path else { return };
 
-                let tile_count = asset
+                let scenery_uses: Vec<_> = asset
                     .uses
                     .iter()
+                    .filter(|u| u.tile_kind == TileKind::Scenery)
+                    .cloned()
+                    .collect();
+                let loft_road_uses: Vec<_> = asset
+                    .uses
+                    .iter()
+                    .filter(|u| {
+                        matches!(
+                            u.tile_kind,
+                            TileKind::Loft | TileKind::Road
+                        )
+                    })
+                    .cloned()
+                    .collect();
+
+                let protected = asset
+                    .uses
+                    .iter()
+                    .any(|u| u.source_file.is_protected_pathway());
+                if protected {
+                    if let Ok(mut app) = app.lock() {
+                        app.log_event(
+                            "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
+                        );
+                        crate::schedule_ui_sync();
+                    }
+                    return;
+                }
+
+                let loft_tiles: HashSet<String> = loft_road_uses
+                    .iter()
                     .map(|u| u.source_file.display().to_string())
-                    .collect::<std::collections::HashSet<_>>()
-                    .len();
+                    .collect();
+                let scenery_tiles: HashSet<String> = scenery_uses
+                    .iter()
+                    .map(|u| u.source_file.display().to_string())
+                    .collect();
+                let loft_segments: usize = loft_road_uses.iter().map(|u| u.count as usize).sum();
+                let scenery_segments: usize =
+                    scenery_uses.iter().map(|u| u.count as usize).sum();
+
+                let description = match (!loft_road_uses.is_empty(), !scenery_uses.is_empty()) {
+                    (true, false) => format!(
+                        "Удалить лофт {} из {} тайлов Loft ({} сегментов)? Это действие физически изменит файлы маршрута",
+                        asset.path,
+                        loft_tiles.len(),
+                        loft_segments
+                    ),
+                    (false, true) => format!(
+                        "Удалить объект {} из всех Scenery-тайлов ({} шт.)? Это действие физически изменит файлы маршрута",
+                        asset.path,
+                        scenery_tiles.len()
+                    ),
+                    (true, true) => format!(
+                        "Удалить объект {} из {} тайлов Scenery ({} сегментов) и {} тайлов Loft ({} сегментов)? Это действие физически изменит файлы маршрута",
+                        asset.path,
+                        scenery_tiles.len(),
+                        scenery_segments,
+                        loft_tiles.len(),
+                        loft_segments
+                    ),
+                    (false, false) => {
+                        if let Ok(mut app) = app.lock() {
+                            app.log_event(format!(
+                                "Для объекта {} не найдено подходящих тайлов для удаления.",
+                                asset.path
+                            ));
+                            crate::schedule_ui_sync();
+                        }
+                        return;
+                    }
+                };
+
                 let confirmed = rfd::MessageDialog::new()
                     .set_title("Удаление объекта")
-                    .set_description(format!(
-                        "Удалить объект {} из всех Scenery-тайлов ({} шт.)? Это действие физически изменит файлы маршрута",
-                        asset.path, tile_count
-                    ))
+                    .set_description(description)
                     .set_buttons(rfd::MessageButtons::OkCancel)
                     .show();
                 if confirmed != rfd::MessageDialogResult::Ok {
                     return;
                 }
 
-                match crate::assets::delete_scenery_asset(&route_path, &asset.path, &asset.uses) {
-                    Ok((tiles, occurrences)) => {
-                        if let Ok(mut app) = app.lock() {
-                            if let Ok(mut state) = app.asset_inventory_state.lock() {
-                                state.assets.retain(|a| a.path != asset.path);
-                            }
-                            app.log_event(format!(
-                                "Удален объект {} из {} тайлов Scenery ({} вхождений)",
-                                asset.path, tiles, occurrences
-                            ));
-                            crate::schedule_ui_sync();
+                let mut total_tiles = 0usize;
+                let mut total_occurrences = 0usize;
+                let mut errors = Vec::new();
+
+                if !scenery_uses.is_empty() {
+                    match crate::assets::delete_scenery_asset(
+                        &route_path,
+                        &asset.path,
+                        &scenery_uses,
+                    ) {
+                        Ok((tiles, occurrences)) => {
+                            total_tiles += tiles;
+                            total_occurrences += occurrences;
                         }
-                        if let Some(inv) = handle.upgrade()
-                            && let Ok(app) = app.lock()
-                            && let Ok(mut state) = app.asset_inventory_state.lock()
-                        {
+                        Err(error) => errors.push(error),
+                    }
+                }
+                if !loft_road_uses.is_empty() {
+                    match crate::assets::delete_loft_asset(
+                        &route_path,
+                        &asset.path,
+                        &loft_road_uses,
+                    ) {
+                        Ok((tiles, occurrences)) => {
+                            total_tiles += tiles;
+                            total_occurrences += occurrences;
+                        }
+                        Err(error) => errors.push(error),
+                    }
+                }
+
+                if let Ok(mut app) = app.lock() {
+                    if errors.is_empty() {
+                        if let Ok(mut state) = app.asset_inventory_state.lock() {
+                            state.assets.retain(|a| a.path != asset.path);
+                        }
+                        app.log_event(format!(
+                            "Удален объект {} из {} тайлов ({} вхождений)",
+                            asset.path, total_tiles, total_occurrences
+                        ));
+                    } else {
+                        for error in &errors {
+                            app.log_event(error.clone());
+                        }
+                    }
+                    crate::schedule_ui_sync();
+                }
+                if let Some(inv) = handle.upgrade()
+                    && let Ok(app) = app.lock()
+                    && let Ok(mut state) = app.asset_inventory_state.lock()
+                {
                     Self::update_inventory_view(&inv, &mut state);
-                            inv.set_selected_asset(-1);
-                            inv.set_current_row(-1);
-                        }
-                    }
-                    Err(error) => {
-                        if let Ok(mut app) = app.lock() {
-                            app.log_event(error);
-                            crate::schedule_ui_sync();
-                        }
-                    }
+                    inv.set_selected_asset(-1);
+                    inv.set_current_row(-1);
                 }
             });
         }

@@ -287,6 +287,22 @@ impl RouteFile {
             TileKind::Other
         }
     }
+
+    /// Путевая инфраструктура, удаление которой запрещено:
+    /// только `Tracks.bin` внутри папки `Networks` маршрута и
+    /// папка `Track Tiles` в той же папке `Networks`. Всё остальное
+    /// (в т.ч. `Lofts.bin`, `Roads.bin`, прочие файлы в `Networks`)
+    /// не считается путевой инфраструктурой и может быть удалено.
+    pub fn is_protected_pathway(&self) -> bool {
+        let name_str = match self {
+            RouteFile::Path(path) => path.to_string_lossy(),
+            RouteFile::Archive { name, .. } => std::borrow::Cow::Borrowed(name.as_str()),
+        };
+        let path = name_str.to_ascii_lowercase();
+        (path.contains("/networks/tracks.bin") || path.contains("\\networks\\tracks.bin"))
+            || (path.contains("/networks/track tiles/")
+                || path.contains("\\networks\\track tiles\\"))
+    }
 }
 
 pub(crate) struct AssetReplacementReport {

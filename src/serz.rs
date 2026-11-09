@@ -47,8 +47,8 @@ pub enum SerzNode {
 /// Нормализует расширение блюпринта к .xml: ссылки в тайлах могут быть с .xml,
 /// а сравниваемая цель уже приводится к .xml при удалении ассета.
 fn blueprint_ext_to_xml(path: &str) -> String {
-    if path.ends_with(".bin") {
-        format!("{}.xml", &path[..path.len() - 4])
+    if let Some(stripped) = path.strip_suffix(".bin") {
+        format!("{stripped}.xml")
     } else if !path.ends_with(".xml") {
         format!("{path}.xml")
     } else {
@@ -102,15 +102,13 @@ fn collect_blueprint_ids(
                 collect_blueprint_ids(child, prov, prod, bp);
             }
         }
-        SerzNode::Property { name, value, .. } => {
-            if !value.trim().is_empty() {
-                if name == "Provider" && prov.is_none() {
-                    *prov = Some(value.clone());
-                } else if name == "Product" && prod.is_none() {
-                    *prod = Some(value.clone());
-                } else if name == "BlueprintID" && bp.is_none() {
-                    *bp = Some(value.clone());
-                }
+        SerzNode::Property { name, value, .. } if !value.trim().is_empty() => {
+            if name == "Provider" && prov.is_none() {
+                *prov = Some(value.clone());
+            } else if name == "Product" && prod.is_none() {
+                *prod = Some(value.clone());
+            } else if name == "BlueprintID" && bp.is_none() {
+                *bp = Some(value.clone());
             }
         }
         _ => {}
@@ -441,6 +439,37 @@ impl SerzNode {
                 }
                 if let SerzNode::Element { .. } = &child {
                     removed += child.remove_c_dynamic_entities(provider, product, blueprint);
+                }
+                kept.push(child);
+            }
+            *children = kept;
+        }
+        removed
+    }
+
+    pub fn remove_loft_ribbons(
+        &mut self,
+        provider: &str,
+        product: &str,
+        blueprint: &str,
+    ) -> usize {
+        let mut removed = 0;
+        if let SerzNode::Element { children, .. } = self {
+            let mut kept = Vec::with_capacity(children.len());
+            for mut child in children.drain(..) {
+                let is_ribbon = match &child {
+                    SerzNode::Element { name, .. } => {
+                        let clean = name.replace("::", "-");
+                        clean == "Network-cLoftRibbon" || clean == "Network-cRoadRibbon"
+                    }
+                    _ => false,
+                };
+                if is_ribbon && entity_matches_blueprint(&child, provider, product, blueprint) {
+                    removed += 1;
+                    continue;
+                }
+                if let SerzNode::Element { .. } = &child {
+                    removed += child.remove_loft_ribbons(provider, product, blueprint);
                 }
                 kept.push(child);
             }

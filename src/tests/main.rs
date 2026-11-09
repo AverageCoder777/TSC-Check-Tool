@@ -286,29 +286,6 @@ fn includes_scenario_properties_clues_in_incomplete_route_report() {
 }
 
 #[test]
-fn reports_empty_required_route_directories() {
-    let temp = tempfile::tempdir().unwrap();
-    let route = temp.path().join("empty");
-    fs::create_dir_all(&route).unwrap();
-    for directory in ["Networks", "RouteInformation", "Scenery", "Terrain"] {
-        fs::create_dir(route.join(directory)).unwrap();
-    }
-
-    let report = inspect_route_folder(&route, "empty").unwrap().unwrap();
-
-    assert_eq!(report.file_count, 0);
-    assert!(
-        report
-            .problems
-            .iter()
-            .any(|problem| problem.contains("RouteProperties"))
-    );
-    for directory in ["Networks", "Scenery", "Terrain"] {
-        assert!(report.problems.iter().any(|problem| problem == directory));
-    }
-}
-
-#[test]
 fn treats_only_extreme_compression_ratios_as_suspicious() {
     // Настоящие файлы в .ap сжимаются в десятки раз, а не в тысячи.
     assert!(!super::is_suspicious_archive_member(

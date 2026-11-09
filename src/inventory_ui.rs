@@ -125,9 +125,14 @@ pub fn build_inventory_rows(
             &a.path, &a.uses,
         ));
         delete_flags.push(
-            a.uses
-                .iter()
-                .all(|u| u.tile_kind == crate::domain::TileKind::Scenery),
+            !a.uses.is_empty()
+                && a.uses.iter().all(|u| {
+                    matches!(
+                        u.tile_kind,
+                        crate::domain::TileKind::Scenery | crate::domain::TileKind::Loft
+                            | crate::domain::TileKind::Road
+                    )
+                }),
         );
         filtered_indices.push(original_index);
     }
