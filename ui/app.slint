@@ -1239,8 +1239,8 @@ export component MissingAssetsWindow inherits Window {
 
                     HorizontalLayout {
                         spacing: 8px;
-                        padding-left: 8px;
-                        padding-right: 6px;
+                        padding-left: 10px;
+                        padding-right: 10px;
                         padding-top: 4px;
                         padding-bottom: 4px;
 
@@ -1249,7 +1249,7 @@ export component MissingAssetsWindow inherits Window {
                             font-size: 12px;
                             color: #e2e8f0;
                             vertical-alignment: TextVerticalAlignment.center;
-                            horizontal-alignment: TextHorizontalAlignment.right;
+                            horizontal-alignment: TextHorizontalAlignment.left;
                             horizontal-stretch: 1;
                             min-width: 0px;
                             overflow: TextOverflow.elide;
@@ -1315,30 +1315,41 @@ export component MissingAssetsWindow inherits Window {
                             overflow: TextOverflow.elide;
                         }
 
+                        // Кнопка копирования пути ассета (всегда видна)
                         Rectangle {
-                            horizontal-stretch: 0;
-                            HorizontalLayout {
-                                spacing: 4px;
-                                if row_touch.has-hover: Button {
-                                    min-width: 24px;
-                                    preferred-width: 24px;
-                                    preferred-height: 22px;
-                                    text: "📋";
-                                    clicked => { copy-to-clipboard(asset); }
-                                }
-                                if missing-corrupted[i]: Button {
-                                    text: @tr("Починить");
-                                    min-width: 70px;
-                                    preferred-height: 24px;
-                                    clicked => { repair-corrupted(i); }
-                                }
-                                if row_touch.has-hover: Button {
-                                    min-width: 24px;
-                                    preferred-width: 24px;
-                                    preferred-height: 22px;
-                                    text: "🗺";
-                                    clicked => { inspect-tiles(i); }
-                                }
+                            width: 28px;
+                            height: 26px;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: #374151;
+                            background: copy_touch.has-hover ? #3b4252 : #262930;
+                            copy_touch := TouchArea {
+                                clicked => { copy-to-clipboard(asset); }
+                            }
+                            Text {
+                                text: "📋";
+                                color: copy_touch.has-hover ? #ffffff : #94a3b8;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // Кнопка тайлов (всегда видна)
+                        Rectangle {
+                            width: 28px;
+                            height: 26px;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: #374151;
+                            background: tiles_touch.has-hover ? #3b4252 : #262930;
+                            tiles_touch := TouchArea {
+                                clicked => { inspect-tiles(i); }
+                            }
+                            Text {
+                                text: "🗺";
+                                color: tiles_touch.has-hover ? #ffffff : #94a3b8;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
                             }
                         }
                     }
@@ -1384,12 +1395,22 @@ export component MissingAssetsWindow inherits Window {
                             overflow: TextOverflow.elide;
                         }
 
-                        Button {
-                            min-width: 22px;
-                            preferred-width: 22px;
-                            preferred-height: 18px;
-                            text: "📋";
-                            clicked => { copy-to-clipboard(tile.file_path); }
+                        Rectangle {
+                            width: 28px;
+                            height: 26px;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: #374151;
+                            background: tile_copy_touch.has-hover ? #3b4252 : #262930;
+                            tile_copy_touch := TouchArea {
+                                clicked => { copy-to-clipboard(tile.file_path); }
+                            }
+                            Text {
+                                text: "📋";
+                                color: tile_copy_touch.has-hover ? #ffffff : #94a3b8;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
                         }
                     }
                 }
