@@ -141,17 +141,23 @@ impl MissingAssetsController {
                     .ok()
                     .and_then(|app| {
                         let missing = app.result.as_ref()?.missing_assets.get(idx as usize)?;
-                        let mut counts: BTreeMap<&str, (crate::domain::TileKind, usize)> =
+                        let mut counts: BTreeMap<&str, (crate::domain::TileKind, usize, String)> =
                             BTreeMap::new();
                         for usage in &missing.uses {
+                            let file_path = match &usage.source_file {
+                                crate::domain::RouteFile::Path(path) => {
+                                    path.to_string_lossy().to_string()
+                                }
+                                crate::domain::RouteFile::Archive { name, .. } => name.clone(),
+                            };
                             counts
                                 .entry(usage.tile.as_str())
                                 .and_modify(|e| e.1 += 1)
-                                .or_insert((usage.tile_kind, 1));
+                                .or_insert((usage.tile_kind, 1, file_path));
                         }
-                        let tiles: Vec<slint::SharedString> = counts
+                        let tiles: Vec<crate::TileEntry> = counts
                             .into_iter()
-                            .map(|(tile, (kind, count))| {
+                            .map(|(tile, (kind, count, file_path))| {
                                 let badge = match kind {
                                     crate::domain::TileKind::Scenery => "[Сценери]",
                                     crate::domain::TileKind::Loft => "[Лофт]",
@@ -163,7 +169,10 @@ impl MissingAssetsController {
                                     crate::domain::TileKind::RouteProps => "[Свойства]",
                                     crate::domain::TileKind::Other => "[Прочее]",
                                 };
-                                format!("{badge} {tile} ({count})").into()
+                                crate::TileEntry {
+                                    label: format!("{badge} {tile} ({count})").into(),
+                                    file_path: file_path.into(),
+                                }
                             })
                             .collect();
                         Some((missing.path.clone(), tiles))
@@ -300,7 +309,7 @@ impl MissingAssetsController {
             mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
             mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
             mw.set_active_tile_list(slint::ModelRc::new(
-                slint::VecModel::<slint::SharedString>::default(),
+                slint::VecModel::<crate::TileEntry>::default(),
             ));
             mw.set_active_tile_asset("".into());
             let _ = mw.show();
