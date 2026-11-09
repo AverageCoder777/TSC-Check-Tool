@@ -92,56 +92,27 @@ pub(crate) struct CheckerApp {
 
 impl Default for CheckerApp {
     fn default() -> Self {
-        let rw_path = crate::settings::load_last_game_path();
-        let (ignored_route_ids, mut status) = match crate::settings::load_ignored_route_ids() {
+        let config = crate::settings::AppConfig::load();
+        let available = crate::settings::maximum_serz_processes();
+        let rw_path = config
+            .game_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(crate::settings::load_last_game_path);
+        let (ignored_route_ids, status) = match crate::settings::load_ignored_route_ids() {
             Ok(ids) => (
                 ids,
                 "Укажите путь к RailWorks и просканируйте маршруты.".to_owned(),
             ),
             Err(error) => (HashSet::new(), error),
         };
-        let (route_thumbnails_enabled, settings_warning) =
-            match crate::settings::load_route_thumbnail_setting() {
-                Ok(enabled) => (enabled, None),
-                Err(error) => (false, Some(error)),
-            };
-        let (serz_process_limit, serz_settings_warning) =
-            match crate::settings::load_serz_process_limit() {
-                Ok(limit) => (limit, None),
-                Err(error) => (
-                    DEFAULT_CONCURRENT_SERZ.min(crate::settings::maximum_serz_processes()),
-                    Some(error),
-                ),
-            };
-        let (route_scan_on_hdd, route_scan_hdd_warning) =
-            match crate::settings::load_route_scan_on_hdd() {
-                Ok(value) => (value, None),
-                Err(error) => (false, Some(error)),
-            };
-        let (hide_quick_drive_free_roam, hide_scenarios_warning) =
-            match crate::settings::load_hide_quick_drive_free_roam() {
-                Ok(value) => (value, None),
-                Err(error) => (false, Some(error)),
-            };
-        let ignore_incomplete_warning = crate::settings::load_config().ignore_incomplete_warning;
-        let language = crate::settings::load_language();
+        let ignore_incomplete_warning = config.ignore_incomplete_warning;
+        let language = config.language.clone();
+        let serz_process_limit = config.serz_process_limit.clamp(1, available);
+        let route_thumbnails_enabled = config.route_thumbnails_enabled;
+        let route_scan_on_hdd = config.route_scan_on_hdd;
+        let hide_quick_drive_free_roam = config.hide_quick_drive_free_roam;
         let (inventory_action_tx, inventory_action_rx) = mpsc::channel();
-        if let Some(warning) = settings_warning {
-            status.push(' ');
-            status.push_str(&warning);
-        }
-        if let Some(warning) = serz_settings_warning {
-            status.push(' ');
-            status.push_str(&warning);
-        }
-        if let Some(warning) = route_scan_hdd_warning {
-            status.push(' ');
-            status.push_str(&warning);
-        }
-        if let Some(warning) = hide_scenarios_warning {
-            status.push(' ');
-            status.push_str(&warning);
-        }
         Self {
             rw_path,
             routes: Vec::new(),
@@ -176,7 +147,11 @@ impl Default for CheckerApp {
             serz_process_limit,
             route_scan_on_hdd,
             hide_quick_drive_free_roam,
-            locoswap_path: crate::settings::load_locoswap_path(),
+            locoswap_path: config
+                .locoswap_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             language,
             asset_inventory_state: Arc::new(Mutex::new(AssetInventoryWindowState::default())),
             inventory_action_tx,
@@ -335,15 +310,9 @@ impl CheckerApp {
                         .collect(),
                     backups: report.backups.clone(),
                 };
-                match crate::settings::asset_replacement_log_file()
-                    .ok_or_else(|| {
-                        "Windows APPDATA не определена; журнал замен не сохранён.".to_owned()
-                    })
-                    .and_then(|path| {
-                        crate::settings::append_asset_replacement_log(&path, &mut entry)
-                            .map(|()| path)
-                    }) {
-                    Ok(path) => report.log_file = Some(path),
+                let log_path = crate::settings::asset_replacement_log_file();
+                match crate::settings::append_asset_replacement_log(&log_path, &mut entry) {
+                    Ok(()) => report.log_file = Some(log_path),
                     Err(error) => report.log_error = Some(error),
                 }
                 report

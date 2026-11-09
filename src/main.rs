@@ -45,7 +45,6 @@ mod translit;
 mod windows;
 mod xml_scan;
 
-const DEFAULT_CONCURRENT_SERZ: usize = 8;
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
@@ -272,16 +271,16 @@ fn handle_cli_args() {
             println!("Windows registry entry (save as .reg and import):");
             println!("Windows Registry Editor Version 5.00");
             println!();
-            println!("[HKEY_CLASSES_ROOT\\.bin\\shell\\Open with TS-Checker\\command]");
+            println!("[HKEY_CLASSES_ROOT\\.bin\\shell\\Open with TSC Check Tool\\command]");
             println!("@=\"\\\"{}\\\" \\\"%1\\\"\"", exe.display());
             println!();
-            println!("[HKEY_CLASSES_ROOT\\.GeoPcDx\\shell\\Open with TS-Checker\\command]");
+            println!("[HKEY_CLASSES_ROOT\\.GeoPcDx\\shell\\Open with TSC Check Tool\\command]");
             println!("@=\"\\\"{}\\\" \\\"%1\\\"\"", exe.display());
             println!();
-            println!("[HKEY_CLASSES_ROOT\\.XSec\\shell\\Open with TS-Checker\\command]");
+            println!("[HKEY_CLASSES_ROOT\\.XSec\\shell\\Open with TSC Check Tool\\command]");
             println!("@=\"\\\"{}\\\" \\\"%1\\\"\"", exe.display());
             println!();
-            println!("[HKEY_CLASSES_ROOT\\.TgPcDx\\shell\\Open with TS-Checker\\command]");
+            println!("[HKEY_CLASSES_ROOT\\.TgPcDx\\shell\\Open with TSC Check Tool\\command]");
             println!("@=\"\\\"{}\\\" \\\"%1\\\"\"", exe.display());
         }
         std::process::exit(0);

@@ -69,12 +69,8 @@ pub(crate) fn is_suspicious_archive_member(size: u64, compressed_size: u64) -> b
     size > compressed_size.saturating_mul(MAX_ARCHIVE_COMPRESSION_RATIO)
 }
 
-pub(crate) fn route_scan_cache_file() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|app_data| {
-        PathBuf::from(app_data)
-            .join("TS-Checker")
-            .join("route_cache.json")
-    })
+pub(crate) fn route_scan_cache_file() -> PathBuf {
+    crate::settings::route_cache_file()
 }
 
 pub(crate) fn read_route_folder_ids(routes_path: &Path) -> Result<Vec<String>, String> {
@@ -136,80 +132,76 @@ pub(crate) fn scan_routes_with_cache(
     let mut notice = None;
 
     if allow_cache {
-        if let Some(cache_path) = &cache_file {
-            match fs::read(cache_path) {
-                Ok(contents) => {
-                    match serde_json::from_slice::<crate::domain::RouteScanCache>(&contents) {
-                        Ok(cache)
-                            if cache.game_path == game_path
-                                && cache.icon_scan_version == 6
-                                && cache.folder_ids == folder_ids
-                                && cache.ignored_route_ids == ignored_ids =>
-                        {
-                            return Ok(crate::domain::RouteScanOutcome {
-                                result: cache.result,
-                                from_cache: true,
-                                notice: None,
-                            });
-                        }
-                        Ok(_) => {}
-                        Err(error) => {
-                            notice = Some(format!(
-                                "Кэш маршрутов повреждён и будет обновлён: {error}."
-                            ));
-                        }
+        let cache_path = &cache_file;
+        match fs::read(cache_path) {
+            Ok(contents) => {
+                match serde_json::from_slice::<crate::domain::RouteScanCache>(&contents) {
+                    Ok(cache)
+                        if cache.game_path == game_path
+                            && cache.icon_scan_version == 6
+                            && cache.folder_ids == folder_ids
+                            && cache.ignored_route_ids == ignored_ids =>
+                    {
+                        return Ok(crate::domain::RouteScanOutcome {
+                            result: cache.result,
+                            from_cache: true,
+                            notice: None,
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        notice = Some(format!(
+                            "Кэш маршрутов повреждён и будет обновлён: {error}."
+                        ));
                     }
                 }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    notice = Some(format!(
-                        "Не удалось прочитать кэш {}: {error}.",
-                        cache_path.display()
-                    ));
-                }
             }
-        } else {
-            notice = Some("APPDATA недоступна; кэш маршрутов не используется.".to_owned());
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                notice = Some(format!(
+                    "Не удалось прочитать кэш {}: {error}.",
+                    cache_path.display()
+                ));
+            }
         }
     }
 
     let result = scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads)?;
-    if let Some(cache_path) = cache_file {
-        let cache = crate::domain::RouteScanCache {
-            icon_scan_version: 6,
-            game_path,
-            folder_ids,
-            ignored_route_ids: ignored_ids,
-            result: result.clone(),
-        };
-        let save_result = (|| {
-            let parent = cache_path.parent().ok_or_else(|| {
-                format!(
-                    "Некорректный путь к кэшу маршрутов: {}",
-                    cache_path.display()
-                )
-            })?;
-            fs::create_dir_all(parent).map_err(|error| {
-                format!(
-                    "Не удалось создать папку кэша {}: {error}",
-                    parent.display()
-                )
-            })?;
-            let contents = serde_json::to_vec(&cache)
-                .map_err(|error| format!("Не удалось сериализовать кэш маршрутов: {error}"))?;
-            fs::write(&cache_path, contents).map_err(|error| {
-                format!(
-                    "Не удалось сохранить кэш маршрутов {}: {error}",
-                    cache_path.display()
-                )
-            })
-        })();
-        if let Err(error) = save_result {
-            notice = Some(match notice {
-                Some(previous) => format!("{previous} {error}"),
-                None => error,
-            });
-        }
+    let cache_path = &cache_file;
+    let cache = crate::domain::RouteScanCache {
+        icon_scan_version: 6,
+        game_path,
+        folder_ids,
+        ignored_route_ids: ignored_ids,
+        result: result.clone(),
+    };
+    let save_result = (|| {
+        let parent = cache_path.parent().ok_or_else(|| {
+            format!(
+                "Некорректный путь к кэшу маршрутов: {}",
+                cache_path.display()
+            )
+        })?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Не удалось создать папку кэша {}: {error}",
+                parent.display()
+            )
+        })?;
+        let contents = serde_json::to_vec(&cache)
+            .map_err(|error| format!("Не удалось сериализовать кэш маршрутов: {error}"))?;
+        fs::write(cache_path, contents).map_err(|error| {
+            format!(
+                "Не удалось сохранить кэш маршрутов {}: {error}",
+                cache_path.display()
+            )
+        })
+    })();
+    if let Err(error) = save_result {
+        notice = Some(match notice {
+            Some(previous) => format!("{previous} {error}"),
+            None => error,
+        });
     }
 
     Ok(crate::domain::RouteScanOutcome {
@@ -597,11 +589,7 @@ pub(crate) fn inspect_route_folder(
 }
 
 pub(crate) fn find_route_icon(route_path: &Path) -> Result<Option<PathBuf>, String> {
-    let cache_directory = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("TS-Checker")
-        .join("route-icons");
+    let cache_directory = crate::settings::route_icons_dir();
     find_route_icon_with_cache(route_path, &cache_directory)
 }
 

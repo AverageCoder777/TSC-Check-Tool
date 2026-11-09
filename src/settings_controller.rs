@@ -1,6 +1,7 @@
 use slint::ComponentHandle;
 use slint::Model;
 use slint::Weak;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::SettingsWindow;
@@ -9,6 +10,54 @@ pub struct SettingsController {
     pub window: SettingsWindow,
     pub weak: Weak<SettingsWindow>,
     pub app: Arc<Mutex<crate::app::CheckerApp>>,
+}
+
+/// Сохраняет текущие значения из окна настроек в конфиг и состояние приложения.
+/// Вызывается и при нажатии «Сохранить», и при закрытии окна крестиком.
+fn save_ui_settings(
+    app: Arc<Mutex<crate::app::CheckerApp>>,
+    weak: slint::Weak<SettingsWindow>,
+) -> Result<(), String> {
+    let sw = weak
+        .upgrade()
+        .ok_or_else(|| "Окно настроек недоступно".to_owned())?;
+    let limit = sw.get_serz_process_limit() as usize;
+    let locoswap_path = sw.get_locoswap_path().to_string();
+    let game_path = sw.get_game_path().to_string();
+    let thumbnails = sw.get_route_thumbnails_enabled();
+    let hdd = sw.get_route_scan_on_hdd();
+    let hide_scenarios = sw.get_hide_quick_drive_free_roam();
+    let lang_idx = sw.get_language_index() as usize;
+    let langs = ["ru", "en", "de"];
+    let language = langs.get(lang_idx).copied().unwrap_or("ru").to_owned();
+
+    let mut config = crate::settings::AppConfig::load();
+    config.game_path = (!game_path.is_empty()).then_some(PathBuf::from(&game_path));
+    config.locoswap_path = (!locoswap_path.is_empty()).then_some(PathBuf::from(&locoswap_path));
+    config.serz_process_limit = limit;
+    config.route_thumbnails_enabled = thumbnails;
+    config.route_scan_on_hdd = hdd;
+    config.hide_quick_drive_free_roam = hide_scenarios;
+    config.language = language.clone();
+    config.save()?;
+
+    if let Ok(mut app) = app.lock() {
+        let path_changed = app.rw_path != game_path;
+        app.rw_path = game_path.clone();
+        app.locoswap_path = locoswap_path.clone();
+        app.serz_process_limit = limit;
+        app.route_thumbnails_enabled = thumbnails;
+        app.route_scan_on_hdd = hdd;
+        app.hide_quick_drive_free_roam = hide_scenarios;
+        app.language = language.clone();
+
+        crate::settings::apply_saved_language(&language);
+        if path_changed {
+            app.start_route_scan();
+        }
+        crate::schedule_ui_sync();
+    }
+    Ok(())
 }
 
 impl SettingsController {
@@ -78,12 +127,13 @@ impl SettingsController {
         self.sync_from_app();
 
         let settings_handle = self.weak.clone();
-        let settings_handle2 = self.weak.clone();
         let settings_handle3 = self.weak.clone();
         let settings_handle4 = self.weak.clone();
         let settings_handle5 = self.weak.clone();
 
         // Выбор пути к LocoSwap
+        let app = self.app.clone();
+        let weak = self.weak.clone();
         self.window.on_pick_locoswap(move || {
             let Some(sw) = settings_handle.upgrade() else {
                 return;
@@ -100,10 +150,13 @@ impl SettingsController {
             }
             if let Some(path) = dialog.pick_file() {
                 sw.set_locoswap_path(path.to_string_lossy().to_string().into());
+                let _ = save_ui_settings(app.clone(), weak.clone());
             }
         });
 
         // Выбор папки с игрой RailWorks
+        let app = self.app.clone();
+        let weak = self.weak.clone();
         self.window.on_pick_game(move || {
             let Some(sw) = settings_handle3.upgrade() else {
                 return;
@@ -120,6 +173,7 @@ impl SettingsController {
             }
             if let Some(path) = dialog.pick_folder() {
                 sw.set_game_path(path.to_string_lossy().to_string().into());
+                let _ = save_ui_settings(app.clone(), weak.clone());
             }
         });
 
@@ -141,6 +195,7 @@ impl SettingsController {
 
         // Выбор пресета процессов serz
         let app = self.app.clone();
+        let weak = self.weak.clone();
         self.window.on_serz_preset_selected(move |i| {
             let Some(sw) = settings_handle4.upgrade() else {
                 return;
@@ -153,51 +208,17 @@ impl SettingsController {
                 if let Ok(mut app) = app.lock() {
                     app.serz_process_limit = limit;
                 }
+                let _ = save_ui_settings(app.clone(), weak.clone());
             }
         });
 
-        // Сохранение настроек и автоматическое закрытие окна
+        // Сохранение настроек при любом изменении (включая закрытие окна крестиком)
         let app = self.app.clone();
-        self.window.on_save_settings(move || {
-            let Some(sw) = settings_handle2.upgrade() else {
-                return;
-            };
-            let limit = sw.get_serz_process_limit() as usize;
-            let path = sw.get_locoswap_path().to_string();
-            let game_path = sw.get_game_path().to_string();
-            let thumbs = sw.get_route_thumbnails_enabled();
-            let hdd = sw.get_route_scan_on_hdd();
-            let hide_scenarios = sw.get_hide_quick_drive_free_roam();
-            let lang_idx = sw.get_language_index() as usize;
-            let langs = ["ru", "en", "de"];
-            let language = langs.get(lang_idx).copied().unwrap_or("ru").to_owned();
-
-            if let Ok(mut app) = app.lock() {
-                let path_changed = app.rw_path != game_path;
-                app.serz_process_limit = limit;
-                app.locoswap_path = path.clone();
-                app.rw_path = game_path.clone();
-                app.route_thumbnails_enabled = thumbs;
-                app.route_scan_on_hdd = hdd;
-                app.hide_quick_drive_free_roam = hide_scenarios;
-                app.language = language.clone();
-
-                let _ = crate::settings::save_serz_process_limit(limit);
-                let _ = crate::settings::save_locoswap_path(&path);
-                let _ = crate::settings::save_last_game_path(&game_path);
-                let _ = crate::settings::save_route_thumbnail_setting(thumbs);
-                let _ = crate::settings::save_route_scan_on_hdd(hdd);
-                let _ = crate::settings::save_hide_quick_drive_free_roam(hide_scenarios);
-                let _ = crate::settings::save_language(&language);
-                crate::settings::apply_saved_language(&language);
-
-                if path_changed {
-                    app.start_route_scan();
-                }
-                crate::schedule_ui_sync();
-            }
-
-            let _ = sw.hide();
+        let weak = self.weak.clone();
+        self.window.on_settings_changed(move || {
+            let app = app.clone();
+            let weak = weak.clone();
+            let _ = save_ui_settings(app, weak);
         });
     }
 }
