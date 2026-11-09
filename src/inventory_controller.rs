@@ -22,7 +22,8 @@ impl InventoryController {
         state: &mut crate::app::AssetInventoryWindowState,
     ) {
         let show_missing = inv.get_show_missing_only();
-        let (rows, safe, delete_flags, filtered_indices) = crate::inventory_ui::build_inventory_rows(state, show_missing);
+        let (rows, safe, delete_flags, filtered_indices) =
+            crate::inventory_ui::build_inventory_rows(state, show_missing);
         inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
         inv.set_inventory_can_delete(slint::ModelRc::new(slint::VecModel::from(delete_flags)));
@@ -357,7 +358,9 @@ impl InventoryController {
             self.window.on_scan_umlauts(move || {
                 let (suspicious_count, new_filter_state) = {
                     let Ok(app) = app.lock() else { return };
-                    let Ok(mut state) = app.asset_inventory_state.lock() else { return };
+                    let Ok(mut state) = app.asset_inventory_state.lock() else {
+                        return;
+                    };
                     state.umlaut_filter = !state.umlaut_filter;
                     let suspicious_count = state
                         .assets
@@ -366,7 +369,9 @@ impl InventoryController {
                             crate::inventory_ui::has_suspicious_chars(&a.path)
                                 || a.uses.iter().any(|u| {
                                     crate::inventory_ui::has_suspicious_chars(&u.tile)
-                                        || crate::inventory_ui::has_suspicious_chars(&u.source_file_search)
+                                        || crate::inventory_ui::has_suspicious_chars(
+                                            &u.source_file_search,
+                                        )
                                 })
                         })
                         .count();
@@ -378,7 +383,8 @@ impl InventoryController {
                 if let Ok(mut app) = app.lock() {
                     if new_filter_state {
                         if suspicious_count == 0 {
-                            app.status = "Объектов с подозрительными символами не обнаружено".to_owned();
+                            app.status =
+                                "Объектов с подозрительными символами не обнаружено".to_owned();
                         } else {
                             app.status = format!(
                                 "Найдено объектов с нестандартными символами: {} шт.",

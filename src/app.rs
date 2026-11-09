@@ -640,7 +640,10 @@ impl CheckerApp {
                     ));
                     self.inventory_refresh_pending = true;
                     if !report.backups.is_empty() {
-                        self.log_event(format!("Создано резервных копий: {}.", report.backups.len()));
+                        self.log_event(format!(
+                            "Создано резервных копий: {}.",
+                            report.backups.len()
+                        ));
                     }
                     let all_done = remaining_assets == Some((0, 0));
                     if all_done {
@@ -786,7 +789,7 @@ impl CheckerApp {
                             self.result = Some(result);
                             self.inventory_refresh_pending = true;
                         }
-                Err(error) => self.log_event(error),
+                        Err(error) => self.log_event(error),
                     }
                 }
                 Err(error) => {

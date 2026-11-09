@@ -524,7 +524,10 @@ fn main() {
             let path = route.path.clone();
             let _ = windows::open_in_file_explorer(&path);
             if let Some(ui) = ui_weak_open.upgrade() {
-                crate::log_event(&ui, &format!("Открыта папка в проводнике: {}.", path.display()));
+                crate::log_event(
+                    &ui,
+                    &format!("Открыта папка в проводнике: {}.", path.display()),
+                );
             }
         }
     });
@@ -537,10 +540,13 @@ fn main() {
                     inv.set_show_missing_only(false);
                     inv.set_selected_asset(-1);
                     inv.set_search_query(state.search.clone().as_str().into());
-                    let (rows, safe, delete_flags, filtered_indices) = crate::inventory_ui::build_inventory_rows(&state, false);
+                    let (rows, safe, delete_flags, filtered_indices) =
+                        crate::inventory_ui::build_inventory_rows(&state, false);
                     inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                     inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-                    inv.set_inventory_can_delete(slint::ModelRc::new(slint::VecModel::from(delete_flags)));
+                    inv.set_inventory_can_delete(slint::ModelRc::new(slint::VecModel::from(
+                        delete_flags,
+                    )));
                     state.filtered_indices = filtered_indices;
                 }
                 let _ = inv.show();
@@ -662,7 +668,10 @@ fn main() {
                             crate::schedule_ui_sync();
                         }
                         Err(error) => {
-                            app.log_event(format!("Не удалось удалить {}: {error}.", path.display()));
+                            app.log_event(format!(
+                                "Не удалось удалить {}: {error}.",
+                                path.display()
+                            ));
                         }
                     }
                 }

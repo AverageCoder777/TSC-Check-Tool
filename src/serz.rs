@@ -56,36 +56,61 @@ fn blueprint_ext_to_xml(path: &str) -> String {
     }
 }
 
-fn entity_matches_blueprint(node: &SerzNode, provider: &str, product: &str, blueprint: &str) -> bool {
+fn entity_matches_blueprint(
+    node: &SerzNode,
+    provider: &str,
+    product: &str,
+    blueprint: &str,
+) -> bool {
     let mut prov: Option<String> = None;
     let mut prod: Option<String> = None;
     let mut bp: Option<String> = None;
     collect_blueprint_ids(node, &mut prov, &mut prod, &mut bp);
-    let Some(prov) = prov else { return false; };
-    let Some(prod) = prod else { return false; };
-    let Some(bp) = bp else { return false; };
+    let Some(prov) = prov else {
+        return false;
+    };
+    let Some(prod) = prod else {
+        return false;
+    };
+    let Some(bp) = bp else {
+        return false;
+    };
     if !prov.eq_ignore_ascii_case(provider) || !prod.eq_ignore_ascii_case(product) {
         return false;
     }
     let norm_bp = bp.replace('/', "\\").to_lowercase();
-    let norm_target = blueprint.replace('/', "\\").to_lowercase();
+    let mut norm_target = blueprint.replace('/', "\\").to_lowercase();
+    let prefix = format!("{}\\{}\\", provider.to_lowercase(), product.to_lowercase());
+    if norm_target.starts_with(&prefix) {
+        norm_target = norm_target[prefix.len()..].to_string();
+    }
     blueprint_ext_to_xml(&norm_bp) == blueprint_ext_to_xml(&norm_target)
 }
 
-fn collect_blueprint_ids(node: &SerzNode, prov: &mut Option<String>, prod: &mut Option<String>, bp: &mut Option<String>) {
+fn collect_blueprint_ids(
+    node: &SerzNode,
+    prov: &mut Option<String>,
+    prod: &mut Option<String>,
+    bp: &mut Option<String>,
+) {
     match node {
-        SerzNode::Element { children, .. } => {
+        SerzNode::Element { name, children, .. } => {
+            if name == "ReskinBlueprintID" {
+                return;
+            }
             for child in children {
                 collect_blueprint_ids(child, prov, prod, bp);
             }
         }
         SerzNode::Property { name, value, .. } => {
-            if name == "Provider" {
-                *prov = Some(value.clone());
-            } else if name == "Product" {
-                *prod = Some(value.clone());
-            } else if name == "BlueprintID" {
-                *bp = Some(value.clone());
+            if !value.trim().is_empty() {
+                if name == "Provider" && prov.is_none() {
+                    *prov = Some(value.clone());
+                } else if name == "Product" && prod.is_none() {
+                    *prod = Some(value.clone());
+                } else if name == "BlueprintID" && bp.is_none() {
+                    *bp = Some(value.clone());
+                }
             }
         }
         _ => {}
@@ -405,7 +430,9 @@ impl SerzNode {
         if let SerzNode::Element { children, .. } = self {
             let mut kept = Vec::with_capacity(children.len());
             for mut child in children.drain(..) {
-                if let SerzNode::Element { name: child_name, .. } = &child
+                if let SerzNode::Element {
+                    name: child_name, ..
+                } = &child
                     && child_name == "cDynamicEntity"
                     && entity_matches_blueprint(&child, provider, product, blueprint)
                 {

@@ -16,7 +16,9 @@ pub(crate) struct InventorySort {
 }
 
 pub fn has_suspicious_chars(value: &str) -> bool {
-    value.chars().any(|c| !c.is_ascii() || matches!(c, '╞' | '¤' | '�'))
+    value
+        .chars()
+        .any(|c| !c.is_ascii() || matches!(c, '╞' | '¤' | '�'))
 }
 
 pub(crate) fn asset_directory(assets_path: &Path, asset_path: &str) -> PathBuf {
@@ -42,7 +44,12 @@ pub(crate) fn existing_directory_upwards(path: &Path) -> Option<PathBuf> {
 pub fn build_inventory_rows(
     state: &crate::app::AssetInventoryWindowState,
     show_missing: bool,
-) -> (Vec<slint::ModelRc<slint::StandardListViewItem>>, Vec<bool>, Vec<bool>, Vec<usize>) {
+) -> (
+    Vec<slint::ModelRc<slint::StandardListViewItem>>,
+    Vec<bool>,
+    Vec<bool>,
+    Vec<usize>,
+) {
     let search = state.search.trim().to_lowercase();
     let mut matched: Vec<(&crate::domain::ReferencedAsset, usize, usize)> = Vec::new();
     for (index, a) in state.assets.iter().enumerate() {
@@ -117,7 +124,11 @@ pub fn build_inventory_rows(
         safe_flags.push(crate::assets::is_safe_for_global_replacement(
             &a.path, &a.uses,
         ));
-        delete_flags.push(a.uses.iter().all(|u| u.tile_kind == crate::domain::TileKind::Scenery));
+        delete_flags.push(
+            a.uses
+                .iter()
+                .all(|u| u.tile_kind == crate::domain::TileKind::Scenery),
+        );
         filtered_indices.push(original_index);
     }
     (rows, safe_flags, delete_flags, filtered_indices)
