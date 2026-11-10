@@ -39,6 +39,10 @@ export struct BrokenResourceItem {
     is_dead: bool,
 }
 
+export struct LogLine {
+    text: string,
+}
+
 export component MainWindow inherits Window {
     title: "TSC Check Tool";
     min-width: 1350px;
@@ -50,7 +54,9 @@ export component MainWindow inherits Window {
     in property <[string]> ignored-routes: [];
     in property <[string]> incomplete-folders: [];
     in-out property <bool> show-incomplete-warning: false;
-    in property <string> check-log: "";
+    in property <[LogLine]> log-lines: [];
+
+
 
     in property <float> check_progress: 0.0;
     in property <string> status: "";
@@ -341,10 +347,15 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    log_view := TextEdit {
-                        text: check-log;
-                        edited => { reset-log(); }
-                        read-only: true;
+                    ListView {
+                        for line[i] in log-lines: Text {
+                            text: line.text;
+                            font-size: 11px;
+                            color: #cccccc;
+                            wrap: TextWrap.no-wrap;
+                            overflow: TextOverflow.elide;
+                            min-height: 16px;
+                        }
                         horizontal-stretch: 1;
                         vertical-stretch: 1;
                     }

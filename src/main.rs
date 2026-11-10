@@ -97,19 +97,18 @@ fn app_state() -> Arc<Mutex<app::CheckerApp>> {
 
 pub(crate) fn log_event(ui: &MainWindow, message: &str) {
     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    ui.set_status(message.into());
-    let current_log = ui.get_check_log().to_string();
     let new_entry = format!("[{}] {}\n", timestamp, message);
-    let updated_log = if current_log.is_empty() {
-        new_entry
-    } else {
-        format!("{}{}", current_log, new_entry)
-    };
-    ui.set_check_log(updated_log.clone().into());
-    ui.set_show_log(true);
     if let Ok(mut app) = app_state().lock() {
         app.status = message.to_owned();
-        app.check_log = updated_log;
+        app.check_log.insert(0, new_entry.clone());
+        let log_lines: Vec<LogLine> = app
+            .check_log
+            .iter()
+            .map(|t| LogLine { text: t.clone().into() })
+            .collect();
+        ui.set_status(message.into());
+        ui.set_log_lines(slint::ModelRc::new(slint::VecModel::from(log_lines)));
+        ui.set_show_log(true);
     }
 }
 
@@ -209,7 +208,12 @@ fn sync_ui(ui: &MainWindow) {
             ui.set_selected_route_id("".into());
         }
         ui.set_status(app.status.clone().into());
-        ui.set_check_log(app.check_log.clone().into());
+        let log_lines: Vec<LogLine> = app
+            .check_log
+            .iter()
+            .map(|t| LogLine { text: t.clone().into() })
+            .collect();
+        ui.set_log_lines(slint::ModelRc::new(slint::VecModel::from(log_lines)));
         ui.set_has_result(app.result.is_some());
         ui.set_missing_assets_count(
             app.result
@@ -498,9 +502,10 @@ fn main() {
     let app = app_for_controllers.clone();
     ui.on_reset_log(move || {
         if let Some(ui) = ui_handle_reset.upgrade()
-            && let Ok(app) = app.lock()
+            && let Ok(mut app) = app.lock()
         {
-            ui.set_check_log(app.check_log.clone().into());
+            app.check_log.clear();
+            ui.set_log_lines(slint::ModelRc::new(slint::VecModel::from(Vec::<LogLine>::new())));
         }
     });
     let inventory = inventory_controller::InventoryController::new(app_for_controllers.clone());

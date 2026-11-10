@@ -47,7 +47,7 @@ pub(crate) struct CheckerApp {
     ignore_scenarios: bool,
     pub(crate) result: Option<crate::domain::CheckResult>,
     pub(crate) status: String,
-    pub(crate) check_log: String,
+    pub(crate) check_log: Vec<String>,
     pub(crate) progress_pending: Option<String>,
     pub(crate) last_progress_log: Option<Instant>,
     pub(crate) has_ephemeral_progress: bool,
@@ -134,7 +134,7 @@ impl Default for CheckerApp {
             ignore_scenarios: true,
             result: None,
             status,
-            check_log: String::new(),
+            check_log: Vec::new(),
             progress_pending: None,
             last_progress_log: None,
             has_ephemeral_progress: false,
@@ -440,16 +440,7 @@ impl CheckerApp {
     }
     fn pop_ephemeral_progress(&mut self) {
         if self.has_ephemeral_progress {
-            if let Some(pos) = self.check_log.rfind('\n') {
-                let slice = &self.check_log[..pos];
-                if let Some(prev_pos) = slice.rfind('\n') {
-                    self.check_log.truncate(prev_pos + 1);
-                } else {
-                    self.check_log.clear();
-                }
-            } else {
-                self.check_log.clear();
-            }
+            self.check_log.remove(0);
             self.has_ephemeral_progress = false;
         }
     }
@@ -466,8 +457,7 @@ impl CheckerApp {
             return;
         }
         self.pop_ephemeral_progress();
-        self.check_log.push_str(&pending);
-        self.check_log.push('\n');
+        self.check_log.insert(0, pending);
         self.has_ephemeral_progress = true;
         self.last_progress_log = Some(Instant::now());
     }
@@ -476,11 +466,7 @@ impl CheckerApp {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         self.status = message.clone();
         let new_entry = format!("[{}] {}\n", timestamp, message);
-        if self.check_log.is_empty() {
-            self.check_log = new_entry;
-        } else {
-            self.check_log.push_str(&new_entry);
-        }
+        self.check_log.insert(0, new_entry);
     }
     pub(crate) fn is_checking(&self) -> bool {
         self.check.is_some()
@@ -701,8 +687,7 @@ impl CheckerApp {
                     } else {
                         self.flush_progress_log(true);
                         self.pop_ephemeral_progress();
-                        self.check_log.push_str(&status);
-                        self.check_log.push('\n');
+                        self.check_log.insert(0, status);
                     }
                 }
                 Ok(CheckMessage::Finished(result)) => {
@@ -742,12 +727,10 @@ impl CheckerApp {
                             self.flush_progress_log(true);
                             self.pop_ephemeral_progress();
                             for issue in &result.structure_issues {
-                                self.check_log
-                                    .push_str(&format!("Проблема структуры: {issue}\n"));
+                                self.check_log.insert(0, format!("Проблема структуры: {issue}\n"));
                             }
                             for error in &result.conversion_errors {
-                                self.check_log
-                                    .push_str(&format!("Ошибка Serz/XML: {error}\n"));
+                                self.check_log.insert(0, format!("Ошибка Serz/XML: {error}\n"));
                             }
                             if let Ok(mut state) = self.asset_inventory_state.lock()
                                 && state.open
