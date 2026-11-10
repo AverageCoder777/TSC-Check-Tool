@@ -343,7 +343,7 @@ impl ScenarioController {
                     && let Some(idx) = app.selected_scenario
                     && let Some(scenario) = app.scenarios.get(idx)
                 {
-                    let _ = crate::windows::open_in_file_explorer(&scenario.path);
+                    crate::windows::open_in_file_explorer(&scenario.path);
                 }
             });
         }
@@ -571,7 +571,7 @@ impl ScenarioController {
                 if let Some(path) = resolved {
                     if path.is_file() {
                         #[cfg(windows)]
-                        let _ = crate::windows::open_in_explorer(&path);
+                        crate::windows::open_in_explorer(&path);
                     } else {
                         let mut cur = path.as_path();
                         while !cur.exists() {
@@ -581,7 +581,7 @@ impl ScenarioController {
                             }
                         }
                         #[cfg(windows)]
-                        let _ = crate::windows::open_in_file_explorer(cur);
+                        crate::windows::open_in_file_explorer(cur);
                     }
                 }
             }
@@ -626,7 +626,7 @@ impl ScenarioController {
                 if let Some(path) = resolved {
                     if path.is_file() {
                         #[cfg(windows)]
-                        let _ = crate::windows::open_in_explorer(&path);
+                        crate::windows::open_in_explorer(&path);
                     } else {
                         let mut cur = path.as_path();
                         while !cur.exists() {
@@ -636,7 +636,7 @@ impl ScenarioController {
                             }
                         }
                         #[cfg(windows)]
-                        let _ = crate::windows::open_in_file_explorer(cur);
+                        crate::windows::open_in_file_explorer(cur);
                     }
                 } else {
                     // Если блюпринт не найден, ничего не открываем.

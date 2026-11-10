@@ -516,18 +516,23 @@ fn main() {
     let ui_weak_open = ui.as_weak();
     let app = app_for_controllers.clone();
     ui.on_open_route_folder(move || {
-        if let Ok(app) = app.lock()
-            && let Some(idx) = app.selected_route
-            && let Some(route) = app.routes.get(idx)
-        {
-            let path = route.path.clone();
-            let _ = windows::open_in_file_explorer(&path);
-            if let Some(ui) = ui_weak_open.upgrade() {
-                crate::log_event(
-                    &ui,
-                    &format!("Открыта папка в проводнике: {}.", path.display()),
-                );
-            }
+        let path = {
+            let Ok(app) = app.lock() else {
+                return;
+            };
+            app.selected_route
+                .and_then(|idx| app.routes.get(idx))
+                .map(|route| route.path.clone())
+        };
+        let Some(path) = path else {
+            return;
+        };
+        windows::open_in_file_explorer(&path);
+        if let Some(ui) = ui_weak_open.upgrade() {
+            crate::log_event(
+                &ui,
+                &format!("Открыта папка в проводнике: {}.", path.display()),
+            );
         }
     });
     let app = app_for_controllers.clone();

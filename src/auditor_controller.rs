@@ -551,7 +551,7 @@ impl AuditorController {
                 if let Some(path) = target_path {
                     println!("[Auditor] Opening path: {:?}", path);
                     #[cfg(windows)]
-                    let _ = crate::windows::open_in_explorer(&path);
+                    crate::windows::open_in_explorer(&path);
                 }
             });
         }
@@ -574,7 +574,7 @@ impl AuditorController {
                         if d.is_dir() {
                             println!("[Auditor] Opening existing parent folder: {:?}", d);
                             #[cfg(windows)]
-                            let _ = crate::windows::open_in_explorer(d);
+                            crate::windows::open_in_explorer(d);
                             break;
                         }
                         dir = d.parent();
