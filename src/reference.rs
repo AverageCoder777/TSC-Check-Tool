@@ -347,7 +347,7 @@ pub(crate) fn route_tile_label(
                 && tile[8..14].iter().all(u8::is_ascii_digit)
             {
                 return format!(
-                    "тайл X={} Z={}",
+                    "{}{}",
                     String::from_utf8_lossy(&tile[..7]),
                     String::from_utf8_lossy(&tile[7..])
                 );

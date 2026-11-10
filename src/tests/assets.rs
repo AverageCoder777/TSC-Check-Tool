@@ -467,7 +467,7 @@ fn extracts_tile_coordinates_from_route_file_names() {
     let source = route.join("Scenery").join("+000012-000034.bin");
     assert_eq!(
         crate::reference::route_tile_label(route, &crate::domain::RouteFile::Path(source.clone())),
-        "тайл X=+000012 Z=-000034"
+        "+000012-000034"
     );
 }
 

@@ -1443,12 +1443,16 @@ export component MissingAssetsWindow inherits Window {
                         font-weight: 700;
                         color: #cbd5e1;
                         horizontal-stretch: 1;
+                        min-width: 0px;
                         overflow: TextOverflow.elide;
                     }
 
                     Button {
-                        text: @tr("✕ Закрыть");
+                        text: @tr("X");
                         preferred-height: 20px;
+                        max-height: 20px;
+                        horizontal-stretch: 0;
+                        vertical-stretch: 0;
                         clicked => { active-tile-list = []; }
                     }
                 }
@@ -1578,7 +1582,7 @@ export component MissingAssetsWindow inherits Window {
                 }
 
                 Text {
-                    text: @tr("Заменить выбранный");
+                    text: @tr("Заменить");
                     color: (!root.has_selection || !root.is_selected_asset_replaceable) ? #666666 : #ffffff;
                     font-size: 13px;
                     font-weight: 600;
