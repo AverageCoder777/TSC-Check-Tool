@@ -41,6 +41,7 @@ export struct BrokenResourceItem {
 
 export struct LogLine {
     text: string,
+    color: color,
 }
 
 export component MainWindow inherits Window {
@@ -351,9 +352,8 @@ export component MainWindow inherits Window {
                         for line[i] in log-lines: Text {
                             text: line.text;
                             font-size: 11px;
-                            color: #cccccc;
-                            wrap: TextWrap.no-wrap;
-                            overflow: TextOverflow.elide;
+                            color: line.color;
+                            wrap: TextWrap.word-wrap;
                             min-height: 16px;
                         }
                         horizontal-stretch: 1;

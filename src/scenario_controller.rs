@@ -342,10 +342,13 @@ impl ScenarioController {
                 if let Ok(mut app) = app.lock() {
                     let Some(idx) = app.selected_scenario else { return };
                     let Some(scenario) = app.scenarios.get(idx).cloned() else { return };
-                    app.log_event(format!(
-                        "Открыта папка сценария в Проводнике: {}.",
-                        scenario.path.display()
-                    ));
+                    app.log_event(
+                        format!(
+                            "Открыта папка сценария в Проводнике: {}.",
+                            scenario.path.display()
+                        ),
+                        crate::app::LogLevel::Info,
+                    );
                     crate::schedule_ui_sync();
                     crate::windows::open_in_file_explorer(&scenario.path);
                 }
@@ -392,15 +395,18 @@ impl ScenarioController {
             if let Ok(mut app) = app.lock() {
                 let path = app.locoswap_path.clone();
                 if path.is_empty() {
-                    app.log_event("Locoswap не настроен: укажите путь к Locoswap в настройках.".to_owned());
+                    app.log_event(
+                        "Locoswap не настроен: укажите путь к Locoswap в настройках.".to_owned(),
+                        crate::app::LogLevel::Warning,
+                    );
                     crate::schedule_ui_sync();
                     return;
                 }
                 if !Path::new(&path).is_file() {
-                    app.log_event(format!(
-                        "Locoswap не найден по пути: {}.",
-                        path
-                    ));
+                    app.log_event(
+                        format!("Locoswap не найден по пути: {}.", path),
+                        crate::app::LogLevel::Error,
+                    );
                     crate::schedule_ui_sync();
                     return;
                 }
@@ -413,10 +419,10 @@ impl ScenarioController {
                 {
                     cmd.arg(&scenario.path);
                     let scenario_name = scenario.name.clone();
-                    app.log_event(format!(
-                        "Запущен Locoswap для сценария: {}.",
-                        scenario_name
-                    ));
+                    app.log_event(
+                        format!("Запущен Locoswap для сценария: {}.", scenario_name),
+                        crate::app::LogLevel::Info,
+                    );
                     crate::schedule_ui_sync();
                 }
                 let _ = cmd.spawn();
@@ -590,10 +596,13 @@ impl ScenarioController {
                     &product,
                 );
                 if let Some(path) = resolved {
-                    app.log_event(format!(
-                        "Открыт путь объекта в Проводнике: {}.",
-                        path.display()
-                    ));
+                    app.log_event(
+                        format!(
+                            "Открыт путь объекта в Проводнике: {}.",
+                            path.display()
+                        ),
+                        crate::app::LogLevel::Info,
+                    );
                     crate::schedule_ui_sync();
                     if path.is_file() {
                         #[cfg(windows)]
@@ -610,10 +619,13 @@ impl ScenarioController {
                         crate::windows::open_in_file_explorer(cur);
                     }
                 } else {
-                    app.log_event(format!(
-                        "Не удалось найти блюпринт объекта в маршруте: {}/{}.",
-                        provider, product
-                    ));
+                    app.log_event(
+                        format!(
+                            "Не удалось найти блюпринт объекта в маршруте: {}/{}.",
+                            provider, product
+                        ),
+                        crate::app::LogLevel::Error,
+                    );
                     crate::schedule_ui_sync();
                 }
             }
@@ -656,10 +668,13 @@ impl ScenarioController {
                     &vehicle.product,
                 );
                 if let Some(path) = resolved {
-                    app.log_event(format!(
-                        "Открыт путь транспортного средства в Проводнике: {}.",
-                        path.display()
-                    ));
+                    app.log_event(
+                        format!(
+                            "Открыт путь транспортного средства в Проводнике: {}.",
+                            path.display()
+                        ),
+                        crate::app::LogLevel::Info,
+                    );
                     crate::schedule_ui_sync();
                     if path.is_file() {
                         #[cfg(windows)]
@@ -678,10 +693,13 @@ impl ScenarioController {
                 } else {
                     let provider = vehicle.provider.clone();
                     let product = vehicle.product.clone();
-                    app.log_event(format!(
-                        "Не удалось найти блюпринт транспортного средства: {}/{}.",
-                        provider, product
-                    ));
+                    app.log_event(
+                        format!(
+                            "Не удалось найти блюпринт транспортного средства: {}/{}.",
+                            provider, product
+                        ),
+                        crate::app::LogLevel::Error,
+                    );
                     crate::schedule_ui_sync();
                 }
             }

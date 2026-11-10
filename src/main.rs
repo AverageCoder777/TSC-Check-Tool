@@ -95,16 +95,22 @@ fn app_state() -> Arc<Mutex<app::CheckerApp>> {
     APP.get().cloned().expect("app state not initialized")
 }
 
-pub(crate) fn log_event(ui: &MainWindow, message: &str) {
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    let new_entry = format!("[{}] {}\n", timestamp, message);
+pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app::LogLevel) {
     if let Ok(mut app) = app_state().lock() {
         app.status = message.to_owned();
-        app.check_log.insert(0, new_entry.clone());
+        app.log_event(message.to_owned(), level);
         let log_lines: Vec<LogLine> = app
             .check_log
             .iter()
-            .map(|t| LogLine { text: t.clone().into() })
+            .map(|e| LogLine {
+                text: e.text.clone().into(),
+                color: match e.level {
+                    crate::app::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
+                    crate::app::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
+                    crate::app::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
+                    _ => slint::Color::from_rgb_u8(204, 204, 204),
+                },
+            })
             .collect();
         ui.set_status(message.into());
         ui.set_log_lines(slint::ModelRc::new(slint::VecModel::from(log_lines)));
@@ -211,7 +217,15 @@ fn sync_ui(ui: &MainWindow) {
         let log_lines: Vec<LogLine> = app
             .check_log
             .iter()
-            .map(|t| LogLine { text: t.clone().into() })
+            .map(|e| LogLine {
+                text: e.text.clone().into(),
+                color: match e.level {
+                    crate::app::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
+                    crate::app::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
+                    crate::app::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
+                    _ => slint::Color::from_rgb_u8(204, 204, 204),
+                },
+            })
             .collect();
         ui.set_log_lines(slint::ModelRc::new(slint::VecModel::from(log_lines)));
         ui.set_has_result(app.result.is_some());
@@ -537,6 +551,7 @@ fn main() {
             crate::log_event(
                 &ui,
                 &format!("Открыта папка в проводнике: {}.", path.display()),
+                crate::app::LogLevel::Info,
             );
         }
     });
@@ -651,7 +666,10 @@ fn main() {
                     match std::fs::remove_dir_all(&path) {
                         Ok(()) => {
                             app.incomplete_folders.remove(idx);
-                            app.log_event(format!("Удалена неполная папка: {}.", path.display()));
+                            app.log_event(
+                                format!("Удалена неполная папка: {}.", path.display()),
+                                crate::app::LogLevel::Info,
+                            );
                             let items = build_incomplete_folder_items(&app.incomplete_folders);
                             let total: u64 = app
                                 .incomplete_folders
@@ -677,10 +695,10 @@ fn main() {
                             crate::schedule_ui_sync();
                         }
                         Err(error) => {
-                            app.log_event(format!(
-                                "Не удалось удалить {}: {error}.",
-                                path.display()
-                            ));
+                            app.log_event(
+                                format!("Не удалось удалить {}: {error}.", path.display()),
+                                crate::app::LogLevel::Error,
+                            );
                         }
                     }
                 }
@@ -709,7 +727,10 @@ fn main() {
                     }
                     let removed = app.incomplete_folders.len() - remaining.len();
                     app.incomplete_folders = remaining;
-                    app.log_event(format!("Удалены все неполные папки ({removed} шт.)."));
+                    app.log_event(
+                        format!("Удалены все неполные папки ({removed} шт.)."),
+                        crate::app::LogLevel::Info,
+                    );
                     let items = build_incomplete_folder_items(&app.incomplete_folders);
                     let total: u64 = app
                         .incomplete_folders

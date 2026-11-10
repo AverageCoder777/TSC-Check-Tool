@@ -184,13 +184,14 @@ impl InventoryController {
                     let app_for_status = app.clone();
                     let _ =
                         crate::external_editor::open_and_sync_with_vscode(&full, move |result| {
-                            if let Ok(mut app) = app_for_status.lock() {
-                                app.log_event(match result {
-                                    Ok(msg) => msg,
-                                    Err(err) => format!("✗ {err}"),
-                                });
-                                crate::schedule_ui_sync();
-                            }
+                                if let Ok(mut app) = app_for_status.lock() {
+                                    let (msg, level) = match result {
+                                        Ok(msg) => (msg, crate::app::LogLevel::Info),
+                                        Err(err) => (format!("✗ {err}"), crate::app::LogLevel::Error),
+                                    };
+                                    app.log_event(msg, level);
+                                    crate::schedule_ui_sync();
+                                }
                         });
                 }
             });
@@ -242,6 +243,7 @@ impl InventoryController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
+                            crate::app::LogLevel::Warning,
                         );
                         crate::schedule_ui_sync();
                     }
@@ -282,10 +284,13 @@ impl InventoryController {
                     ),
                     (false, false) => {
                         if let Ok(mut app) = app.lock() {
-                            app.log_event(format!(
-                                "Для объекта {} не найдено подходящих тайлов для удаления.",
-                                asset.path
-                            ));
+                            app.log_event(
+                                format!(
+                                    "Для объекта {} не найдено подходящих тайлов для удаления.",
+                                    asset.path
+                                ),
+                                crate::app::LogLevel::Warning,
+                            );
                             crate::schedule_ui_sync();
                         }
                         return;
@@ -340,20 +345,26 @@ impl InventoryController {
                         if let Ok(mut state) = app.asset_inventory_state.lock() {
                             state.assets.retain(|a| a.path != asset.path);
                         }
-                        app.log_event(format!(
-                            "Удален объект {} из {} тайлов ({} вхождений)",
-                            asset.path, total_tiles, total_occurrences
-                        ));
+                        app.log_event(
+                            format!(
+                                "Удален объект {} из {} тайлов ({} вхождений)",
+                                asset.path, total_tiles, total_occurrences
+                            ),
+                            crate::app::LogLevel::Info,
+                        );
                         if !untouched_files.is_empty() {
-                            app.log_event(format!(
-                                "Внимание: в следующих тайлах не удалось удалить вхождения объекта {} (вероятно, составной лофт, требуется ручное удаление): {}",
-                                asset.path,
-                                untouched_files.join(", ")
-                            ));
+                            app.log_event(
+                                format!(
+                                    "Внимание: в следующих тайлах не удалось удалить вхождения объекта {} (вероятно, составной лофт, требуется ручное удаление): {}",
+                                    asset.path,
+                                    untouched_files.join(", ")
+                                ),
+                                crate::app::LogLevel::Warning,
+                            );
                         }
                     } else {
                         for error in &errors {
-                            app.log_event(error.clone());
+                            app.log_event(error.clone(), crate::app::LogLevel::Error);
                         }
                     }
                     crate::schedule_ui_sync();
@@ -407,6 +418,7 @@ impl InventoryController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Замена этого ассета запрещена (путевая инфраструктура).".to_owned(),
+                            crate::app::LogLevel::Warning,
                         );
                         crate::schedule_ui_sync();
                     }

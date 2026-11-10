@@ -553,10 +553,13 @@ impl AuditorController {
                 });
                 if let Some(path) = target_path {
                     if let Ok(mut app) = app.lock() {
-                        app.log_event(format!(
-                            "Открыта папка цели в Проводнике: {}.",
-                            path.display()
-                        ));
+                        app.log_event(
+                            format!(
+                                "Открыта папка цели в Проводнике: {}.",
+                                path.display()
+                            ),
+                            crate::app::LogLevel::Info,
+                        );
                         crate::schedule_ui_sync();
                     }
                     println!("[Auditor] Opening path: {:?}", path);
@@ -582,10 +585,13 @@ impl AuditorController {
                     while let Some(d) = dir {
                         if d.is_dir() {
                             if let Ok(mut app) = app.lock() {
-                                app.log_event(format!(
-                                    "Открыта родительская папка цели в Проводнике: {}.",
-                                    d.display()
-                                ));
+                                app.log_event(
+                                    format!(
+                                        "Открыта родительская папка цели в Проводнике: {}.",
+                                        d.display()
+                                    ),
+                                    crate::app::LogLevel::Info,
+                                );
                                 crate::schedule_ui_sync();
                             }
                             println!("[Auditor] Opening existing parent folder: {:?}", d);
