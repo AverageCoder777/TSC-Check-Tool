@@ -1187,6 +1187,7 @@ export component MissingAssetsWindow inherits Window {
     in property <[bool]> missing-corrupted: [];
     in property <[string]> missing-asset-types: [];
     in property <[bool]> missing-is-safe: [];
+    in property <bool> can-repair-all: false;
     property <bool> has_selection: selected-asset >= 0;
     in-out property <bool> is_selected_asset_replaceable: has_selection && selected-asset < missing-is-safe.length && missing-is-safe[selected-asset];
     in-out property <[TileEntry]> active-tile-list: [];
@@ -1441,12 +1442,14 @@ export component MissingAssetsWindow inherits Window {
             }
 
             Rectangle {
+                visible: root.can-repair-all;
                 min-width: 210px;
                 preferred-width: 210px;
                 preferred-height: 32px;
                 border-radius: 4px;
                 background: repair_all_touch.pressed ? #047857 : (repair_all_touch.has-hover ? #10b981 : #059669);
                 repair_all_touch := TouchArea {
+                    enabled: root.can-repair-all;
                     clicked => { repair-all-corrupted(); }
                 }
 

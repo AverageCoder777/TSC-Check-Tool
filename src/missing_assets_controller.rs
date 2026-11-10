@@ -310,6 +310,7 @@ impl MissingAssetsController {
                 &m.path, &m.uses,
             ));
         }
+        let has_repair = repairs.iter().any(|r| !r.is_empty());
         if let Some(mw) = self.weak.upgrade() {
             mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
             mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));
@@ -317,6 +318,7 @@ impl MissingAssetsController {
             mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(corrupted)));
             mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
             mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
+            mw.set_can_repair_all(has_repair);
             mw.set_active_tile_list(slint::ModelRc::new(
                 slint::VecModel::<crate::TileEntry>::default(),
             ));
