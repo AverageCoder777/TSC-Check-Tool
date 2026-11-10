@@ -147,7 +147,8 @@ impl Default for CheckerApp {
             ignore_scenarios: true,
             result: None,
             status,
-            check_log: Vec::new(),            progress_pending: None,
+            check_log: Vec::new(),
+            progress_pending: None,
             last_progress_log: None,
             has_ephemeral_progress: false,
             route_scan: None,
@@ -209,12 +210,18 @@ impl CheckerApp {
             Err(error) => Some(error.to_string()),
         };
         if let Some(error) = window_error {
-            self.log_event(format!("Не удалось открыть инвентарь ассетов: {error}"), LogLevel::Error);
+            self.log_event(
+                format!("Не удалось открыть инвентарь ассетов: {error}"),
+                LogLevel::Error,
+            );
         }
     }
     fn start_inventory_scan(&mut self) {
         let Some(result) = self.result.as_ref() else {
-            self.log_event("Сначала выполните проверку маршрута.".to_owned(), LogLevel::Warning);
+            self.log_event(
+                "Сначала выполните проверку маршрута.".to_owned(),
+                LogLevel::Warning,
+            );
             return;
         };
         if self.inventory_scan.is_some() {
@@ -225,7 +232,10 @@ impl CheckerApp {
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
         self.inventory_scan = Some(rx);
-        self.log_event("Проверка ассетов маршрута на умляуты...".to_owned(), LogLevel::Info);
+        self.log_event(
+            "Проверка ассетов маршрута на умляуты...".to_owned(),
+            LogLevel::Info,
+        );
         thread::spawn(move || {
             let result =
                 crate::assets::scan_umlaut_assets(&inventory, &assets_path, max_concurrent_serz);
@@ -256,7 +266,10 @@ impl CheckerApp {
         let (tx, rx) = mpsc::channel();
         self.asset_replacement = Some(rx);
         self.asset_replacement_feedback = None;
-        self.log_event(format!("Подготовка замены ассета {}...", missing.path), LogLevel::Info);
+        self.log_event(
+            format!("Подготовка замены ассета {}...", missing.path),
+            LogLevel::Info,
+        );
         thread::spawn(move || {
             let missing_path = missing.path.clone();
             let replacement = if transliterate {
@@ -414,7 +427,10 @@ impl CheckerApp {
             state.umlaut_assets.clear();
             state.scanning_umlauts = false;
         }
-        self.log_event(format!("Проверка маршрута «{}»...", route.name), LogLevel::Info);
+        self.log_event(
+            format!("Проверка маршрута «{}»...", route.name),
+            LogLevel::Info,
+        );
         crate::schedule_ui_sync();
         thread::spawn(move || {
             let progress_tx = tx.clone();
@@ -626,10 +642,10 @@ impl CheckerApp {
                     );
                     self.inventory_refresh_pending = true;
                     if !report.backups.is_empty() {
-                    self.log_event(
-                        format!("Создано резервных копий: {}.", report.backups.len()),
-                        LogLevel::Info,
-                    );
+                        self.log_event(
+                            format!("Создано резервных копий: {}.", report.backups.len()),
+                            LogLevel::Info,
+                        );
                     }
                     let all_done = remaining_assets == Some((0, 0));
                     if all_done {
@@ -681,14 +697,14 @@ impl CheckerApp {
                     } else {
                         " (полное сканирование)"
                     };
-                      self.log_event(
-                          format!(
-                              "Найдено маршрутов: {}; неполных папков: {}.",
-                              routes.routes.len(),
-                              routes.incomplete_folders.len()
-                          ),
-                          LogLevel::Info,
-                      );
+                    self.log_event(
+                        format!(
+                            "Найдено маршрутов: {}; неполных папков: {}.",
+                            routes.routes.len(),
+                            routes.incomplete_folders.len()
+                        ),
+                        LogLevel::Info,
+                    );
                     self.status.push_str(source);
                     if let Some(notice) = outcome.notice {
                         self.status.push(' ');
@@ -731,7 +747,11 @@ impl CheckerApp {
                         self.check_log.insert(
                             0,
                             LogEntry {
-                                text: format!("[{}] {}\n", chrono::Local::now().format("%H:%M:%S"), status),
+                                text: format!(
+                                    "[{}] {}\n",
+                                    chrono::Local::now().format("%H:%M:%S"),
+                                    status
+                                ),
                                 level: LogLevel::Info,
                             },
                         );
@@ -781,7 +801,10 @@ impl CheckerApp {
                                 self.check_log.insert(
                                     0,
                                     LogEntry {
-                                        text: format!("[{}] Проблема структуры: {issue}\n", timestamp),
+                                        text: format!(
+                                            "[{}] Проблема структуры: {issue}\n",
+                                            timestamp
+                                        ),
                                         level: LogLevel::Warning,
                                     },
                                 );

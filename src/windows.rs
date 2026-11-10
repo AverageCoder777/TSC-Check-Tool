@@ -1,12 +1,7 @@
 //! Windows shell integrations such as Explorer and the Recycle Bin.
 
 #[cfg(target_os = "windows")]
-use std::{
-    os::windows::process::CommandExt,
-    path::Path,
-    process::Command,
-    thread,
-};
+use std::{os::windows::process::CommandExt, path::Path, process::Command, thread};
 
 /// Запуск дочернего процесса без консольного окна.
 #[cfg(target_os = "windows")]

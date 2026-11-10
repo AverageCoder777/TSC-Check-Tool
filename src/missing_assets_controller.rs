@@ -214,8 +214,8 @@ impl MissingAssetsController {
                 .unwrap_or_else(|| assets_path.clone());
                 let selected = rfd::FileDialog::new()
                     .set_title("Выберите BIN/AP нового объекта")
-                    .add_filter("RailWorks Assets (*.bin, *.ap)", &["bin", "ap"])
-                    .add_filter("RailWorks Blueprint (*.bin)", &["bin"])
+                    .add_filter("RW Assets (*.bin, *.ap)", &["bin", "ap"])
+                    .add_filter("RW Blueprint (*.bin)", &["bin"])
                     .add_filter("AP Archive (*.ap)", &["ap"])
                     .set_directory(&start_dir)
                     .pick_file();

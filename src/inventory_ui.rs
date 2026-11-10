@@ -129,7 +129,8 @@ pub fn build_inventory_rows(
                 && a.uses.iter().all(|u| {
                     matches!(
                         u.tile_kind,
-                        crate::domain::TileKind::Scenery | crate::domain::TileKind::Loft
+                        crate::domain::TileKind::Scenery
+                            | crate::domain::TileKind::Loft
                             | crate::domain::TileKind::Road
                     )
                 }),

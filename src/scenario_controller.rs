@@ -340,8 +340,12 @@ impl ScenarioController {
             let app = self.app.clone();
             self.window.on_open_scenario_folder(move || {
                 if let Ok(mut app) = app.lock() {
-                    let Some(idx) = app.selected_scenario else { return };
-                    let Some(scenario) = app.scenarios.get(idx).cloned() else { return };
+                    let Some(idx) = app.selected_scenario else {
+                        return;
+                    };
+                    let Some(scenario) = app.scenarios.get(idx).cloned() else {
+                        return;
+                    };
                     app.log_event(
                         format!(
                             "Открыта папка сценария в Проводнике: {}.",
@@ -597,10 +601,7 @@ impl ScenarioController {
                 );
                 if let Some(path) = resolved {
                     app.log_event(
-                        format!(
-                            "Открыт путь объекта в Проводнике: {}.",
-                            path.display()
-                        ),
+                        format!("Открыт путь объекта в Проводнике: {}.", path.display()),
                         crate::app::LogLevel::Info,
                     );
                     crate::schedule_ui_sync();

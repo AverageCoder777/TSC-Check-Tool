@@ -115,16 +115,9 @@ pub(crate) fn last_game_path_file() -> PathBuf {
 pub(crate) fn load_last_game_path() -> String {
     fs::read_to_string(last_game_path_file())
         .ok()
-        .map(|path| {
-            path.trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_owned()
-        })
+        .map(|path| path.trim().trim_matches('"').trim_matches('\'').to_owned())
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| {
-            r"C:\Program Files (x86)\Steam\steamapps\common\RailWorks".to_owned()
-        })
+        .unwrap_or_else(|| r"C:\Program Files (x86)\Steam\steamapps\common\RailWorks".to_owned())
 }
 
 pub(crate) fn ignored_route_ids_file() -> PathBuf {
@@ -206,11 +199,7 @@ pub(crate) fn maximum_serz_processes() -> usize {
 /// На HDD — жёстко 4 (I/O-bound, больше потоков только гасят диск).
 /// Иначе — лимит серз-процессов (CPU-bound).
 pub(crate) fn route_scan_max_threads(serz_process_limit: usize, on_hdd: bool) -> usize {
-    if on_hdd {
-        4
-    } else {
-        serz_process_limit.max(1)
-    }
+    if on_hdd { 4 } else { serz_process_limit.max(1) }
 }
 
 /// Количество потоков сканирования маршрутов.
@@ -260,7 +249,10 @@ pub(crate) fn read_serz_process_limit(path: &Path) -> Result<usize, String> {
             )
         })?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::thread::available_parallelism().map(usize::from).unwrap_or(1).max(1)
+            std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1)
+                .max(1)
         }
         Err(error) => {
             return Err(format!(

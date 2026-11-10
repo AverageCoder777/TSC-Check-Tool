@@ -519,7 +519,9 @@ fn main() {
             && let Ok(mut app) = app.lock()
         {
             app.check_log.clear();
-            ui.set_log_lines(slint::ModelRc::new(slint::VecModel::from(Vec::<LogLine>::new())));
+            ui.set_log_lines(slint::ModelRc::new(slint::VecModel::from(
+                Vec::<LogLine>::new(),
+            )));
         }
     });
     let inventory = inventory_controller::InventoryController::new(app_for_controllers.clone());

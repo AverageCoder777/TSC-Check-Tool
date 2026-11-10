@@ -582,12 +582,7 @@ impl SerzNode {
         removed
     }
 
-    pub fn remove_loft_ribbons(
-        &mut self,
-        provider: &str,
-        product: &str,
-        blueprint: &str,
-    ) -> usize {
+    pub fn remove_loft_ribbons(&mut self, provider: &str, product: &str, blueprint: &str) -> usize {
         let mut removed = 0;
         if let SerzNode::Element { children, .. } = self {
             let mut kept = Vec::with_capacity(children.len());

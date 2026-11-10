@@ -52,7 +52,10 @@ fn save_ui_settings(
         app.language = language.clone();
 
         crate::settings::apply_saved_language(&language);
-        app.log_event("Настройки сохранены.".to_owned(), crate::app::LogLevel::Info);
+        app.log_event(
+            "Настройки сохранены.".to_owned(),
+            crate::app::LogLevel::Info,
+        );
         if path_changed {
             app.start_route_scan();
         }

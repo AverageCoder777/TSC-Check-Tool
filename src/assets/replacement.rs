@@ -28,9 +28,7 @@ pub fn delete_scenery_asset(
             );
         }
         if usage.source_file.is_protected_pathway() {
-            return Err(
-                "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
-            );
+            return Err("Удаление этого объекта запрещено (путевая инфраструктура).".to_owned());
         }
     }
 
@@ -195,9 +193,7 @@ pub fn delete_loft_asset(
     }
     for usage in uses {
         if usage.source_file.is_protected_pathway() {
-            return Err(
-                "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
-            );
+            return Err("Удаление этого объекта запрещено (путевая инфраструктура).".to_owned());
         }
         if usage.tile_kind != crate::domain::TileKind::Loft
             && usage.tile_kind != crate::domain::TileKind::Road

@@ -554,10 +554,7 @@ impl AuditorController {
                 if let Some(path) = target_path {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
-                            format!(
-                                "Открыта папка цели в Проводнике: {}.",
-                                path.display()
-                            ),
+                            format!("Открыта папка цели в Проводнике: {}.", path.display()),
                             crate::app::LogLevel::Info,
                         );
                         crate::schedule_ui_sync();

@@ -184,14 +184,14 @@ impl InventoryController {
                     let app_for_status = app.clone();
                     let _ =
                         crate::external_editor::open_and_sync_with_vscode(&full, move |result| {
-                                if let Ok(mut app) = app_for_status.lock() {
-                                    let (msg, level) = match result {
-                                        Ok(msg) => (msg, crate::app::LogLevel::Info),
-                                        Err(err) => (format!("✗ {err}"), crate::app::LogLevel::Error),
-                                    };
-                                    app.log_event(msg, level);
-                                    crate::schedule_ui_sync();
-                                }
+                            if let Ok(mut app) = app_for_status.lock() {
+                                let (msg, level) = match result {
+                                    Ok(msg) => (msg, crate::app::LogLevel::Info),
+                                    Err(err) => (format!("✗ {err}"), crate::app::LogLevel::Error),
+                                };
+                                app.log_event(msg, level);
+                                crate::schedule_ui_sync();
+                            }
                         });
                 }
             });
