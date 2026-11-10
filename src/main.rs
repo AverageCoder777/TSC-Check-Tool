@@ -560,7 +560,7 @@ fn main() {
     ui.on_open_settings(move || {
         settings.show();
     });
-    let auditor = auditor_controller::AuditorController::new();
+    let auditor = auditor_controller::AuditorController::new(app_for_controllers.clone());
     let auditor_weak_for_open_folder = auditor.weak.clone();
     ui.on_open_folder_auditor(move || {
         if let Some(w) = auditor_weak_for_open_folder.upgrade() {

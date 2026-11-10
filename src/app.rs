@@ -393,7 +393,6 @@ impl CheckerApp {
         self.result = None;
         self.missing_assets_popup = None;
         self.missing_assets_shown = false;
-        self.check_log.clear();
         self.progress_pending = None;
         self.last_progress_log = None;
         self.has_ephemeral_progress = false;

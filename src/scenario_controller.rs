@@ -339,10 +339,14 @@ impl ScenarioController {
         {
             let app = self.app.clone();
             self.window.on_open_scenario_folder(move || {
-                if let Ok(app) = app.lock()
-                    && let Some(idx) = app.selected_scenario
-                    && let Some(scenario) = app.scenarios.get(idx)
-                {
+                if let Ok(mut app) = app.lock() {
+                    let Some(idx) = app.selected_scenario else { return };
+                    let Some(scenario) = app.scenarios.get(idx).cloned() else { return };
+                    app.log_event(format!(
+                        "Открыта папка сценария в Проводнике: {}.",
+                        scenario.path.display()
+                    ));
+                    crate::schedule_ui_sync();
                     crate::windows::open_in_file_explorer(&scenario.path);
                 }
             });
@@ -385,20 +389,37 @@ impl ScenarioController {
         });
         let app = self.app.clone();
         self.window.on_open_locoswap(move || {
-            if let Ok(app) = app.lock() {
+            if let Ok(mut app) = app.lock() {
                 let path = app.locoswap_path.clone();
-                if !path.is_empty() && Path::new(&path).is_file() {
-                    let mut cmd = std::process::Command::new(&path);
-                    if let Some(parent) = Path::new(&path).parent() {
-                        cmd.current_dir(parent);
-                    }
-                    if let Some(idx) = app.selected_scenario
-                        && let Some(scenario) = app.scenarios.get(idx)
-                    {
-                        cmd.arg(&scenario.path);
-                    }
-                    let _ = cmd.spawn();
+                if path.is_empty() {
+                    app.log_event("Locoswap не настроен: укажите путь к Locoswap в настройках.".to_owned());
+                    crate::schedule_ui_sync();
+                    return;
                 }
+                if !Path::new(&path).is_file() {
+                    app.log_event(format!(
+                        "Locoswap не найден по пути: {}.",
+                        path
+                    ));
+                    crate::schedule_ui_sync();
+                    return;
+                }
+                let mut cmd = std::process::Command::new(&path);
+                if let Some(parent) = Path::new(&path).parent() {
+                    cmd.current_dir(parent);
+                }
+                if let Some(idx) = app.selected_scenario
+                    && let Some(scenario) = app.scenarios.get(idx)
+                {
+                    cmd.arg(&scenario.path);
+                    let scenario_name = scenario.name.clone();
+                    app.log_event(format!(
+                        "Запущен Locoswap для сценария: {}.",
+                        scenario_name
+                    ));
+                    crate::schedule_ui_sync();
+                }
+                let _ = cmd.spawn();
             }
         });
         let app = self.app.clone();
@@ -526,7 +547,7 @@ impl ScenarioController {
         });
         let app = self.app.clone();
         self.window.on_open_selected_vehicle_path(move || {
-            if let Ok(app) = app.lock() {
+            if let Ok(mut app) = app.lock() {
                 let scen_idx = match app.selected_scenario {
                     Some(i) => i,
                     None => return,
@@ -569,6 +590,11 @@ impl ScenarioController {
                     &product,
                 );
                 if let Some(path) = resolved {
+                    app.log_event(format!(
+                        "Открыт путь объекта в Проводнике: {}.",
+                        path.display()
+                    ));
+                    crate::schedule_ui_sync();
                     if path.is_file() {
                         #[cfg(windows)]
                         crate::windows::open_in_explorer(&path);
@@ -583,18 +609,24 @@ impl ScenarioController {
                         #[cfg(windows)]
                         crate::windows::open_in_file_explorer(cur);
                     }
+                } else {
+                    app.log_event(format!(
+                        "Не удалось найти блюпринт объекта в маршруте: {}/{}.",
+                        provider, product
+                    ));
+                    crate::schedule_ui_sync();
                 }
             }
         });
         let app = self.app.clone();
         self.window.on_open_vehicle_path(move |idx| {
-            if let Ok(app) = app.lock() {
+            if let Ok(mut app) = app.lock() {
                 let scen_idx = match app.selected_scenario {
                     Some(i) => i,
                     None => return,
                 };
                 let consist_idx = app.selected_consist.unwrap_or(0);
-                let scenario = match app.scenarios.get(scen_idx) {
+                let scenario = match app.scenarios.get(scen_idx).cloned() {
                     Some(s) => s,
                     None => return,
                 };
@@ -607,7 +639,7 @@ impl ScenarioController {
                     None => return,
                 };
                 let vehicle = match consist.vehicles.get(idx as usize) {
-                    Some(v) => v,
+                    Some(v) => v.clone(),
                     None => return,
                 };
                 let rw_path = app.rw_path.clone();
@@ -624,6 +656,11 @@ impl ScenarioController {
                     &vehicle.product,
                 );
                 if let Some(path) = resolved {
+                    app.log_event(format!(
+                        "Открыт путь транспортного средства в Проводнике: {}.",
+                        path.display()
+                    ));
+                    crate::schedule_ui_sync();
                     if path.is_file() {
                         #[cfg(windows)]
                         crate::windows::open_in_explorer(&path);
@@ -639,7 +676,13 @@ impl ScenarioController {
                         crate::windows::open_in_file_explorer(cur);
                     }
                 } else {
-                    // Если блюпринт не найден, ничего не открываем.
+                    let provider = vehicle.provider.clone();
+                    let product = vehicle.product.clone();
+                    app.log_event(format!(
+                        "Не удалось найти блюпринт транспортного средства: {}/{}.",
+                        provider, product
+                    ));
+                    crate::schedule_ui_sync();
                 }
             }
         });

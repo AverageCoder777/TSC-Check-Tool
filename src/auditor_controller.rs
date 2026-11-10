@@ -41,12 +41,13 @@ pub struct AuditorController {
     pub window: FolderAuditorWindow,
     pub state: Arc<Mutex<AuditorState>>,
     pub weak: Weak<FolderAuditorWindow>,
+    pub app: Arc<Mutex<crate::app::CheckerApp>>,
     pub audit_generation: Arc<AtomicU64>,
     pub is_busy: Arc<AtomicBool>,
 }
 
 impl AuditorController {
-    pub fn new() -> Self {
+    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
         let window = FolderAuditorWindow::new().unwrap();
         let weak = window.as_weak();
         let state = Arc::new(Mutex::new(AuditorState::default()));
@@ -54,6 +55,7 @@ impl AuditorController {
             window,
             state,
             weak,
+            app,
             audit_generation: Arc::new(AtomicU64::new(0)),
             is_busy: Arc::new(AtomicBool::new(false)),
         }
@@ -539,6 +541,7 @@ impl AuditorController {
         }
         {
             let state = self.state.clone();
+            let app = self.app.clone();
             self.window.on_open_source_file(move |row| {
                 if row < 0 {
                     return;
@@ -549,6 +552,13 @@ impl AuditorController {
                         .map(|item| item.parent_file.clone())
                 });
                 if let Some(path) = target_path {
+                    if let Ok(mut app) = app.lock() {
+                        app.log_event(format!(
+                            "Открыта папка цели в Проводнике: {}.",
+                            path.display()
+                        ));
+                        crate::schedule_ui_sync();
+                    }
                     println!("[Auditor] Opening path: {:?}", path);
                     #[cfg(windows)]
                     crate::windows::open_in_explorer(&path);
@@ -557,6 +567,7 @@ impl AuditorController {
         }
         {
             let state = self.state.clone();
+            let app = self.app.clone();
             self.window.on_open_missing_target_folder(move |row| {
                 if row < 0 {
                     return;
@@ -567,15 +578,20 @@ impl AuditorController {
                         .map(|item| item.expected_path.clone())
                 });
                 if let Some(path) = target_path {
-                    // Walk up directory ancestors until an existing folder is found,
-                    // then open that folder directly (no /select on a non-existent file).
                     let mut dir = path.parent();
                     while let Some(d) = dir {
                         if d.is_dir() {
+                            if let Ok(mut app) = app.lock() {
+                                app.log_event(format!(
+                                    "Открыта родительская папка цели в Проводнике: {}.",
+                                    d.display()
+                                ));
+                                crate::schedule_ui_sync();
+                            }
                             println!("[Auditor] Opening existing parent folder: {:?}", d);
                             #[cfg(windows)]
                             crate::windows::open_in_explorer(d);
-                            break;
+                            return;
                         }
                         dir = d.parent();
                     }
