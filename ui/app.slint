@@ -1303,7 +1303,7 @@ export component MissingAssetsWindow inherits Window {
                                 Text {
                                     text: missing-asset-types[i];
                                     color: #e2e8f0;
-                                    font-size: 10px;
+                                    font-size: 12px;
                                     font-weight: 600;
                                     vertical-alignment: center;
                                 }
@@ -1381,45 +1381,11 @@ export component MissingAssetsWindow inherits Window {
                                 border-color: copy_touch.has-hover ? #ffffff : #94a3b8;
                                 background: transparent;
                             }
-                        }
-
-                        // Кнопка тайлов (векторная иконка слоёв)
-                        Rectangle {
-                            width: 28px;
-                            height: 28px;
-                            border-radius: 4px;
-                            border-width: 1px;
-                            border-color: #334155;
-                            background: tiles_touch.has-hover ? #3b4252 : #262930;
-                            tiles_touch := TouchArea {
-                                clicked => { inspect-tiles(i); }
-                            }
-                            Rectangle {
-                                x: 6px;
-                                y: 6px;
-                                width: 16px;
-                                height: 3px;
-                                background: tiles_touch.has-hover ? #ffffff : #94a3b8;
-                            }
-                            Rectangle {
-                                x: 6px;
-                                y: 10px;
-                                width: 14px;
-                                height: 3px;
-                                background: tiles_touch.has-hover ? #ffffff : #94a3b8;
-                            }
-                            Rectangle {
-                                x: 6px;
-                                y: 14px;
-                                width: 12px;
-                                height: 3px;
-                                background: tiles_touch.has-hover ? #ffffff : #94a3b8;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                         }
+                     }
+                 }
+             }
+         }
 
         if active-tile-list.length > 0: Rectangle {
             height: 1px;
@@ -1464,13 +1430,13 @@ export component MissingAssetsWindow inherits Window {
                         vertical-stretch: 1;
                         for tile in active-tile-list: HorizontalLayout {
                             padding: 2px;
-                            Text {
-                                text: tile.label;
-                                font-size: 11px;
-                                color: #94a3b8;
-                                horizontal-stretch: 1;
-                                overflow: TextOverflow.elide;
-                            }
+                        Text {
+                            text: tile.label;
+                            font-size: 13px;
+                            color: #94a3b8;
+                            horizontal-stretch: 1;
+                            overflow: TextOverflow.elide;
+                        }
 
                             Rectangle {
                                 width: 28px;
@@ -1566,8 +1532,8 @@ export component MissingAssetsWindow inherits Window {
             }
 
             Rectangle {
-                min-width: 190px;
-                preferred-width: 190px;
+                min-width: 140px;
+                preferred-width: 140px;
                 preferred-height: 32px;
                 border-radius: 4px;
                 background: (!root.has_selection || !root.is_selected_asset_replaceable) ? #262626 : (replace_touch.pressed ? #047857 : (replace_touch.has-hover ? #10b981 : #059669));
@@ -1589,11 +1555,6 @@ export component MissingAssetsWindow inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
-            }
-
-            Button {
-                text: @tr("Закрыть");
-                clicked => { close-missing(); }
             }
         }
     }
