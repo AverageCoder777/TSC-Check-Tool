@@ -87,32 +87,111 @@ fn entity_matches_blueprint(
     blueprint_ext_to_xml(&norm_bp) == blueprint_ext_to_xml(&norm_target)
 }
 
-/// Собирает Provider / Product / BlueprintID из любого Property на любой
-/// глубине поддерева. Нужен для лент лофта/дороги, где BlueprintID — это
-/// вложенный элемент `<BlueprintID><iBlueprintLibrary-cAbsoluteBlueprintID>`,
-/// а не плоское Property.
-fn collect_loft_blueprint_props(
+/// Извлекает Provider / Product / BlueprintID из структуры
+/// `Network-cSectionGenericProperties` → `BlueprintID` →
+/// `iBlueprintLibrary-cAbsoluteBlueprintID` (Provider/Product внутри
+/// `BlueprintSetID`/`iBlueprintLibrary-cBlueprintSetID`, BlueprintID — свойство
+/// `iBlueprintLibrary-cAbsoluteBlueprintID`). Нужен для лент лофта/дороги,
+/// где блюпринт находится во вложенной структуре, а не как плоское Property.
+fn collect_section_generic_props(
     node: &SerzNode,
     prov: &mut Option<String>,
     prod: &mut Option<String>,
     bp: &mut Option<String>,
 ) {
-    match node {
-        SerzNode::Element { children, .. } => {
-            for child in children {
-                collect_loft_blueprint_props(child, prov, prod, bp);
+    if let SerzNode::Element { name, children, .. } = node {
+        if name.replace("::", "-") == "Network-cSectionGenericProperties" {
+            extract_blueprint_from_section(children, prov, prod, bp);
+            return;
+        }
+        for child in children {
+            collect_section_generic_props(child, prov, prod, bp);
+        }
+    }
+}
+
+/// Находит внутри потомков `Network-cSectionGenericProperties` элемент
+/// `BlueprintID` → `iBlueprintLibrary-cAbsoluteBlueprintID` и вынимает из него
+/// Provider, Product и BlueprintID.
+fn extract_blueprint_from_section(
+    children: &[SerzNode],
+    prov: &mut Option<String>,
+    prod: &mut Option<String>,
+    bp: &mut Option<String>,
+) {
+    for child in children {
+        if let SerzNode::Element {
+            name,
+            children: sub_children,
+            ..
+        } = child
+            && name.replace("::", "-") == "BlueprintID"
+        {
+            for sub in sub_children {
+                if let SerzNode::Element {
+                    name: abs_name,
+                    children: abs_children,
+                    ..
+                } = sub
+                    && abs_name.replace("::", "-") == "iBlueprintLibrary-cAbsoluteBlueprintID"
+                {
+                    collect_from_absolute_blueprint_id(abs_children, prov, prod, bp);
+                }
             }
         }
-        SerzNode::Property { name, value, .. } if !value.trim().is_empty() => {
-            if name == "Provider" && prov.is_none() {
-                *prov = Some(value.clone());
-            } else if name == "Product" && prod.is_none() {
-                *prod = Some(value.clone());
-            } else if name == "BlueprintID" && bp.is_none() {
+    }
+}
+
+/// Вынимает Provider/Product из `BlueprintSetID`/`iBlueprintLibrary-cBlueprintSetID`
+/// и BlueprintID из свойства `iBlueprintLibrary-cAbsoluteBlueprintID`.
+fn collect_from_absolute_blueprint_id(
+    children: &[SerzNode],
+    prov: &mut Option<String>,
+    prod: &mut Option<String>,
+    bp: &mut Option<String>,
+) {
+    for child in children {
+        match child {
+            SerzNode::Element {
+                name: bs_name,
+                children: bs_children,
+                ..
+            } if bs_name.replace("::", "-") == "BlueprintSetID" => {
+                for bs_sub in bs_children {
+                    if let SerzNode::Element {
+                        name: ibs_name,
+                        children: ibs_children,
+                        ..
+                    } = bs_sub
+                        && ibs_name.replace("::", "-") == "iBlueprintLibrary-cBlueprintSetID"
+                    {
+                        for prop in ibs_children {
+                            if let SerzNode::Property {
+                                name: p_name,
+                                value,
+                                ..
+                            } = prop
+                            {
+                                if prov.is_none() && p_name == "Provider" {
+                                    *prov = Some(value.clone());
+                                }
+                                if prod.is_none() && p_name == "Product" {
+                                    *prod = Some(value.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            SerzNode::Property {
+                name: p_name,
+                value,
+                ..
+            } if p_name == "BlueprintID" && bp.is_none() => {
                 *bp = Some(value.clone());
             }
+            _ => {}
         }
-        _ => {}
     }
 }
 
@@ -121,7 +200,7 @@ fn loft_matches_blueprint(node: &SerzNode, provider: &str, product: &str, bluepr
     let mut prov: Option<String> = None;
     let mut prod: Option<String> = None;
     let mut bp: Option<String> = None;
-    collect_loft_blueprint_props(node, &mut prov, &mut prod, &mut bp);
+    collect_section_generic_props(node, &mut prov, &mut prod, &mut bp);
     let Some(prov) = prov else {
         return false;
     };
