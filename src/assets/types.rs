@@ -19,14 +19,14 @@ pub enum RouteAssetType {
 impl RouteAssetType {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Scenery => "Сценери",
-            Self::Loft => "Лофт",
-            Self::Road => "Дорога",
-            Self::Track => "Пути / Сигналы",
-            Self::TrackRules => "Правило пути",
-            Self::Weather => "Погода",
-            Self::Audio => "Звук",
-            Self::Other => "Прочее",
+            Self::Scenery => "Scenery",
+            Self::Loft => "Loft",
+            Self::Road => "Road",
+            Self::Track => "Track",
+            Self::TrackRules => "Track Rules",
+            Self::Weather => "Weather",
+            Self::Audio => "Audio",
+            Self::Other => "Other",
         }
     }
 }
@@ -103,11 +103,9 @@ pub fn classify_route_asset_type(asset: &str, uses: &[crate::domain::AssetUse]) 
 pub fn is_protected_network_asset(asset: &RouteAssetItem) -> bool {
     if asset.uses.iter().any(|usage| {
         let path = &usage.source_file_search;
-        path.contains("tracks.bin")
-            || path.contains("/networks/")
-            || path.contains("\\networks\\")
-            || path.contains("trackrules")
-            || path.contains("junctions")
+        (path.contains("/networks/tracks.bin") || path.contains("\\networks\\tracks.bin"))
+            || (path.contains("/networks/track tiles/")
+                || path.contains("\\networks\\track tiles\\"))
     }) {
         return true;
     }
@@ -120,9 +118,9 @@ pub fn is_protected_network_asset(asset: &RouteAssetItem) -> bool {
     if path_lower.contains("signal")
         && asset.uses.iter().any(|usage| {
             let path = &usage.source_file_search;
-            path.contains("tracks.bin")
-                || path.contains("/networks/")
-                || path.contains("\\networks\\")
+            (path.contains("/networks/tracks.bin") || path.contains("\\networks\\tracks.bin"))
+                || (path.contains("/networks/track tiles/")
+                    || path.contains("\\networks\\track tiles\\"))
         })
     {
         return true;

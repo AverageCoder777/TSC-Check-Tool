@@ -109,7 +109,9 @@ pub fn delete_scenery_asset(
                 source_file.display()
             )
         })?;
-        let count = root.remove_c_dynamic_entities(provider, product, &blueprint);
+        let dyn_count = root.remove_c_dynamic_entities(provider, product, &blueprint);
+        let loft_count = root.remove_loft_ribbons(provider, product, &blueprint);
+        let count = dyn_count + loft_count;
         if count == 0 {
             continue;
         }

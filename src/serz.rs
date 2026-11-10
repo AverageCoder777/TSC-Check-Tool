@@ -87,6 +87,62 @@ fn entity_matches_blueprint(
     blueprint_ext_to_xml(&norm_bp) == blueprint_ext_to_xml(&norm_target)
 }
 
+/// Собирает Provider / Product / BlueprintID из любого Property на любой
+/// глубине поддерева. Нужен для лент лофта/дороги, где BlueprintID — это
+/// вложенный элемент `<BlueprintID><iBlueprintLibrary-cAbsoluteBlueprintID>`,
+/// а не плоское Property.
+fn collect_loft_blueprint_props(
+    node: &SerzNode,
+    prov: &mut Option<String>,
+    prod: &mut Option<String>,
+    bp: &mut Option<String>,
+) {
+    match node {
+        SerzNode::Element { children, .. } => {
+            for child in children {
+                collect_loft_blueprint_props(child, prov, prod, bp);
+            }
+        }
+        SerzNode::Property { name, value, .. } if !value.trim().is_empty() => {
+            if name == "Provider" && prov.is_none() {
+                *prov = Some(value.clone());
+            } else if name == "Product" && prod.is_none() {
+                *prod = Some(value.clone());
+            } else if name == "BlueprintID" && bp.is_none() {
+                *bp = Some(value.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Проверяет, совпадает ли лента лофта/дороги с заданным блюпринтом.
+fn loft_matches_blueprint(node: &SerzNode, provider: &str, product: &str, blueprint: &str) -> bool {
+    let mut prov: Option<String> = None;
+    let mut prod: Option<String> = None;
+    let mut bp: Option<String> = None;
+    collect_loft_blueprint_props(node, &mut prov, &mut prod, &mut bp);
+    let Some(prov) = prov else {
+        return false;
+    };
+    let Some(prod) = prod else {
+        return false;
+    };
+    let Some(bp) = bp else {
+        return false;
+    };
+    if !prov.eq_ignore_ascii_case(provider) || !prod.eq_ignore_ascii_case(product) {
+        return false;
+    }
+    let norm_bp = bp.replace('/', "\\").to_lowercase();
+    let mut norm_target = blueprint.replace('/', "\\").to_lowercase();
+    let prefix = format!("{}\\{}\\", provider.to_lowercase(), product.to_lowercase());
+    if norm_target.starts_with(&prefix) {
+        norm_target = norm_target[prefix.len()..].to_string();
+    }
+    blueprint_ext_to_xml(&norm_bp) == blueprint_ext_to_xml(&norm_target)
+}
+
 fn collect_blueprint_ids(
     node: &SerzNode,
     prov: &mut Option<String>,
@@ -460,11 +516,11 @@ impl SerzNode {
                 let is_ribbon = match &child {
                     SerzNode::Element { name, .. } => {
                         let clean = name.replace("::", "-");
-                        clean == "Network-cLoftRibbon" || clean == "Network-cRoadRibbon"
+                        clean.contains("LoftRibbon") || clean.contains("RoadRibbon")
                     }
                     _ => false,
                 };
-                if is_ribbon && entity_matches_blueprint(&child, provider, product, blueprint) {
+                if is_ribbon && loft_matches_blueprint(&child, provider, product, blueprint) {
                     removed += 1;
                     continue;
                 }
