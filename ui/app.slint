@@ -1187,9 +1187,13 @@ export component MissingAssetsWindow inherits Window {
     in property <[bool]> missing-corrupted: [];
     in property <[string]> missing-asset-types: [];
     in property <[bool]> missing-is-safe: [];
+    in property <[string]> missing-asset-dirs: [];
+    in property <[string]> missing-asset-files: [];
     in property <bool> can-repair-all: false;
     property <bool> has_selection: selected-asset >= 0;
     in-out property <bool> is_selected_asset_replaceable: has_selection && selected-asset < missing-is-safe.length && missing-is-safe[selected-asset];
+    property <bool> can_delete_selected: has_selection && selected-asset < missing-asset-types.length && (missing-asset-types[selected-asset] == "Scenery" || missing-asset-types[selected-asset] == "Loft");
+    in-out property <string> missing-search-query: "";
     in-out property <[TileEntry]> active-tile-list: [];
     in property <string> active-tile-asset: "";
     in-out property <int> selected-asset: -1;
@@ -1200,6 +1204,8 @@ export component MissingAssetsWindow inherits Window {
     callback copy-all-to-clipboard();
     callback close-missing();
     callback inspect-tiles(int);
+    callback delete-from-route(int);
+    callback search-changed(string);
 
     VerticalBox {
         padding: 6px;
@@ -1207,10 +1213,17 @@ export component MissingAssetsWindow inherits Window {
         HorizontalLayout {
             spacing: 8px;
             Text {
-                text: @tr("Недостающие объекты маршрута");
+                text: @tr("Недостающие объекты маршрута [{}]", missing-assets.length);
                 font-size: 16px;
                 font-weight: 700;
                 vertical-alignment: center;
+            }
+
+            search_input := LineEdit {
+                placeholder-text: @tr("Поиск по пути или файлу...");
+                width: 260px;
+                text <=> missing-search-query;
+                edited(text) => { root.search-changed(text); }
             }
 
             Rectangle {
@@ -1256,15 +1269,27 @@ export component MissingAssetsWindow inherits Window {
                         padding-top: 4px;
                         padding-bottom: 4px;
 
-                        Text {
-                            text: asset;
-                            font-size: 12px;
-                            color: #e2e8f0;
-                            vertical-alignment: TextVerticalAlignment.center;
-                            horizontal-alignment: TextHorizontalAlignment.left;
+                        HorizontalLayout {
+                            spacing: 4px;
                             horizontal-stretch: 1;
-                            min-width: 0px;
-                            overflow: TextOverflow.elide;
+                            Text {
+                                text: missing-asset-dirs[i];
+                                font-size: 12px;
+                                color: #94a3b8;
+                                vertical-alignment: TextVerticalAlignment.center;
+                                horizontal-stretch: 1;
+                                min-width: 0px;
+                                overflow: TextOverflow.elide;
+                            }
+                            Text {
+                                text: missing-asset-files[i];
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: #f1f5f9;
+                                vertical-alignment: TextVerticalAlignment.center;
+                                min-width: 0px;
+                                overflow: TextOverflow.elide;
+                            }
                         }
 
                         if missing-asset-types.length > i: Rectangle {
@@ -1327,41 +1352,68 @@ export component MissingAssetsWindow inherits Window {
                             overflow: TextOverflow.elide;
                         }
 
-                        // Кнопка копирования пути ассета (всегда видна)
+                        // Кнопка копирования пути ассета (векторная иконка: два наложенных квадрата)
                         Rectangle {
                             width: 28px;
-                            height: 26px;
+                            height: 28px;
                             border-radius: 4px;
                             border-width: 1px;
-                            border-color: #374151;
+                            border-color: #334155;
                             background: copy_touch.has-hover ? #3b4252 : #262930;
                             copy_touch := TouchArea {
                                 clicked => { copy-to-clipboard(asset); }
                             }
-                            Text {
-                                text: "📋";
-                                color: copy_touch.has-hover ? #ffffff : #94a3b8;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
+                            Rectangle {
+                                x: 4px;
+                                y: 4px;
+                                width: 16px;
+                                height: 16px;
+                                border-width: 1.5px;
+                                border-color: copy_touch.has-hover ? #ffffff : #94a3b8;
+                                background: transparent;
+                            }
+                            Rectangle {
+                                x: 8px;
+                                y: 8px;
+                                width: 16px;
+                                height: 16px;
+                                border-width: 1.5px;
+                                border-color: copy_touch.has-hover ? #ffffff : #94a3b8;
+                                background: transparent;
                             }
                         }
 
-                        // Кнопка тайлов (всегда видна)
+                        // Кнопка тайлов (векторная иконка слоёв)
                         Rectangle {
                             width: 28px;
-                            height: 26px;
+                            height: 28px;
                             border-radius: 4px;
                             border-width: 1px;
-                            border-color: #374151;
+                            border-color: #334155;
                             background: tiles_touch.has-hover ? #3b4252 : #262930;
                             tiles_touch := TouchArea {
                                 clicked => { inspect-tiles(i); }
                             }
-                            Text {
-                                text: "🗺";
-                                color: tiles_touch.has-hover ? #ffffff : #94a3b8;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
+                            Rectangle {
+                                x: 6px;
+                                y: 6px;
+                                width: 16px;
+                                height: 3px;
+                                background: tiles_touch.has-hover ? #ffffff : #94a3b8;
+                            }
+                            Rectangle {
+                                x: 6px;
+                                y: 10px;
+                                width: 14px;
+                                height: 3px;
+                                background: tiles_touch.has-hover ? #ffffff : #94a3b8;
+                            }
+                            Rectangle {
+                                x: 6px;
+                                y: 14px;
+                                width: 12px;
+                                height: 3px;
+                                background: tiles_touch.has-hover ? #ffffff : #94a3b8;
                             }
                         }
                     }
@@ -1370,12 +1422,17 @@ export component MissingAssetsWindow inherits Window {
         }
 
         if active-tile-list.length > 0: Rectangle {
-            background: #141414;
+            height: 1px;
+            background: #334155;
+            horizontal-stretch: 1;
+        }
+
+        if active-tile-list.length > 0: Rectangle {
+            background: #181a20;
             border-color: #333333;
             border-width: 1px;
             border-radius: 4px;
-            preferred-height: 90px;
-            max-height: 110px;
+            clip: true;
             VerticalLayout {
                 padding: 6px;
                 spacing: 4px;
@@ -1396,32 +1453,49 @@ export component MissingAssetsWindow inherits Window {
                     }
                 }
 
-                ListView {
-                    for tile in active-tile-list: HorizontalLayout {
-                        padding: 2px;
-                        Text {
-                            text: tile.label;
-                            font-size: 11px;
-                            color: #94a3b8;
-                            horizontal-stretch: 1;
-                            overflow: TextOverflow.elide;
-                        }
-
-                        Rectangle {
-                            width: 28px;
-                            height: 26px;
-                            border-radius: 4px;
-                            border-width: 1px;
-                            border-color: #374151;
-                            background: tile_copy_touch.has-hover ? #3b4252 : #262930;
-                            tile_copy_touch := TouchArea {
-                                clicked => { copy-to-clipboard(tile.file_path); }
-                            }
+                Rectangle {
+                    max-height: 110px;
+                    clip: true;
+                    ListView {
+                        vertical-stretch: 1;
+                        for tile in active-tile-list: HorizontalLayout {
+                            padding: 2px;
                             Text {
-                                text: "📋";
-                                color: tile_copy_touch.has-hover ? #ffffff : #94a3b8;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
+                                text: tile.label;
+                                font-size: 11px;
+                                color: #94a3b8;
+                                horizontal-stretch: 1;
+                                overflow: TextOverflow.elide;
+                            }
+
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: #334155;
+                                background: tile_copy_touch.has-hover ? #3b4252 : #262930;
+                                tile_copy_touch := TouchArea {
+                                    clicked => { copy-to-clipboard(tile.file_path); }
+                                }
+                                Rectangle {
+                                    x: 4px;
+                                    y: 4px;
+                                    width: 16px;
+                                    height: 16px;
+                                    border-width: 1.5px;
+                                    border-color: tile_copy_touch.has-hover ? #ffffff : #94a3b8;
+                                    background: transparent;
+                                }
+                                Rectangle {
+                                    x: 8px;
+                                    y: 8px;
+                                    width: 16px;
+                                    height: 16px;
+                                    border-width: 1.5px;
+                                    border-color: tile_copy_touch.has-hover ? #ffffff : #94a3b8;
+                                    background: transparent;
+                                }
                             }
                         }
                     }
@@ -1442,7 +1516,31 @@ export component MissingAssetsWindow inherits Window {
             }
 
             Rectangle {
-                visible: root.can-repair-all;
+                min-width: 210px;
+                preferred-width: 210px;
+                preferred-height: 32px;
+                border-radius: 4px;
+                background: (!root.can_delete_selected) ? #262626 : (delete_touch.pressed ? #b91c1c : (delete_touch.has-hover ? #dc2626 : #b91c1c));
+                delete_touch := TouchArea {
+                    enabled: root.can_delete_selected;
+                    clicked => {
+                        if (root.can_delete_selected) {
+                            root.delete-from-route(selected-asset);
+                        }
+                    }
+                }
+
+                Text {
+                    text: @tr("Удалить из маршрута");
+                    color: (!root.can_delete_selected) ? #666666 : #ffffff;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            if root.can-repair-all: Rectangle {
                 min-width: 210px;
                 preferred-width: 210px;
                 preferred-height: 32px;

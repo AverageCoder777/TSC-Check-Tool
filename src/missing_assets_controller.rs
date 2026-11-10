@@ -5,16 +5,17 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::MissingAssetsWindow;
+use crate::app::CheckerApp;
 
 pub struct MissingAssetsController {
     pub window: MissingAssetsWindow,
     pub weak: Weak<MissingAssetsWindow>,
-    pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub app: Arc<Mutex<CheckerApp>>,
     pub clipboard: Arc<Mutex<Option<arboard::Clipboard>>>,
 }
 
 impl MissingAssetsController {
-    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<CheckerApp>>) -> Self {
         let window = MissingAssetsWindow::new().unwrap();
         let weak = window.as_weak();
         let clipboard = Arc::new(Mutex::new(arboard::Clipboard::new().ok()));
@@ -25,6 +26,80 @@ impl MissingAssetsController {
             clipboard,
         }
     }
+
+    /// Ребуild всех отображаемых массивов (с учётом текстового фильтра) без
+    /// сброса выделения: выделенный ассет сохраняется, если он попадает под
+    /// фильтр, иначе сбрасывается в -1.
+    fn refresh_missing_view(app: &CheckerApp, mw: &MissingAssetsWindow, query: &str) {
+        let Some(result) = app.result.as_ref() else {
+            return;
+        };
+        let missing = &result.missing_assets;
+        let q = query.trim().to_lowercase();
+
+        let sel = mw.get_selected_asset();
+        let sel_path = (sel >= 0)
+            .then(|| {
+                mw.get_missing_assets()
+                    .row_data(sel as usize)
+                    .map(|s| s.to_string())
+            })
+            .flatten();
+
+        let mut paths = Vec::with_capacity(missing.len());
+        let mut counts = Vec::with_capacity(missing.len());
+        let mut repairs = Vec::with_capacity(missing.len());
+        let mut corrupted = Vec::with_capacity(missing.len());
+        let mut types = Vec::with_capacity(missing.len());
+        let mut safe = Vec::with_capacity(missing.len());
+        let mut dirs = Vec::with_capacity(missing.len());
+        let mut files = Vec::with_capacity(missing.len());
+        let mut new_sel = -1i32;
+
+        for m in missing
+            .iter()
+            .filter(|m| q.is_empty() || m.path.to_lowercase().contains(&q))
+        {
+            let p = m.path.as_str();
+            let cut = p.rfind(['/', '\\']).map_or(0, |i| i + 1);
+            paths.push(slint::SharedString::from(m.path.as_str()));
+            counts.push(m.uses.len() as i32);
+            repairs.push(slint::SharedString::from(
+                m.suggested_repair.as_deref().unwrap_or(""),
+            ));
+            corrupted.push(m.is_corrupted_link);
+            types.push(slint::SharedString::from(
+                crate::assets::RouteAssetType::label(m.asset_type),
+            ));
+            safe.push(crate::assets::is_safe_for_global_replacement(
+                &m.path, &m.uses,
+            ));
+            dirs.push(slint::SharedString::from(&p[..cut]));
+            files.push(slint::SharedString::from(&p[cut..]));
+            if let Some(sp) = sel_path.as_ref()
+                && m.path == *sp
+            {
+                new_sel = (paths.len() - 1) as i32;
+            }
+        }
+
+        let has_repair = repairs.iter().any(|r| !r.is_empty());
+        mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
+        mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));
+        mw.set_missing_suggested_repairs(slint::ModelRc::new(slint::VecModel::from(repairs)));
+        mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(corrupted)));
+        mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
+        mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
+        mw.set_missing_asset_dirs(slint::ModelRc::new(slint::VecModel::from(dirs)));
+        mw.set_missing_asset_files(slint::ModelRc::new(slint::VecModel::from(files)));
+        mw.set_can_repair_all(has_repair);
+        mw.set_active_tile_list(slint::ModelRc::new(
+            slint::VecModel::<crate::TileEntry>::default(),
+        ));
+        mw.set_active_tile_asset("".into());
+        mw.set_selected_asset(new_sel);
+    }
+
     pub fn bind(&self) {
         {
             let clipboard = self.clipboard.clone();
@@ -42,16 +117,19 @@ impl MissingAssetsController {
         {
             let clipboard = self.clipboard.clone();
             let handle = self.weak.clone();
+            let app = self.app.clone();
             self.window.on_copy_all_to_clipboard(move || {
-                let Some(mw) = handle.upgrade() else { return };
-                let model = mw.get_missing_assets();
-                let count = model.row_count();
-                let mut paths = Vec::with_capacity(count);
-                for i in 0..count {
-                    if let Some(value) = model.row_data(i) {
-                        paths.push(value.to_string());
+                let paths = {
+                    let Ok(app) = app.lock() else { return };
+                    match &app.result {
+                        Some(result) => result
+                            .missing_assets
+                            .iter()
+                            .map(|m| m.path.clone())
+                            .collect::<Vec<String>>(),
+                        None => Vec::new(),
                     }
-                }
+                };
                 if let Ok(mut lock) = clipboard.lock() {
                     if lock.is_none() {
                         *lock = arboard::Clipboard::new().ok();
@@ -60,6 +138,7 @@ impl MissingAssetsController {
                         let _ = ctx.set_text(paths.join("\n"));
                     }
                 }
+                let _ = handle;
             });
         }
         {
@@ -72,16 +151,27 @@ impl MissingAssetsController {
         }
         {
             let app = self.app.clone();
+            let handle = self.weak.clone();
             self.window.on_repair_corrupted(move |idx| {
+                let Some(mw) = handle.upgrade() else { return };
+                let selected_path = mw
+                    .get_missing_assets()
+                    .row_data(idx as usize)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                if selected_path.is_empty() {
+                    return;
+                }
                 let Ok(mut app) = app.lock() else { return };
-                let missing = app
-                    .result
-                    .as_ref()
-                    .and_then(|r| r.missing_assets.get(idx as usize))
-                    .cloned();
-                if let Some(missing) = missing
-                    && let Some(repair) = missing.suggested_repair.clone()
-                {
+                let Some(missing) = app.result.as_ref().and_then(|r| {
+                    r.missing_assets
+                        .iter()
+                        .find(|m| m.path.eq_ignore_ascii_case(&selected_path))
+                        .cloned()
+                }) else {
+                    return;
+                };
+                if let Some(repair) = missing.suggested_repair.clone() {
                     let clean_repair = repair.trim_start_matches(['/', '\\']).replace('/', "\\");
                     let assets_path = app.clean_rw_path().join("Assets");
                     let replacement = assets_path.join(&clean_repair);
@@ -142,11 +232,25 @@ impl MissingAssetsController {
             let app = self.app.clone();
             let handle = self.weak.clone();
             self.window.on_inspect_tiles(move |idx| {
+                let Some(mw) = handle.upgrade() else { return };
+                let selected_path = mw
+                    .get_missing_assets()
+                    .row_data(idx as usize)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                if selected_path.is_empty() {
+                    return;
+                }
                 let (asset, tiles) = app
                     .lock()
                     .ok()
                     .and_then(|app| {
-                        let missing = app.result.as_ref()?.missing_assets.get(idx as usize)?;
+                        let missing = app
+                            .result
+                            .as_ref()?
+                            .missing_assets
+                            .iter()
+                            .find(|m| m.path.eq_ignore_ascii_case(&selected_path))?;
                         let mut counts: BTreeMap<&str, (crate::domain::TileKind, usize, String)> =
                             BTreeMap::new();
                         for usage in &missing.uses {
@@ -183,18 +287,30 @@ impl MissingAssetsController {
                         Some((missing.path.clone(), tiles))
                     })
                     .unwrap_or_default();
-                if let Some(mw) = handle.upgrade() {
-                    mw.set_active_tile_asset(asset.into());
-                    mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::from(tiles)));
-                }
+                mw.set_active_tile_asset(asset.into());
+                mw.set_active_tile_list(slint::ModelRc::new(slint::VecModel::from(tiles)));
             });
         }
         {
             let app = self.app.clone();
+            let handle = self.weak.clone();
             self.window.on_replace_missing(move |idx| {
+                let Some(mw) = handle.upgrade() else { return };
+                let selected_path = mw
+                    .get_missing_assets()
+                    .row_data(idx as usize)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                if selected_path.is_empty() {
+                    return;
+                }
                 let (missing, rw_path) = {
                     let Ok(app) = app.lock() else { return };
-                    let Some(missing) = app.result.as_ref().and_then(|r| r.missing_assets.get(idx as usize)).cloned() else { return };
+                    let Some(missing) = app
+                        .result
+                        .as_ref()
+                        .and_then(|r| r.missing_assets.iter().find(|m| m.path.eq_ignore_ascii_case(&selected_path)).cloned())
+                    else { return };
                     (missing, app.clean_rw_path())
                 };
                 if !crate::assets::is_safe_for_global_replacement(&missing.path, &missing.uses) {
@@ -274,9 +390,140 @@ impl MissingAssetsController {
                 }
             });
         }
+        {
+            let app = self.app.clone();
+            let handle = self.weak.clone();
+            self.window.on_delete_from_route(move |idx| {
+                let Some(mw) = handle.upgrade() else { return };
+                if idx < 0 {
+                    return;
+                }
+                let selected_path = mw
+                    .get_missing_assets()
+                    .row_data(idx as usize)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                if selected_path.is_empty() {
+                    return;
+                }
+
+                let (route_path, asset_type, uses) = {
+                    let Ok(app) = app.lock() else { return };
+                    let Some(result) = app.result.as_ref() else { return };
+                    let Some(missing) = result
+                        .missing_assets
+                        .iter()
+                        .find(|m| m.path.eq_ignore_ascii_case(&selected_path))
+                    else { return };
+                    let route_path = app
+                        .selected_route
+                        .and_then(|i| app.routes.get(i))
+                        .map(|r| r.path.clone())
+                        .unwrap_or_default();
+                    (route_path, missing.asset_type, missing.uses.clone())
+                };
+                if route_path.as_os_str().is_empty() {
+                    return;
+                }
+                if !matches!(
+                    asset_type,
+                    crate::assets::RouteAssetType::Scenery | crate::assets::RouteAssetType::Loft
+                ) {
+                    return;
+                }
+
+                let confirmed = rfd::MessageDialog::new()
+                    .set_title("Удаление объекта")
+                    .set_description(format!("Удалить объект из маршрута:\n{}", selected_path))
+                    .set_buttons(rfd::MessageButtons::OkCancel)
+                    .show();
+                if confirmed != rfd::MessageDialogResult::Ok {
+                    return;
+                }
+
+                let outcome = match asset_type {
+                    crate::assets::RouteAssetType::Scenery => {
+                        crate::assets::delete_scenery_asset(&route_path, &selected_path, &uses)
+                    }
+                    crate::assets::RouteAssetType::Loft => {
+                        crate::assets::delete_loft_asset(&route_path, &selected_path, &uses)
+                    }
+                    _ => return,
+                };
+                match outcome {
+                    Ok((files, occurrences, untouched)) => {
+                        if let Ok(mut app) = app.lock() {
+                            if let Some(result) = app.result.as_mut() {
+                                result
+                                    .missing_assets
+                                    .retain(|m| !m.path.eq_ignore_ascii_case(&selected_path));
+                            }
+                            app.log_event(
+                                format!(
+                                    "Удален объект {} из {} тайлов ({} вхождений).",
+                                    selected_path, files, occurrences
+                                ),
+                                crate::app::LogLevel::Info,
+                            );
+                            if !untouched.is_empty() {
+                                app.log_event(
+                                    format!(
+                                        "Внимание: в следующих тайлах не удалось удалить вхождения объекта {}: {}",
+                                        selected_path,
+                                        untouched.join(", ")
+                                    ),
+                                    crate::app::LogLevel::Warning,
+                                );
+                            }
+                            let remaining: Vec<String> = app
+                                .result
+                                .as_ref()
+                                .map(|r| {
+                                    r.missing_assets
+                                        .iter()
+                                        .map(|m| m.path.clone())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            app.missing_assets_popup = if remaining.is_empty() {
+                                None
+                            } else {
+                                Some(remaining)
+                            };
+                            crate::schedule_ui_sync();
+                        }
+                    }
+                    Err(error) => {
+                        if let Ok(mut app) = app.lock() {
+                            app.log_event(error, crate::app::LogLevel::Error);
+                            crate::schedule_ui_sync();
+                        }
+                    }
+                }
+
+                let mw2 = match handle.upgrade() {
+                    Some(m) => m,
+                    None => return,
+                };
+                let query = mw2.get_missing_search_query().to_string();
+                if let Ok(app) = app.lock() {
+                    Self::refresh_missing_view(&app, &mw2, &query);
+                }
+                mw2.set_selected_asset(-1);
+            });
+        }
+        {
+            let app = self.app.clone();
+            let handle = self.weak.clone();
+            self.window.on_search_changed(move |query| {
+                let Some(mw) = handle.upgrade() else { return };
+                let Ok(app) = app.lock() else { return };
+                Self::refresh_missing_view(&app, &mw, &query);
+            });
+        }
     }
 
-    pub fn sync_missing_popup(&self, app: &mut crate::app::CheckerApp) {
+    pub fn sync_missing_popup(&self, app: &mut CheckerApp) {
         if app.is_checking()
             || app.result.is_none()
             || app.missing_assets_popup.is_none()
@@ -284,46 +531,18 @@ impl MissingAssetsController {
         {
             return;
         }
-        let Some(result) = app.result.as_ref() else {
+        let Some(mw) = self.weak.upgrade() else {
             return;
         };
-        let missing_assets = &result.missing_assets;
-        let n = missing_assets.len();
-        let mut paths = Vec::with_capacity(n);
-        let mut counts = Vec::with_capacity(n);
-        let mut repairs = Vec::with_capacity(n);
-        let mut corrupted = Vec::with_capacity(n);
-        let mut types = Vec::with_capacity(n);
-        let mut safe = Vec::with_capacity(n);
-        for m in missing_assets {
-            paths.push(slint::SharedString::from(m.path.as_str()));
-            counts.push(m.uses.len() as i32);
-            repairs.push(slint::SharedString::from(
-                m.suggested_repair.as_deref().unwrap_or(""),
-            ));
-            corrupted.push(m.is_corrupted_link);
-            types.push(slint::SharedString::from(
-                crate::assets::RouteAssetType::label(m.asset_type),
-            ));
-            safe.push(crate::assets::is_safe_for_global_replacement(
-                &m.path, &m.uses,
-            ));
-        }
-        let has_repair = repairs.iter().any(|r| !r.is_empty());
-        if let Some(mw) = self.weak.upgrade() {
-            mw.set_missing_assets(slint::ModelRc::new(slint::VecModel::from(paths)));
-            mw.set_missing_counts(slint::ModelRc::new(slint::VecModel::from(counts)));
-            mw.set_missing_suggested_repairs(slint::ModelRc::new(slint::VecModel::from(repairs)));
-            mw.set_missing_corrupted(slint::ModelRc::new(slint::VecModel::from(corrupted)));
-            mw.set_missing_asset_types(slint::ModelRc::new(slint::VecModel::from(types)));
-            mw.set_missing_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
-            mw.set_can_repair_all(has_repair);
-            mw.set_active_tile_list(slint::ModelRc::new(
-                slint::VecModel::<crate::TileEntry>::default(),
-            ));
-            mw.set_active_tile_asset("".into());
-            let _ = mw.show();
-            app.missing_assets_shown = true;
-        }
+        Self::refresh_missing_view(app, &mw, "");
+        // Сброс поля поиска откладываем, чтобы не заблокировать мьютекс приложения.
+        let weak = self.weak.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(mw) = weak.upgrade() {
+                mw.set_missing_search_query("".into());
+            }
+        });
+        let _ = mw.show();
+        app.missing_assets_shown = true;
     }
 }
