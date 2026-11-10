@@ -16,7 +16,7 @@ pub fn delete_scenery_asset(
     route_path: &Path,
     asset_path: &str,
     uses: &[crate::domain::AssetUse],
-) -> Result<(usize, usize), String> {
+) -> Result<(usize, usize, Vec<String>), String> {
     if uses.is_empty() {
         return Err("Для объекта не найдены места использования.".to_owned());
     }
@@ -77,6 +77,7 @@ pub fn delete_scenery_asset(
 
     let mut staged = Vec::new();
     let mut removed_instances = 0usize;
+    let mut untouched = Vec::new();
     for source_file in source_files {
         let is_binary = source_file
             .extension()
@@ -113,6 +114,7 @@ pub fn delete_scenery_asset(
         let loft_count = root.remove_loft_ribbons(provider, product, &blueprint);
         let count = dyn_count + loft_count;
         if count == 0 {
+            untouched.push(source_file.display().to_string());
             continue;
         }
         let bytes =
@@ -177,7 +179,7 @@ pub fn delete_scenery_asset(
     }
     transaction.commit();
     let _ = backups;
-    Ok((replaced_files, removed_instances))
+    Ok((replaced_files, removed_instances, untouched))
 }
 
 /// Удаляет вхождения лофта/дороги из тайлов `Loft Tiles` / `Road Tiles`
@@ -187,7 +189,7 @@ pub fn delete_loft_asset(
     route_path: &Path,
     asset_path: &str,
     uses: &[crate::domain::AssetUse],
-) -> Result<(usize, usize), String> {
+) -> Result<(usize, usize, Vec<String>), String> {
     if uses.is_empty() {
         return Err("Для объекта не найдены места использования.".to_owned());
     }
@@ -240,6 +242,7 @@ pub fn delete_loft_asset(
 
     let mut staged = Vec::new();
     let mut removed_instances = 0usize;
+    let mut untouched = Vec::new();
     for source_file in source_files {
         let is_binary = source_file
             .extension()
@@ -274,6 +277,7 @@ pub fn delete_loft_asset(
         })?;
         let count = root.remove_loft_ribbons(&provider, &product, &blueprint);
         if count == 0 {
+            untouched.push(source_file.display().to_string());
             continue;
         }
         let bytes =
@@ -338,7 +342,7 @@ pub fn delete_loft_asset(
     }
     transaction.commit();
     let _ = backups;
-    Ok((replaced_files, removed_instances))
+    Ok((replaced_files, removed_instances, untouched))
 }
 
 /// Разбирает путь ассета `Provider/Product/....xml` на provider, product и

@@ -304,6 +304,7 @@ impl InventoryController {
                 let mut total_tiles = 0usize;
                 let mut total_occurrences = 0usize;
                 let mut errors = Vec::new();
+                let mut untouched_files = Vec::new();
 
                 if !scenery_uses.is_empty() {
                     match crate::assets::delete_scenery_asset(
@@ -311,9 +312,10 @@ impl InventoryController {
                         &asset.path,
                         &scenery_uses,
                     ) {
-                        Ok((tiles, occurrences)) => {
+                        Ok((tiles, occurrences, untouched)) => {
                             total_tiles += tiles;
                             total_occurrences += occurrences;
+                            untouched_files.extend(untouched);
                         }
                         Err(error) => errors.push(error),
                     }
@@ -324,9 +326,10 @@ impl InventoryController {
                         &asset.path,
                         &loft_road_uses,
                     ) {
-                        Ok((tiles, occurrences)) => {
+                        Ok((tiles, occurrences, untouched)) => {
                             total_tiles += tiles;
                             total_occurrences += occurrences;
+                            untouched_files.extend(untouched);
                         }
                         Err(error) => errors.push(error),
                     }
@@ -341,6 +344,13 @@ impl InventoryController {
                             "Удален объект {} из {} тайлов ({} вхождений)",
                             asset.path, total_tiles, total_occurrences
                         ));
+                        if !untouched_files.is_empty() {
+                            app.log_event(format!(
+                                "Внимание: в следующих тайлах не удалось удалить вхождения объекта {} (вероятно, составной лофт, требуется ручное удаление): {}",
+                                asset.path,
+                                untouched_files.join(", ")
+                            ));
+                        }
                     } else {
                         for error in &errors {
                             app.log_event(error.clone());
