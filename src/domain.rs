@@ -256,7 +256,6 @@ pub(crate) enum TileKind {
     LoftsMaster,
     RoadsMaster,
     RouteProps,
-    Other,
 }
 
 impl RouteFile {
@@ -281,10 +280,8 @@ impl RouteFile {
             TileKind::Road
         } else if path.contains("loft tiles") {
             TileKind::Loft
-        } else if path.contains("scenery") {
-            TileKind::Scenery
         } else {
-            TileKind::Other
+            TileKind::Scenery
         }
     }
 

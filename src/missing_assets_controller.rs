@@ -165,15 +165,14 @@ impl MissingAssetsController {
                             .into_iter()
                             .map(|(tile, (kind, count, file_path))| {
                                 let badge = match kind {
-                                    crate::domain::TileKind::Scenery => "[Сценери]",
-                                    crate::domain::TileKind::Loft => "[Лофт]",
-                                    crate::domain::TileKind::Road => "[Дорога]",
-                                    crate::domain::TileKind::Track => "[Пути]",
-                                    crate::domain::TileKind::TracksMaster
-                                    | crate::domain::TileKind::LoftsMaster
-                                    | crate::domain::TileKind::RoadsMaster => "[Сеть]",
-                                    crate::domain::TileKind::RouteProps => "[Свойства]",
-                                    crate::domain::TileKind::Other => "[Прочее]",
+                                    crate::domain::TileKind::Scenery => "[Scenery]",
+                                    crate::domain::TileKind::Loft => "[Loft]",
+                                    crate::domain::TileKind::Road => "[Road]",
+                                    crate::domain::TileKind::Track => "[Track]",
+                                    crate::domain::TileKind::TracksMaster => "[Tracks.bin]",
+                                    crate::domain::TileKind::LoftsMaster => "[Lofts.bin]",
+                                    crate::domain::TileKind::RoadsMaster => "[Roads.bin]",
+                                    crate::domain::TileKind::RouteProps => "[Properties]",
                                 };
                                 crate::TileEntry {
                                     label: format!("{badge} {tile} ({count})").into(),
