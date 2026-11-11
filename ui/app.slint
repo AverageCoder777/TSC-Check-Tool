@@ -351,13 +351,10 @@ export component MainWindow inherits Window {
                     ListView {
                         for line[i] in log-lines: Text {
                             text: line.text;
-                            font-size: 11px;
+                            font-size: 13px;
                             color: line.color;
                             wrap: TextWrap.word-wrap;
-                            min-height: 16px;
                         }
-                        horizontal-stretch: 1;
-                        vertical-stretch: 1;
                     }
                 }
             }
