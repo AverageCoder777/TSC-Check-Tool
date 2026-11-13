@@ -1101,6 +1101,7 @@ pub struct SerzWriter<W: Write> {
     token_slots: [Option<SerzTokenKey>; 255],
     token_map: HashMap<SerzTokenKey, u8>,
     next_token_slot: usize,
+    force_colon_sep: bool,
 }
 
 pub fn encode_to_vec(root: &SerzNode, preamble: Option<&SerzPreamble>) -> Result<Vec<u8>, String> {
@@ -1119,6 +1120,7 @@ impl<W: Write> SerzWriter<W> {
             token_slots: [EMPTY_TOKEN; 255],
             token_map: HashMap::with_capacity(256),
             next_token_slot: 0,
+            force_colon_sep: false,
         }
     }
 
@@ -1146,7 +1148,11 @@ impl<W: Write> SerzWriter<W> {
     }
 
     fn write_token(&mut self, opcode: u8, name: &str, type_name: &str) -> Result<(), String> {
-        let canonical_name = if name.contains('-')
+        let canonical_name = if name == "e" {
+            String::new()
+        } else if self.force_colon_sep && name.contains('-') {
+            name.replace('-', "::")
+        } else if name.contains('-')
             && (name.starts_with("iBrowseableBlueprint-")
                 || name.starts_with("Localisation-")
                 || name.starts_with("iBlueprintLibrary-")
@@ -1538,4 +1544,238 @@ pub fn run_test(input_file: &str, serz_exe: &str) {
         }
         Err(err) => eprintln!("\n[!] Ошибка чтения: {}", err),
     }
+}
+
+// ============================================================================
+// Отдельные функции для чтения и записи Tracks.bin
+// ============================================================================
+/// Экспорт Tracks.bin в XML с сохранением метаданных (преамбулы, разделителей и d:serz_ver).
+pub fn tracks_bin_to_xml(raw_bytes: &[u8]) -> Result<String, String> {
+    let mut reader = SerzReader::new(raw_bytes);
+    let ast = reader.parse()?;
+
+    let use_colon = reader.string_pool.iter().any(|s| s.contains("::"));
+    let sep_str = if use_colon { "colon" } else { "dash" };
+    let preamble_str = match &reader.preamble {
+        Some(p) => format!("{:02X}{:08X}", p.flag, p.val),
+        None => "none".to_string(),
+    };
+
+    fn render_tracks_node(node: &SerzNode, indent: usize, is_root: bool) -> String {
+        let pad = "\t".repeat(indent);
+        match node {
+            SerzNode::Element {
+                name,
+                id,
+                version,
+                children,
+            } => {
+                let tag = if name.is_empty() {
+                    "e".to_string()
+                } else {
+                    name.replace("::", "-")
+                };
+                let id_attr = if *id > 0 {
+                    format!(" d:id=\"{id}\"")
+                } else {
+                    String::new()
+                };
+                let ver_attr = if *version > 0 {
+                    format!(" d:serz_ver=\"{version}\"")
+                } else {
+                    String::new()
+                };
+
+                let mut out = String::new();
+                if is_root {
+                    out.push_str(&format!(
+                        "{pad}<{tag} xmlns:d=\"http://www.kuju.com/TnT/2003/Delta\" d:version=\"1.0\"{id_attr}{ver_attr}>\n"
+                    ));
+                    for c in children {
+                        out.push_str(&render_tracks_node(c, indent + 1, false));
+                    }
+                    out.push_str(&format!("{pad}</{tag}>\n"));
+                } else if children.is_empty() {
+                    out.push_str(&format!("{pad}<{tag}{id_attr}{ver_attr}/>\n"));
+                } else {
+                    out.push_str(&format!("{pad}<{tag}{id_attr}{ver_attr}>\n"));
+                    for c in children {
+                        out.push_str(&render_tracks_node(c, indent + 1, false));
+                    }
+                    out.push_str(&format!("{pad}</{tag}>\n"));
+                }
+                out
+            }
+            _ => SerzReader::to_xml(node, indent, is_root),
+        }
+    }
+
+    Ok(format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<!-- serz-meta: preamble={preamble_str}; sep={sep_str} -->\n{}",
+        render_tracks_node(&ast, 0, true)
+    ))
+}
+
+/// Обратная компиляция XML от Tracks.bin в бинарный формат.
+pub fn compile_tracks_xml_to_bin(xml: &str) -> Result<Vec<u8>, String> {
+    use xml::reader::{EventReader, XmlEvent};
+
+    // 1. Извлекаем serz-meta (преамбулу и разделитель)
+    let mut preamble: Option<SerzPreamble> = None;
+    let mut use_colon_sep = true; // для Tracks.bin по умолчанию "::"
+
+    if let Some(meta_start) = xml.find("serz-meta:")
+        && let Some(meta_end) = xml[meta_start..].find("-->")
+    {
+        let meta = &xml[meta_start + "serz-meta:".len()..meta_start + meta_end];
+        for part in meta.split(';') {
+            let part = part.trim();
+            if let Some(p_hex) = part.strip_prefix("preamble=")
+                && p_hex != "none"
+                && p_hex.len() == 10
+                && let (Ok(flag), Ok(val)) = (
+                    u8::from_str_radix(&p_hex[0..2], 16),
+                    u32::from_str_radix(&p_hex[2..10], 16),
+                )
+            {
+                preamble = Some(SerzPreamble { flag, val });
+            } else if let Some(sep) = part.strip_prefix("sep=") {
+                use_colon_sep = sep.trim() == "colon";
+            }
+        }
+    }
+
+    // 2. Парсим XML с поддержкой d:serz_ver и <e> -> ""
+    fn parse_tracks_next<I>(iter: &mut I) -> Result<Option<SerzNode>, String>
+    where
+        I: Iterator<Item = Result<XmlEvent, xml::reader::Error>>,
+    {
+        loop {
+            match iter.next() {
+                None => return Ok(None),
+                Some(Err(e)) => return Err(e.to_string()),
+                Some(Ok(XmlEvent::StartElement {
+                    name, attributes, ..
+                })) => {
+                    return parse_tracks_elem(iter, name.local_name.clone(), attributes).map(Some);
+                }
+                Some(Ok(XmlEvent::EndElement { .. })) => return Ok(None),
+                Some(Ok(_)) => continue,
+            }
+        }
+    }
+
+    fn parse_tracks_elem<I>(
+        iter: &mut I,
+        raw_name: String,
+        attrs: Vec<xml::attribute::OwnedAttribute>,
+    ) -> Result<SerzNode, String>
+    where
+        I: Iterator<Item = Result<XmlEvent, xml::reader::Error>>,
+    {
+        let name = if raw_name == "e" {
+            String::new()
+        } else {
+            raw_name
+        };
+
+        let mut id = 0u32;
+        let mut serz_ver = 0u32; // по умолчанию 0, а не 1!
+        let mut type_name: Option<String> = None;
+        let mut alt_encoding: Option<String> = None;
+        let mut num_elements: Option<usize> = None;
+        let mut element_type: Option<String> = None;
+
+        for attr in attrs {
+            match attr.name.local_name.as_str() {
+                "id" => id = attr.value.parse().unwrap_or(0),
+                "serz_ver" => serz_ver = attr.value.parse().unwrap_or(0),
+                "type" => type_name = Some(attr.value),
+                "alt_encoding" => alt_encoding = Some(attr.value),
+                "numElements" => num_elements = attr.value.parse().ok(),
+                "elementType" => element_type = Some(attr.value),
+                _ => {}
+            }
+        }
+
+        if name == "nil" {
+            for event in iter.by_ref() {
+                if let XmlEvent::EndElement { .. } = event.map_err(|e| e.to_string())? {
+                    break;
+                }
+            }
+            return Ok(SerzNode::Nil);
+        }
+
+        if num_elements.is_some() {
+            let mut text = String::new();
+            for event in iter.by_ref() {
+                match event.map_err(|e| e.to_string())? {
+                    XmlEvent::Characters(s) | XmlEvent::Whitespace(s) => text.push_str(&s),
+                    XmlEvent::EndElement { .. } => break,
+                    _ => {}
+                }
+            }
+            return Ok(SerzNode::Array {
+                name,
+                type_name: element_type.unwrap_or_default(),
+                values: text.split_whitespace().map(|s| s.to_string()).collect(),
+            });
+        }
+
+        if let Some(t) = type_name {
+            let mut text = String::new();
+            for event in iter.by_ref() {
+                match event.map_err(|e| e.to_string())? {
+                    XmlEvent::Characters(s) | XmlEvent::Whitespace(s) => text.push_str(&s),
+                    XmlEvent::EndElement { .. } => break,
+                    _ => {}
+                }
+            }
+            if t == "ref" {
+                return Ok(SerzNode::Reference {
+                    name,
+                    target_id: text.trim().parse().unwrap_or(0),
+                });
+            }
+            return Ok(SerzNode::Property {
+                name,
+                type_name: t,
+                value: text.trim().to_string(),
+                alt_encoding,
+            });
+        }
+
+        let mut children = Vec::new();
+        while let Some(child) = parse_tracks_next(iter)? {
+            children.push(child);
+        }
+        Ok(SerzNode::Element {
+            name,
+            id,
+            version: serz_ver,
+            children,
+        })
+    }
+
+    let parser = EventReader::new(xml.as_bytes());
+    let mut iter = parser.into_iter();
+    let root = loop {
+        match iter.next() {
+            None => return Err("no root element".to_string()),
+            Some(Err(e)) => return Err(e.to_string()),
+            Some(Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            })) => {
+                break parse_tracks_elem(&mut iter, name.local_name.clone(), attributes)?;
+            }
+            Some(Ok(_)) => continue,
+        }
+    };
+
+    let mut buffer = Vec::with_capacity(512 * 1024);
+    let mut writer = SerzWriter::new(&mut buffer);
+    writer.force_colon_sep = use_colon_sep;
+    writer.write_node(&root, true, preamble.as_ref())?;
+    Ok(buffer)
 }
