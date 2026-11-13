@@ -89,9 +89,8 @@ pub fn open_and_sync_with_vscode(
                     }
                     let mut validation_reader = crate::serz::SerzReader::new(&bytes);
                     if let Err(e) = validation_reader.parse() {
-                        let err = format!(
-                            "Ошибка сериализации: сгенерированный бинарник поврежден: {e}"
-                        );
+                        let err =
+                            format!("Ошибка сериализации: сгенерированный бинарник поврежден: {e}");
                         show_native_error("Ошибка записи", &err);
                         status_callback(Err(err));
                         return;
@@ -157,8 +156,9 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
 
     if regenerate {
         let xml = if is_tracks_bin(binary_asset_path) {
-            let raw = fs::read(binary_asset_path)
-                .map_err(|e| format!("Не удалось прочитать {}: {e}", binary_asset_path.display()))?;
+            let raw = fs::read(binary_asset_path).map_err(|e| {
+                format!("Не удалось прочитать {}: {e}", binary_asset_path.display())
+            })?;
             crate::serz::tracks_bin_to_xml(&raw)?
         } else {
             read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?
