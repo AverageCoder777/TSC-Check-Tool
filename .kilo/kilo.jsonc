@@ -2,6 +2,7 @@
   "$schema": "https://app.kilo.ai/config.json",
   "snapshot": false,
   "indexing": {
-    "model": "sentence-transformers/multi-qa-mpnet-base-dot-v1"
+    "model": "nvidia/nemotron-3.5-embed-8b:free",
+    "provider": "kilo"
   }
 }

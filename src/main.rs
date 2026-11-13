@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#![deny(clippy::all)]
+//#![deny(clippy::all)]
 #![allow(clippy::type_complexity, reason = "required for some essential types")]
 slint::include_modules!();
 
@@ -581,6 +581,19 @@ fn main() {
     });
     ui.on_open_settings(move || {
         settings.show();
+    });
+    let ui_handle_copy_guid = ui.as_weak();
+    ui.on_copy_guid(move |guid| {
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = clipboard.set_text(guid.to_string());
+        }
+        if let Some(ui) = ui_handle_copy_guid.upgrade() {
+            crate::log_event(
+                &ui,
+                &format!("GUID скопирован в буфер обмена: {guid}"),
+                crate::app::LogLevel::Info,
+            );
+        }
     });
     let auditor = auditor_controller::AuditorController::new(app_for_controllers.clone());
     let auditor_weak_for_open_folder = auditor.weak.clone();

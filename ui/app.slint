@@ -81,6 +81,7 @@ export component MainWindow inherits Window {
     callback open-folder-auditor();
     callback open-settings();
     callback scenario-selected(int);
+    callback copy-guid(string);
     callback dismiss-incomplete-warning-once();
     callback dismiss-incomplete-warning-forever();
     callback show-incomplete-folders-list();
@@ -102,6 +103,13 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                if search-query != "": Text {
+                    text: @tr("{} {}", route-items.length, @tr("найдено"));
+                    font-size: 12px;
+                    color: #999999;
+                    vertical-alignment: center;
+                }
+
                 Button {
                     text: "⚙";
                     min-width: 32px;
@@ -109,7 +117,7 @@ export component MainWindow inherits Window {
                 }
 
                 Button {
-                    text: @tr("Проверка");
+                    text: @tr("Аудит ассетов");
                     clicked => { open-folder-auditor(); }
                 }
             }
@@ -189,12 +197,34 @@ export component MainWindow inherits Window {
                         overflow: TextOverflow.elide;
                     }
 
-                    Text {
-                        text: "GUID: " + selected-route-id;
-                        font-size: 12px;
-                        color: #999999;
-                        wrap: TextWrap.no-wrap;
-                        overflow: TextOverflow.elide;
+                    HorizontalLayout {
+                        spacing: 4px;
+                        alignment: LayoutAlignment.start;
+                        Text {
+                            text: "GUID: " + selected-route-id;
+                            font-size: 12px;
+                            color: #999999;
+                            wrap: TextWrap.no-wrap;
+                            overflow: TextOverflow.elide;
+                        }
+
+                        if selected-route-id != "": Rectangle {
+                            min-width: 20px;
+                            preferred-height: 20px;
+                            border-radius: 4px;
+                            background: copy_guid_touch.pressed ? #3a3a3a : (copy_guid_touch.has-hover ? #2a2a2a : transparent);
+                            copy_guid_touch := TouchArea {
+                                clicked => { root.copy-guid(selected-route-id); }
+                            }
+
+                            Text {
+                                text: "📋";
+                                font-size: 12px;
+                                color: #cccccc;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
 
                     Text {
@@ -333,11 +363,25 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                Button {
+                Rectangle {
                     min-height: 30px;
-                    text: @tr("Показать все объекты");
-                    enabled: has-result;
-                    clicked => { show-inventory(); }
+                    preferred-height: 32px;
+                    border-radius: 4px;
+                    background: !has-result ? #232324 : (show_inv_touch.pressed ? #4a4a4d : (show_inv_touch.has-hover ? #3a3a3a : #2a2a2a));
+                    opacity: !has-result ? 0.45 : 1.0;
+                    show_inv_touch := TouchArea {
+                        enabled: has-result;
+                        clicked => { show-inventory(); }
+                    }
+
+                    Text {
+                        text: @tr("Показать все объекты");
+                        color: !has-result ? #6e6e6e : #ffffff;
+                        font-size: 13px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
 
                 Button {
