@@ -150,6 +150,11 @@ pub(crate) fn log_file() -> PathBuf {
     app_data_dir().join("app.log")
 }
 
+/// Путь к кэшу индекса `.ap`-архивов: `%APPDATA%\TSC Check Tool\ap_index_cache.json`.
+pub(crate) fn ap_index_cache_file() -> PathBuf {
+    app_data_dir().join("ap_index_cache.json")
+}
+
 pub(crate) fn append_asset_replacement_log(
     path: &Path,
     entry: &mut crate::domain::AssetReplacementLogEntry,

@@ -6,7 +6,7 @@ slint::include_modules!();
 use rayon::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -49,18 +49,123 @@ static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
 
+/// Канал запросов на асинхронную загрузку иконок (UI → фоновый поток).
+static ICON_LOAD_TX: OnceLock<mpsc::Sender<PathBuf>> = OnceLock::new();
+/// Канал результатов загрузки иконок (фоновый поток → UI): (путь, сырые байты файла).
+/// Receiver обёрнут в Arc<Mutex> для безопасного хранения в OnceLock (статик).
+static ICON_RESULT_RX: OnceLock<Arc<Mutex<mpsc::Receiver<(PathBuf, Vec<u8>)>>>> = OnceLock::new();
+
 thread_local! {
-    static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
+    static ROUTE_ICON_CACHE: RefCell<LruIconCache> = RefCell::new(LruIconCache::new(250));
+    static IN_FLIGHT_ICONS: RefCell<HashSet<PathBuf>> = RefCell::new(HashSet::new());
     static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = const { RefCell::new(None) };
     static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = const { RefCell::new(None) };
     static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = const { RefCell::new(None) };
     static INCOMPLETE_FOLDERS_WINDOW: RefCell<Option<IncompleteFoldersWindow>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn clear_route_icon_cache() {
-    ROUTE_ICON_CACHE.with(|cache| cache.borrow_mut().clear());
+/// Кэш иконок маршрутов с LRU-вытеснением по лимиту записей.
+struct LruIconCache {
+    cache: HashMap<PathBuf, slint::Image>,
+    order: VecDeque<PathBuf>,
+    limit: usize,
 }
 
+impl LruIconCache {
+    fn new(limit: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(limit),
+            order: VecDeque::with_capacity(limit),
+            limit,
+        }
+    }
+
+    fn get(&mut self, path: &Path) -> Option<slint::Image> {
+        if self.cache.contains_key(path) {
+            // Перемещаем путь в конец порядка (недавно использованный).
+            if let Some(pos) = self.order.iter().position(|p| p == path) {
+                self.order.remove(pos);
+            }
+            self.order.push_back(path.to_path_buf());
+            self.cache.get(path).cloned()
+        } else {
+            None
+        }
+    }
+
+    fn insert(&mut self, path: PathBuf, image: slint::Image) {
+        if self.cache.contains_key(&path) {
+            // Обновляем существующую запись и перемещаем в конец.
+            if let Some(pos) = self.order.iter().position(|p| p == &path) {
+                self.order.remove(pos);
+            }
+            self.order.push_back(path.clone());
+            self.cache.insert(path, image);
+            return;
+        }
+        // Если кэш заполнен — вытесняем самую старую запись (FIFO/LRU).
+        while self.cache.len() >= self.limit {
+            if let Some(oldest) = self.order.pop_front() {
+                self.cache.remove(&oldest);
+            }
+        }
+        self.order.push_back(path.clone());
+        self.cache.insert(path, image);
+    }
+
+    fn contains(&self, path: &Path) -> bool {
+        self.cache.contains_key(path)
+    }
+
+    fn clear(&mut self) {
+        self.cache.clear();
+        self.order.clear();
+    }
+
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.cache.len()
+    }
+}
+
+pub(crate) fn clear_route_icon_cache() {
+    ROUTE_ICON_CACHE.with(|cache| cache.borrow_mut().clear());
+    IN_FLIGHT_ICONS.with(|set| set.borrow_mut().clear());
+}
+
+/// Запускает фоновую загрузку иконки, если она ещё не в кэше и не загружается.
+/// Возвращает `Some(image)` если иконка уже есть в кэше, иначе `None`.
+pub(crate) fn try_get_route_icon(icon_path: &Path) -> Option<slint::Image> {
+    ROUTE_ICON_CACHE.with(|cache| cache.borrow_mut().get(icon_path))
+}
+
+/// Отправляет запрос на асинхронную загрузку иконки в фоновый поток,
+/// если путь ещё не кэшируется и не находится в кэше.
+pub(crate) fn request_route_icon_load(icon_path: &Path) {
+    let in_flight = IN_FLIGHT_ICONS.with(|set| set.borrow().contains(icon_path));
+    let cached = ROUTE_ICON_CACHE.with(|cache| cache.borrow().contains(icon_path));
+    if in_flight || cached {
+        return;
+    }
+    IN_FLIGHT_ICONS.with(|set| set.borrow_mut().insert(icon_path.to_path_buf()));
+    if let Some(tx) = ICON_LOAD_TX.get() {
+        let _ = tx.send(icon_path.to_path_buf());
+    }
+}
+
+/// Декодирует сырые байты изображения в slint::Image (вызывается только в UI-потоке).
+fn decode_icon_bytes(data: &[u8]) -> slint::Image {
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        slint::Image::load_from_data(data, Some("png")).unwrap_or_default()
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        slint::Image::load_from_data(data, Some("jpeg")).unwrap_or_default()
+    } else {
+        slint::Image::default()
+    }
+}
+
+/// Синхронная загрузка иконки (оставлена для совместимости, не вызывается из UI-потока).
+#[allow(dead_code)]
 fn load_route_icon_image(icon_path: &Path) -> slint::Image {
     if let Ok(data) = std::fs::read(icon_path) {
         if data.starts_with(&[0x89, 0x50, 0x4E, 0x47])
@@ -118,9 +223,47 @@ pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app::LogLe
     }
 }
 
+/// Проверяет, безопасно ли удалять директорию: путь должен находиться
+/// внутри `<game_path>/Content/Routes` и не быть самой этой папкой.
+fn validate_delete_path(path: &Path, app: &crate::app::CheckerApp) -> Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err("Путь к удалению пустой.".to_owned());
+    }
+    let routes_dir = PathBuf::from(&app.rw_path).join("Content").join("Routes");
+    let canon_routes = routes_dir
+        .canonicalize()
+        .map_err(|e| format!("Не удалось определить папку маршрутов: {e}"))?;
+    let canon_target = path
+        .canonicalize()
+        .map_err(|e| format!("Не удалось определить целевой путь: {e}"))?;
+    if canon_target == canon_routes {
+        return Err("Удаление корневой папки маршрутов запрещено.".to_owned());
+    }
+    if !canon_target.starts_with(&canon_routes) {
+        return Err(
+            "Целевой путь находится вне папки маршрутов. Удаление запрещено.".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn sync_ui(ui: &MainWindow) {
     if let Ok(mut app) = app_state().lock() {
         app.receive_background_results();
+
+        // === Асинхронная загрузка иконок: дренируем результаты из фонового потока ===
+        if let Some(rx_arc) = ICON_RESULT_RX.get()
+            && let Ok(rx) = rx_arc.lock()
+        {
+            while let Ok((path, data)) = rx.try_recv() {
+                let image = decode_icon_bytes(&data);
+                ROUTE_ICON_CACHE.with(|cache| {
+                    cache.borrow_mut().insert(path.clone(), image);
+                });
+                IN_FLIGHT_ICONS.with(|set| set.borrow_mut().remove(&path));
+            }
+        }
+
         if !app.is_checking()
             && app.result.is_some()
             && app.missing_assets_popup.is_some()
@@ -144,12 +287,10 @@ fn sync_ui(ui: &MainWindow) {
             if app.route_thumbnails_enabled {
                 for route in &app.routes {
                     if let Some(path) = &route.icon_path {
-                        ROUTE_ICON_CACHE.with(|cache| {
-                            let mut cache = cache.borrow_mut();
-                            if !cache.contains_key(path) {
-                                cache.insert(path.clone(), load_route_icon_image(path));
-                            }
-                        });
+                        // Пытаемся получить иконку из кэша; если нет — запрашиваем фоновую загрузку.
+                        if try_get_route_icon(path).is_none() {
+                            request_route_icon_load(path);
+                        }
                     }
                 }
             }
@@ -173,9 +314,7 @@ fn sync_ui(ui: &MainWindow) {
                     let icon = if app.route_thumbnails_enabled {
                         r.icon_path
                             .as_ref()
-                            .and_then(|p| {
-                                ROUTE_ICON_CACHE.with(|cache| cache.borrow().get(p).cloned())
-                            })
+                            .and_then(|p| try_get_route_icon(p))
                             .unwrap_or_default()
                     } else {
                         slint::Image::default()
@@ -447,6 +586,19 @@ fn main() {
         }
     });
 
+    // Фоновый поток асинхронной загрузки иконок маршрутов.
+    let (icon_load_tx, icon_load_rx) = mpsc::channel::<PathBuf>();
+    let (icon_result_tx, icon_result_rx) = mpsc::channel::<(PathBuf, Vec<u8>)>();
+    ICON_LOAD_TX.set(icon_load_tx).ok();
+    ICON_RESULT_RX.set(Arc::new(Mutex::new(icon_result_rx))).ok();
+    thread::spawn(move || {
+        while let Ok(path) = icon_load_rx.recv() {
+            if let Ok(data) = std::fs::read(&path) {
+                let _ = icon_result_tx.send((path, data));
+            }
+        }
+    });
+
     let mut app = app::CheckerApp::default();
     app.log_tx = Some(log_tx);
     let app = Arc::new(Mutex::new(app));
@@ -703,40 +855,53 @@ fn main() {
                         return;
                     }
                     let path = app.incomplete_folders[idx].path.clone();
-                    match std::fs::remove_dir_all(&path) {
+                    match validate_delete_path(&path, &app) {
                         Ok(()) => {
-                            app.incomplete_folders.remove(idx);
-                            app.log_event(
-                                format!("Удалена неполная папка: {}.", path.display()),
-                                crate::app::LogLevel::Info,
-                            );
-                            let items = build_incomplete_folder_items(&app.incomplete_folders);
-                            let total: u64 = app
-                                .incomplete_folders
-                                .iter()
-                                .map(|f| f.total_size_bytes)
-                                .sum();
-                            let count = app.incomplete_folders.len();
-                            let summary = format!(
-                                "Всего: {} {} • общий вес: {}",
-                                count,
-                                folder_count_word(count),
-                                format_size_bytes(total)
-                            );
-                            INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
-                                if let Some(w) = cell2.borrow().as_ref() {
-                                    w.set_folders(slint::ModelRc::new(slint::VecModel::from(
-                                        items,
-                                    )));
-                                    w.set_selected_index(-1);
-                                    w.set_summary(summary.into());
+                            match std::fs::remove_dir_all(&path) {
+                                Ok(()) => {
+                                    app.incomplete_folders.remove(idx);
+                                    app.log_event(
+                                        format!("Удалена неполная папка: {}.", path.display()),
+                                        crate::app::LogLevel::Info,
+                                    );
+                                    let items = build_incomplete_folder_items(&app.incomplete_folders);
+                                    let total: u64 = app
+                                        .incomplete_folders
+                                        .iter()
+                                        .map(|f| f.total_size_bytes)
+                                        .sum();
+                                    let count = app.incomplete_folders.len();
+                                    let summary = format!(
+                                        "Всего: {} {} • общий вес: {}",
+                                        count,
+                                        folder_count_word(count),
+                                        format_size_bytes(total)
+                                    );
+                                    INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
+                                        if let Some(w) = cell2.borrow().as_ref() {
+                                            w.set_folders(slint::ModelRc::new(slint::VecModel::from(
+                                                items,
+                                            )));
+                                            w.set_selected_index(-1);
+                                            w.set_summary(summary.into());
+                                        }
+                                    });
+                                    crate::schedule_ui_sync();
                                 }
-                            });
-                            crate::schedule_ui_sync();
+                                Err(error) => {
+                                    app.log_event(
+                                        format!("Не удалось удалить {}: {error}.", path.display()),
+                                        crate::app::LogLevel::Error,
+                                    );
+                                }
+                            }
                         }
-                        Err(error) => {
+                        Err(e) => {
                             app.log_event(
-                                format!("Не удалось удалить {}: {error}.", path.display()),
+                                format!(
+                                    "Ошибка безопасности при удалении {}: {e}.",
+                                    path.display()
+                                ),
                                 crate::app::LogLevel::Error,
                             );
                         }
@@ -761,8 +926,22 @@ fn main() {
                 if let Ok(mut app) = app.lock() {
                     let mut remaining = Vec::new();
                     for folder in app.incomplete_folders.clone() {
-                        if std::fs::remove_dir_all(&folder.path).is_err() {
-                            remaining.push(folder);
+                        match validate_delete_path(&folder.path, &app) {
+                            Ok(()) => {
+                                if std::fs::remove_dir_all(&folder.path).is_err() {
+                                    remaining.push(folder);
+                                }
+                            }
+                            Err(e) => {
+                                app.log_event(
+                                    format!(
+                                        "Ошибка безопасности при удалении {}: {e}.",
+                                        folder.path.display()
+                                    ),
+                                    crate::app::LogLevel::Error,
+                                );
+                                remaining.push(folder);
+                            }
                         }
                     }
                     let removed = app.incomplete_folders.len() - remaining.len();
