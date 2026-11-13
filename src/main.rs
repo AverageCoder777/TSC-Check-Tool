@@ -252,6 +252,7 @@ fn sync_ui(ui: &MainWindow) {
         app.receive_background_results();
 
         // === Асинхронная загрузка иконок: дренируем результаты из фонового потока ===
+        let mut icons_updated = false;
         if let Some(rx_arc) = ICON_RESULT_RX.get()
             && let Ok(rx) = rx_arc.lock()
         {
@@ -261,6 +262,7 @@ fn sync_ui(ui: &MainWindow) {
                     cache.borrow_mut().insert(path.clone(), image);
                 });
                 IN_FLIGHT_ICONS.with(|set| set.borrow_mut().remove(&path));
+                icons_updated = true;
             }
         }
 
@@ -279,6 +281,7 @@ fn sync_ui(ui: &MainWindow) {
         let search_changed = app.synced_search_query != q;
         app.search_query = q.clone();
         let routes_dirty = search_changed
+            || icons_updated
             || app.synced_routes_revision != app.routes_revision
             || app.synced_ignored_count != app.ignored_route_ids.len()
             || app.synced_incomplete_count != app.incomplete_folders.len()
