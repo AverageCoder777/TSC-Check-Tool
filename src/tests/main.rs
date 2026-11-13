@@ -1,7 +1,7 @@
 use super::{
     ScenarioClueCollection, check_route, decode_xml_text, extract_asset_references,
     extract_scenario_clues, inspect_route_folder, is_skipped_route_scan_directory,
-    parse_route_name, scan_routes, scan_routes_with_ignored,
+    parse_route_name, read_route_name, scan_routes, scan_routes_with_ignored,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -179,7 +179,7 @@ fn does_not_mark_route_incomplete_when_optional_directory_is_missing() {
     let ignored_ids = ["route".to_owned(), "ignored-incomplete".to_owned()]
         .into_iter()
         .collect();
-    let ignored_scan = scan_routes_with_ignored(temp.path(), &ignored_ids, 4).unwrap();
+    let ignored_scan = scan_routes_with_ignored(temp.path(), &ignored_ids, 4, None).unwrap();
     assert!(ignored_scan.incomplete_folders.is_empty());
     assert_eq!(ignored_scan.routes.len(), 2);
 }
@@ -267,7 +267,7 @@ fn includes_scenario_properties_clues_in_incomplete_route_report() {
         )
         .unwrap();
 
-    let report = inspect_route_folder(&route_path, "broken-route")
+    let report = inspect_route_folder(&route_path, "broken-route", None)
         .unwrap()
         .unwrap();
 
@@ -346,7 +346,7 @@ fn incomplete_route_report_contains_route_icon_path() {
     fs::create_dir_all(icon.parent().unwrap()).unwrap();
     fs::write(&icon, []).unwrap();
 
-    let report = inspect_route_folder(&route, "incomplete-route")
+    let report = inspect_route_folder(&route, "incomplete-route", None)
         .unwrap()
         .unwrap();
 
@@ -371,7 +371,7 @@ fn complete_route_scan_includes_route_icon_path() {
         fs::write(path.join("content.bin"), []).unwrap();
     }
 
-    let scan_item = super::scan_route_folder(&route, "route", &HashSet::new()).unwrap();
+    let scan_item = super::scan_route_folder(&route, "route", &HashSet::new(), None).unwrap();
 
     match scan_item {
         super::RouteScanItem::Route(route) => assert_eq!(route.icon_path, Some(icon)),
@@ -428,6 +428,29 @@ fn recognizes_route_structure_and_name_inside_ap_archive() {
     assert_eq!(result.incomplete_folders.len(), 0);
     assert_eq!(result.routes.len(), 1);
     assert_eq!(result.routes[0].name, "Archived Route");
+}
+
+#[test]
+fn reads_route_name_from_ap_archive_with_utf16le_bom() {
+    let temp = tempfile::tempdir().unwrap();
+    let route_path = temp.path().join("utf16le-route");
+    fs::create_dir_all(&route_path).unwrap();
+    let archive_path = route_path.join("MainContent.ap");
+    let archive_file = fs::File::create(&archive_path).unwrap();
+    let mut archive = zip::ZipWriter::new(archive_file);
+    let options = zip::write::SimpleFileOptions::default();
+    archive.start_file("RouteProperties.xml", options).unwrap();
+    let xml = r#"<DisplayName><Localisation-cUserLocalisedString><English>UTF-16 LE Route</English></Localisation-cUserLocalisedString></DisplayName>"#;
+    let mut bytes = vec![0xFF, 0xFE];
+    for ch in xml.encode_utf16() {
+        bytes.extend_from_slice(&ch.to_le_bytes());
+    }
+    archive.write_all(&bytes).unwrap();
+    archive.finish().unwrap();
+
+    let name = read_route_name(&route_path, "utf16le-route", None).unwrap();
+
+    assert_eq!(name, "UTF-16 LE Route");
 }
 
 #[test]

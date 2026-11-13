@@ -1625,6 +1625,77 @@ export component MissingAssetsWindow inherits Window {
     }
 }
 
+export component RoutePropertiesWarningWindow inherits Window {
+    title: @tr("Предупреждение RouteProperties.xml");
+    min-width: 600px;
+    min-height: 300px;
+
+    in property <[string]> warnings: [];
+    callback close-warning();
+
+    VerticalBox {
+        padding: 6px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: @tr("Провайдеры/продукты, не объявленные в RouteProperties.xml");
+                font-size: 16px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                background: #3b1d24;
+                border-radius: 4px;
+                min-width: 32px;
+                height: 22px;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    Text {
+                        text: warnings.length;
+                        color: #fbbf24;
+                        font-size: 11px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            ListView {
+                for warning[i] in warnings: Rectangle {
+                    background: row_touch.has-hover ? #222326 : transparent;
+                    border-radius: 3px;
+                    row_touch := TouchArea { clicked => { } }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+                        Text {
+                            text: warning;
+                            font-size: 12px;
+                            color: #e2e8f0;
+                        }
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: @tr("Закрыть");
+                clicked => { root.close-warning(); }
+            }
+        }
+    }
+}
+
 export component ApAssetPickerWindow inherits Window {
     title: @tr("Выбор объекта из архива");
     min-width: 620px;

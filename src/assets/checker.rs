@@ -636,11 +636,37 @@ where
     conversion_errors.extend(umlaut_errors);
     conversion_errors.sort();
 
-    // Проверки подключённых в RouteProperties.xml продуктов здесь нет и не
-    // должно быть: новый провайдер с продуктом добавляют как раз для замены
-    // ассетов — в кастомном бинарнике ссылки ведут на геометрию из другой
-    // папки, и её продукт подключают к маршруту, даже если прямых ссылок на
-    // него в файлах маршрута нет.
+    // Проверяем, что все провайдеры/продукты, используемые на маршруте,
+    // объявлены в RouteProperties.xml внутри блоков <RBlueprintSetPreLoad>.
+    let mut route_properties_warnings: Vec<String> = Vec::new();
+    if let Ok(route_properties_text) = read_route_properties_text(route_path) {
+        let declared_pairs: HashSet<(String, String)> = parse_preload_pairs(&route_properties_text)
+            .into_iter()
+            .map(|(p, pr)| (p.to_lowercase(), pr.to_lowercase()))
+            .collect();
+        let mut used_pairs: HashSet<(String, String)> = HashSet::new();
+        for relative_asset in asset_uses.keys() {
+            let parts: Vec<&str> = relative_asset.split('/').collect();
+            if parts.len() >= 2 {
+                let provider = parts[0].to_owned();
+                let product = parts[1].to_owned();
+                if !provider.is_empty() && !product.is_empty() {
+                    used_pairs.insert((provider, product));
+                }
+            }
+        }
+        let mut missing: Vec<(String, String)> = used_pairs
+            .into_iter()
+            .filter(|pair| !declared_pairs.contains(pair))
+            .collect();
+        missing.sort();
+        for (provider, product) in missing {
+            route_properties_warnings.push(format!(
+                "Провайдер/продукт «{} / {})» используется на маршруте, но не подключён в RouteProperties.xml (<RBlueprintSetPreLoad>).",
+                provider, product
+            ));
+        }
+    }
 
     let (missing_assets, asset_inventory) = resolve_missing_and_corrupted(
         asset_uses,
@@ -656,10 +682,145 @@ where
         umlaut_assets,
         conversion_errors,
         structure_issues,
+        route_properties_warnings,
     })
 }
 
 pub type ApCache = HashMap<PathBuf, HashSet<String>>;
+
+/// Проверяет, есть ли RouteProperties.xml либо на диске, либо внутри
+/// любого .ap-архива в папке маршрута.
+fn route_properties_exists(route_path: &Path) -> bool {
+    if route_path.join("RouteProperties.xml").is_file() {
+        return true;
+    }
+    let Ok(entries) = fs::read_dir(route_path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
+        {
+            continue;
+        }
+        let Ok(file) = fs::File::open(&path) else {
+            continue;
+        };
+        let Ok(mut archive) = ZipArchive::new(file) else {
+            continue;
+        };
+        for index in 0..archive.len() {
+            let Ok(member) = archive.by_index(index) else {
+                continue;
+            };
+            if !member.is_file() {
+                continue;
+            }
+            let Ok(raw_name) = member.name() else {
+                continue;
+            };
+            let base = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
+            if base.eq_ignore_ascii_case("RouteProperties.xml") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Читает RouteProperties.xml с диска или из .ap-архива, декодируя
+/// UTF-8/UTF-16 (с BOM) через crate::routes::decode_xml_bytes.
+fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let properties_path = route_path.join("RouteProperties.xml");
+    if let Ok(data) = fs::read(&properties_path) {
+        return Ok(crate::routes::decode_xml_bytes(&data));
+    }
+    let entries = fs::read_dir(route_path).map_err(|error| {
+        format!("Не удалось прочитать {}: {error}", route_path.display())
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!("Ошибка чтения {}: {error}", route_path.display())
+        })?;
+        if !entry
+            .path()
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
+        {
+            continue;
+        }
+        let archive_path = entry.path();
+        let file = match fs::File::open(&archive_path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let mut archive = match ZipArchive::new(file) {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
+        for index in 0..archive.len() {
+            let mut member = match archive.by_index(index) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !member.is_file() {
+                continue;
+            }
+            let raw_name = match member.name() {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            let base = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
+            if !base.eq_ignore_ascii_case("RouteProperties.xml") {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            if member.read_to_end(&mut bytes).is_err() {
+                continue;
+            }
+            return Ok(crate::routes::decode_xml_bytes(&bytes));
+        }
+    }
+    Err("RouteProperties.xml не найден".to_owned())
+}
+
+/// Извлекает пары (Provider, Product) из блоков
+/// `<RBlueprintSetPreLoad>...</RBlueprintSetPreLoad>`.
+///
+/// Внутри каждого блока PreLoad ищутся все `<Provider>…</Provider>` и
+/// `<Product>…</Product>` и сопоставляются по порядку появления, чтобы не
+/// зависеть от имени промежуточного контейнера (например, `iBlueprintSetID`).
+fn parse_preload_pairs(xml: &str) -> HashSet<(String, String)> {
+    let mut pairs = HashSet::new();
+    let preload_re = regex::Regex::new(r"(?is)<RBlueprintSetPreLoad\b[^>]*>(.*?)</RBlueprintSetPreLoad\s*>")
+        .expect("valid regex");
+    let provider_re = regex::Regex::new(r"(?is)<Provider\b[^>]*>(.*?)</Provider\s*>")
+        .expect("valid regex");
+    let product_re = regex::Regex::new(r"(?is)<Product\b[^>]*>(.*?)</Product\s*>")
+        .expect("valid regex");
+    for preload_cap in preload_re.captures_iter(xml) {
+        let block = preload_cap.get(1).map(|c| c.as_str()).unwrap_or("");
+        let providers: Vec<String> = provider_re
+            .captures_iter(block)
+            .filter_map(|c| c.get(1))
+            .map(|m| crate::translit::decode_xml_text(m.as_str().trim()))
+            .collect();
+        let products: Vec<String> = product_re
+            .captures_iter(block)
+            .filter_map(|c| c.get(1))
+            .map(|m| crate::translit::decode_xml_text(m.as_str().trim()))
+            .collect();
+        for (p, pr) in providers.into_iter().zip(products) {
+            if !p.is_empty() && !pr.is_empty() {
+                pairs.insert((p, pr));
+            }
+        }
+    }
+    pairs
+}
 
 pub(crate) fn validate_route_structure(
     route_path: &Path,
@@ -667,7 +828,7 @@ pub(crate) fn validate_route_structure(
     files: &[PathBuf],
 ) -> Vec<String> {
     let mut issues = Vec::new();
-    if !route_path.join("RouteProperties.xml").is_file() {
+    if !route_properties_exists(route_path) {
         issues.push("не найден RouteProperties.xml".to_owned());
     }
     if !assets_path.is_dir() {

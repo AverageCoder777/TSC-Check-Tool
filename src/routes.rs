@@ -1,8 +1,10 @@
 //! crate::domain::Route discovery, structure reports, names, icons, and route-scan caching.
 
 use super::*;
+use crate::app::{LogEntry, LogLevel};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
+use std::sync::mpsc;
 use walkdir::WalkDir;
 
 /// Реальные файлы в .ap сжимаются в десятки раз: в проверенных архивах максимум
@@ -122,6 +124,7 @@ pub(crate) fn scan_routes_with_cache(
     ignored_route_ids: &HashSet<String>,
     allow_cache: bool,
     max_threads: usize,
+    log: Option<&RouteScanLog>,
 ) -> Result<crate::domain::RouteScanOutcome, String> {
     let canonical_game_path = clean_canonical_path(rw_path)?;
     let routes_path = canonical_game_path.join("Content").join("Routes");
@@ -166,7 +169,7 @@ pub(crate) fn scan_routes_with_cache(
         }
     }
 
-    let result = scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads)?;
+    let result = scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads, log)?;
     let cache_path = &cache_file;
     let cache = crate::domain::RouteScanCache {
         icon_scan_version: 6,
@@ -213,13 +216,14 @@ pub(crate) fn scan_routes_with_cache(
 
 #[cfg(test)]
 pub(crate) fn scan_routes(rw_path: &Path) -> Result<crate::domain::RouteScanResult, String> {
-    scan_routes_with_ignored(rw_path, &HashSet::new(), 4)
+    scan_routes_with_ignored(rw_path, &HashSet::new(), 4, None)
 }
 
 pub(crate) fn scan_routes_with_ignored(
     rw_path: &Path,
     ignored_route_ids: &HashSet<String>,
     max_threads: usize,
+    log: Option<&RouteScanLog>,
 ) -> Result<crate::domain::RouteScanResult, String> {
     let routes_path = rw_path.join("Content").join("Routes");
     let entries = fs::read_dir(&routes_path)
@@ -248,7 +252,7 @@ pub(crate) fn scan_routes_with_ignored(
     let scan_items = pool.install(|| {
         route_folders
             .par_iter()
-            .map(|(id, path)| scan_route_folder(path, id, ignored_route_ids))
+            .map(|(id, path)| scan_route_folder(path, id, ignored_route_ids, log))
             .collect::<Result<Vec<_>, _>>()
     })?;
 
@@ -282,9 +286,10 @@ pub(crate) fn scan_route_folder(
     path: &Path,
     id: &str,
     ignored_route_ids: &HashSet<String>,
+    log: Option<&RouteScanLog>,
 ) -> Result<crate::domain::RouteScanItem, String> {
     if ignored_route_ids.contains(id) {
-        let name = read_route_name(path, id)?;
+        let name = read_route_name(path, id, log)?;
         return Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
             id: id.to_owned(),
             name,
@@ -292,10 +297,10 @@ pub(crate) fn scan_route_folder(
             icon_path: find_route_icon(path)?,
         }));
     }
-    if let Some(report) = inspect_route_folder(path, id)? {
+    if let Some(report) = inspect_route_folder(path, id, log)? {
         Ok(crate::domain::RouteScanItem::Incomplete(report))
     } else {
-        let name = read_route_name(path, id)?;
+        let name = read_route_name(path, id, log)?;
         Ok(crate::domain::RouteScanItem::Route(crate::domain::Route {
             id: id.to_owned(),
             name,
@@ -308,6 +313,7 @@ pub(crate) fn scan_route_folder(
 pub(crate) fn inspect_route_folder(
     path: &Path,
     id: &str,
+    log: Option<&RouteScanLog>,
 ) -> Result<Option<crate::domain::IncompleteRouteFolder>, String> {
     let children: Vec<(PathBuf, String, bool)> = fs::read_dir(path)
         .map_err(|error| format!("Не удалось прочитать {}: {error}", path.display()))?
@@ -468,8 +474,11 @@ pub(crate) fn inspect_route_folder(
                         && member_name.to_lowercase().ends_with(".xml")))
                 && !is_suspicious_archive_member(member.size(), member.compressed_size())
             {
-                let mut contents = String::new();
-                if member.read_to_string(&mut contents).is_ok() {
+                let mut bytes = Vec::new();
+                if member.read_to_end(&mut bytes).is_err() {
+                    log_route_warning(log, child_path, "ошибка чтения элемента архива");
+                } else {
+                    let contents = decode_xml_bytes(&bytes);
                     archived_route_name = archived_route_name
                         .or_else(|| parse_route_name(&contents))
                         .or_else(|| parse_route_name_tag(&contents));
@@ -935,7 +944,61 @@ pub(crate) fn directory_contains_files(path: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
-pub(crate) fn read_route_name(route_path: &Path, fallback: &str) -> Result<String, String> {
+/// Канал предупреждений сканирования маршрутов (о нечитаемом
+/// RouteProperties.xml внутри .ap-архива и подобном).
+type RouteScanLog = mpsc::Sender<LogEntry>;
+
+/// Декодирует сырые байты XML-файла в `String`.
+///
+/// Поддерживает UTF-8 с BOM (`EF BB BF`), UTF-16 LE с BOM (`FF FE`),
+/// UTF-16 BE с BOM (`FE FF`) и обычный UTF-8. Недопустимые последовательности
+/// заменяются символом замены, поэтому декодирование не завершается ошибкой.
+pub(crate) fn decode_xml_bytes(data: &[u8]) -> String {
+    if data.len() >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+        return String::from_utf8_lossy(&data[3..]).into_owned();
+    }
+    if data.len() >= 2 {
+        if data[0] == 0xFF && data[1] == 0xFE {
+            let units: Vec<u16> = data[2..]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+            return String::from_utf16_lossy(&units);
+        }
+        if data[0] == 0xFE && data[1] == 0xFF {
+            let units: Vec<u16> = data[2..]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .collect();
+            return String::from_utf16_lossy(&units);
+        }
+    }
+    String::from_utf8_lossy(data).into_owned()
+}
+
+/// Пишет предупреждение о нечитаемом или нераспознаваемом
+/// RouteProperties.xml из .ap-архива в системный лог.
+fn log_route_warning(log: Option<&RouteScanLog>, archive_path: &Path, reason: &str) {
+    if let Some(tx) = log {
+        let _ = tx.send(LogEntry {
+            text: format!(
+                "Не удалось прочитать RouteProperties.xml из {}: {reason}",
+                archive_path.display()
+            ),
+            level: LogLevel::Warning,
+        });
+    }
+}
+
+pub(crate) fn read_route_name(
+    route_path: &Path,
+    fallback: &str,
+    log: Option<&RouteScanLog>,
+) -> Result<String, String> {
     let properties_path = route_path.join("RouteProperties.xml");
     let data = match fs::read(&properties_path) {
         Ok(data) => data,
@@ -953,16 +1016,34 @@ pub(crate) fn read_route_name(route_path: &Path, fallback: &str) -> Result<Strin
                 {
                     continue;
                 }
-                let file = fs::File::open(entry.path()).map_err(|error| {
-                    format!("Не удалось открыть {}: {error}", entry.path().display())
-                })?;
-                let mut archive = ZipArchive::new(file).map_err(|error| {
-                    format!("Не удалось прочитать {}: {error}", entry.path().display())
-                })?;
+                let archive_path = entry.path();
+                let file = match fs::File::open(&archive_path) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        log_route_warning(
+                            log,
+                            &archive_path,
+                            &format!("не удалось открыть архив: {error}"),
+                        );
+                        continue;
+                    }
+                };
+                let mut archive = match ZipArchive::new(file) {
+                    Ok(archive) => archive,
+                    Err(error) => {
+                        log_route_warning(
+                            log,
+                            &archive_path,
+                            &format!("не удалось прочитать архив: {error}"),
+                        );
+                        continue;
+                    }
+                };
                 for index in 0..archive.len() {
-                    let mut member = archive.by_index(index).map_err(|error| {
-                        format!("Ошибка в архиве {}: {error}", entry.path().display())
-                    })?;
+                    let mut member = match archive.by_index(index) {
+                        Ok(member) => member,
+                        Err(_) => continue,
+                    };
                     let raw_name = match member.name() {
                         Ok(name) => name,
                         Err(_) => continue,
@@ -974,15 +1055,22 @@ pub(crate) fn read_route_name(route_path: &Path, fallback: &str) -> Result<Strin
                     {
                         continue;
                     }
-                    let mut contents = String::new();
-                    member.read_to_string(&mut contents).map_err(|error| {
-                        format!("Не удалось прочитать RouteProperties.xml из .ap: {error}")
-                    })?;
+                    let mut bytes = Vec::new();
+                    if member.read_to_end(&mut bytes).is_err() {
+                        log_route_warning(log, &archive_path, "ошибка чтения элемента архива");
+                        continue;
+                    }
+                    let contents = decode_xml_bytes(&bytes);
                     if let Some(name) =
                         parse_route_name(&contents).or_else(|| parse_route_name_tag(&contents))
                     {
                         return Ok(name);
                     }
+                    log_route_warning(
+                        log,
+                        &archive_path,
+                        "в RouteProperties.xml не найден тег RouteName",
+                    );
                 }
             }
             return Ok(format!("Без названия — {fallback}"));
@@ -995,7 +1083,7 @@ pub(crate) fn read_route_name(route_path: &Path, fallback: &str) -> Result<Strin
         }
     };
 
-    let text = String::from_utf8_lossy(&data);
+    let text = decode_xml_bytes(&data);
     let Some(name) = parse_route_name(&text) else {
         return Ok(format!("Без названия — {fallback}"));
     };

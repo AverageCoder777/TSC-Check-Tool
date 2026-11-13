@@ -45,6 +45,9 @@ pub(crate) struct CheckResult {
     pub(crate) umlaut_assets: Vec<UmlautAsset>,
     pub(crate) conversion_errors: Vec<String>,
     pub(crate) structure_issues: Vec<String>,
+    /// Провайдеры/продукты, используемые на маршруте, но не объявленные
+    /// в RouteProperties.xml (<RBlueprintSetPreLoad>).
+    pub(crate) route_properties_warnings: Vec<String>,
 }
 
 #[derive(Clone, Debug)]

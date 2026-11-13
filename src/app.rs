@@ -102,6 +102,7 @@ pub(crate) struct CheckerApp {
     inventory_scan: Option<Receiver<Result<InventoryScanOutcome, String>>>,
     pub(crate) missing_assets_popup: Option<Vec<String>>,
     pub(crate) missing_assets_shown: bool,
+    pub(crate) route_properties_warnings_shown: bool,
     pub(crate) inventory_refresh_pending: bool,
     pub(crate) inventory_replacement_pending_check: bool,
     pub(crate) synced_search_query: String,
@@ -181,6 +182,7 @@ impl Default for CheckerApp {
             inventory_scan: None,
             missing_assets_popup: None,
             missing_assets_shown: false,
+            route_properties_warnings_shown: false,
             inventory_refresh_pending: false,
             inventory_replacement_pending_check: false,
             synced_search_query: String::new(),
@@ -397,12 +399,14 @@ impl CheckerApp {
             self.serz_process_limit,
             self.route_scan_on_hdd,
         );
+        let log_tx = self.log_tx.clone();
         thread::spawn(move || {
             let result = crate::routes::scan_routes_with_cache(
                 &root,
                 &ignored_route_ids,
                 allow_cache,
                 max_threads,
+                log_tx.as_ref(),
             );
             let _ = tx.send(result);
             crate::schedule_ui_sync();
@@ -428,6 +432,7 @@ impl CheckerApp {
         self.result = None;
         self.missing_assets_popup = None;
         self.missing_assets_shown = false;
+        self.route_properties_warnings_shown = false;
         self.progress_pending = None;
         self.last_progress_log = None;
         self.has_ephemeral_progress = false;

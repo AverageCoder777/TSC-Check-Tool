@@ -62,6 +62,7 @@ thread_local! {
     static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = const { RefCell::new(None) };
     static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = const { RefCell::new(None) };
     static INCOMPLETE_FOLDERS_WINDOW: RefCell<Option<IncompleteFoldersWindow>> = const { RefCell::new(None) };
+    static ROUTE_PROPERTIES_WARNING_WINDOW: RefCell<Option<RoutePropertiesWarningWindow>> = const { RefCell::new(None) };
 }
 
 /// Кэш иконок маршрутов с LRU-вытеснением по лимиту записей.
@@ -276,6 +277,39 @@ fn sync_ui(ui: &MainWindow) {
                     c.sync_missing_popup(&mut app);
                 }
             });
+        }
+
+        // Окно предупреждений RouteProperties.xml (провайдеры/продукты не подключены в <RBlueprintSetPreLoad>).
+        if !app.is_checking()
+            && app.result.is_some()
+            && app.result.as_ref().map(|r| !r.route_properties_warnings.is_empty()).unwrap_or(false)
+            && !app.route_properties_warnings_shown
+        {
+            ROUTE_PROPERTIES_WARNING_WINDOW.with(|cell| {
+                let mut cell = cell.borrow_mut();
+                if cell.is_none() {
+                    *cell = Some(RoutePropertiesWarningWindow::new().unwrap());
+                }
+                if let Some(window) = cell.as_mut() {
+                    let warnings: Vec<slint::SharedString> = app
+                        .result
+                        .as_ref()
+                        .unwrap()
+                        .route_properties_warnings
+                        .iter()
+                        .map(|s| slint::SharedString::from(s.as_str()))
+                        .collect();
+                    window.set_warnings(slint::ModelRc::new(slint::VecModel::from(warnings)));
+                    let weak = window.as_weak();
+                    window.on_close_warning(move || {
+                        if let Some(w) = weak.upgrade() {
+                            let _ = w.hide();
+                        }
+                    });
+                    window.show().unwrap();
+                }
+            });
+            app.route_properties_warnings_shown = true;
         }
         let q = ui.get_search_query().to_string();
         let search_changed = app.synced_search_query != q;
