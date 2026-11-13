@@ -213,7 +213,7 @@ export component MainWindow inherits Window {
                 font-size: 14px;
             }
 
-            HorizontalBox {
+            if scenario-items.length > 0 && selected-route >= 0: HorizontalBox {
                 min-height: 32px;
                 preferred-height: 32px;
                 padding-top: 4px;
@@ -244,7 +244,31 @@ export component MainWindow inherits Window {
                 border-radius: 4px;
                 background: #181818;
                 clip: true;
-                ListView {
+
+                if scenario-items.length == 0 || selected-route < 0: VerticalBox {
+                    vertical-stretch: 1;
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 8px;
+                    Text {
+                        text: @tr("У этого маршрута нет сценариев");
+                        color: #a0a0a0;
+                        font-size: 15px;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: @tr("В папке Scenarios выбранного маршрута не найдено ни одного сценария");
+                        color: #707070;
+                        font-size: 12px;
+                        wrap: TextWrap.word-wrap;
+                        horizontal-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                if scenario-items.length > 0 && selected-route >= 0: ListView {
                     vertical-stretch: 1;
                     horizontal-stretch: 1;
                     for s[i] in scenario-items: Rectangle {
