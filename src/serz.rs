@@ -1150,14 +1150,13 @@ impl<W: Write> SerzWriter<W> {
     fn write_token(&mut self, opcode: u8, name: &str, type_name: &str) -> Result<(), String> {
         let canonical_name = if name == "e" {
             String::new()
-        } else if self.force_colon_sep && name.contains('-') {
-            name.replace('-', "::")
         } else if name.contains('-')
-            && (name.starts_with("iBrowseableBlueprint-")
-                || name.starts_with("Localisation-")
-                || name.starts_with("iBlueprintLibrary-")
-                || name.starts_with("cSceneryRenderBlueprint-")
-                || name.starts_with("cControl-"))
+            && (self.force_colon_sep
+                || (name.starts_with("iBrowseableBlueprint-")
+                    || name.starts_with("Localisation-")
+                    || name.starts_with("iBlueprintLibrary-")
+                    || name.starts_with("cSceneryRenderBlueprint-")
+                    || name.starts_with("cControl-")))
         {
             name.replace('-', "::")
         } else {
