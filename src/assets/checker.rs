@@ -644,13 +644,19 @@ where
             .into_iter()
             .map(|(p, pr)| (p.to_lowercase(), pr.to_lowercase()))
             .collect();
+        // Пары, которые всегда загружены симулятором и не требуют объявления
+        // в RouteProperties.xml.
+        const SKIPPED_PROVIDER_PRODUCT: &[( &str, &str)] = &[("kuju", "railsimulatorcore")];
         let mut used_pairs: HashSet<(String, String)> = HashSet::new();
         for relative_asset in asset_uses.keys() {
             let parts: Vec<&str> = relative_asset.split('/').collect();
             if parts.len() >= 2 {
-                let provider = parts[0].to_owned();
-                let product = parts[1].to_owned();
-                if !provider.is_empty() && !product.is_empty() {
+                let provider = parts[0].to_owned().to_lowercase();
+                let product = parts[1].to_owned().to_lowercase();
+                if !provider.is_empty()
+                    && !product.is_empty()
+                    && !SKIPPED_PROVIDER_PRODUCT.contains(&(provider.as_str(), product.as_str()))
+                {
                     used_pairs.insert((provider, product));
                 }
             }

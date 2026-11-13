@@ -502,7 +502,7 @@ impl CheckerApp {
     self.pop_ephemeral_progress();
     let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
     self.check_log.push_front(LogEntry {
-        text: format!("[{}] {}\n", timestamp, pending),
+        text: format!("[{}] {}", timestamp, pending),
         level: LogLevel::Info,
     });
     if self.check_log.len() > MAX_LOG_ENTRIES {
@@ -516,7 +516,7 @@ impl CheckerApp {
         let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         self.status = message.clone();
         let new_entry = LogEntry {
-            text: format!("[{}] {}\n", timestamp, message),
+            text: format!("[{}] {}", timestamp, message),
             level,
         };
         if let Some(tx) = &self.log_tx {
@@ -769,7 +769,7 @@ impl CheckerApp {
                             0,
                             LogEntry {
                                 text: format!(
-                                    "[{}] {}\n",
+                                    "[{}] {}",
                                     chrono::Local::now().format("%H:%M:%S"),
                                     status
                                 ),
@@ -823,7 +823,7 @@ impl CheckerApp {
                                     0,
                                     LogEntry {
                                         text: format!(
-                                            "[{}] Проблема структуры: {issue}\n",
+                                            "[{}] Проблема структуры: {issue}",
                                             timestamp
                                         ),
                                         level: LogLevel::Warning,
@@ -834,7 +834,7 @@ impl CheckerApp {
                                 self.check_log.insert(
                                     0,
                                     LogEntry {
-                                        text: format!("[{}] Ошибка Serz/XML: {error}\n", timestamp),
+                                        text: format!("[{}] Ошибка Serz/XML: {error}", timestamp),
                                         level: LogLevel::Error,
                                     },
                                 );
