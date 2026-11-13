@@ -241,9 +241,7 @@ fn validate_delete_path(path: &Path, app: &crate::app::CheckerApp) -> Result<(),
         return Err("Удаление корневой папки маршрутов запрещено.".to_owned());
     }
     if !canon_target.starts_with(&canon_routes) {
-        return Err(
-            "Целевой путь находится вне папки маршрутов. Удаление запрещено.".to_owned(),
-        );
+        return Err("Целевой путь находится вне папки маршрутов. Удаление запрещено.".to_owned());
     }
     Ok(())
 }
@@ -282,7 +280,11 @@ fn sync_ui(ui: &MainWindow) {
         // Окно предупреждений RouteProperties.xml (провайдеры/продукты не подключены в <RBlueprintSetPreLoad>).
         if !app.is_checking()
             && app.result.is_some()
-            && app.result.as_ref().map(|r| !r.route_properties_warnings.is_empty()).unwrap_or(false)
+            && app
+                .result
+                .as_ref()
+                .map(|r| !r.route_properties_warnings.is_empty())
+                .unwrap_or(false)
             && !app.route_properties_warnings_shown
         {
             ROUTE_PROPERTIES_WARNING_WINDOW.with(|cell| {
@@ -627,7 +629,9 @@ fn main() {
     let (icon_load_tx, icon_load_rx) = mpsc::channel::<PathBuf>();
     let (icon_result_tx, icon_result_rx) = mpsc::channel::<(PathBuf, Vec<u8>)>();
     ICON_LOAD_TX.set(icon_load_tx).ok();
-    ICON_RESULT_RX.set(Arc::new(Mutex::new(icon_result_rx))).ok();
+    ICON_RESULT_RX
+        .set(Arc::new(Mutex::new(icon_result_rx)))
+        .ok();
     thread::spawn(move || {
         while let Ok(path) = icon_load_rx.recv() {
             if let Ok(data) = std::fs::read(&path) {
@@ -759,16 +763,19 @@ fn main() {
                 .and_then(|idx| app.routes.get(idx))
                 .map(|route| route.path.clone())
         };
-        let Some(path) = path else {
-            return;
-        };
-        windows::open_in_file_explorer(&path);
-        if let Some(ui) = ui_weak_open.upgrade() {
-            crate::log_event(
-                &ui,
-                &format!("Открыта папка в проводнике: {}.", path.display()),
-                crate::app::LogLevel::Info,
-            );
+        #[cfg(windows)]
+        {
+            let Some(path) = path else {
+                return;
+            };
+            windows::open_in_file_explorer(&path);
+            if let Some(ui) = ui_weak_open.upgrade() {
+                crate::log_event(
+                    &ui,
+                    &format!("Открыта папка в проводнике: {}.", path.display()),
+                    crate::app::LogLevel::Info,
+                );
+            }
         }
     });
     let app = app_for_controllers.clone();
@@ -893,46 +900,44 @@ fn main() {
                     }
                     let path = app.incomplete_folders[idx].path.clone();
                     match validate_delete_path(&path, &app) {
-                        Ok(()) => {
-                            match std::fs::remove_dir_all(&path) {
-                                Ok(()) => {
-                                    app.incomplete_folders.remove(idx);
-                                    app.log_event(
-                                        format!("Удалена неполная папка: {}.", path.display()),
-                                        crate::app::LogLevel::Info,
-                                    );
-                                    let items = build_incomplete_folder_items(&app.incomplete_folders);
-                                    let total: u64 = app
-                                        .incomplete_folders
-                                        .iter()
-                                        .map(|f| f.total_size_bytes)
-                                        .sum();
-                                    let count = app.incomplete_folders.len();
-                                    let summary = format!(
-                                        "Всего: {} {} • общий вес: {}",
-                                        count,
-                                        folder_count_word(count),
-                                        format_size_bytes(total)
-                                    );
-                                    INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
-                                        if let Some(w) = cell2.borrow().as_ref() {
-                                            w.set_folders(slint::ModelRc::new(slint::VecModel::from(
-                                                items,
-                                            )));
-                                            w.set_selected_index(-1);
-                                            w.set_summary(summary.into());
-                                        }
-                                    });
-                                    crate::schedule_ui_sync();
-                                }
-                                Err(error) => {
-                                    app.log_event(
-                                        format!("Не удалось удалить {}: {error}.", path.display()),
-                                        crate::app::LogLevel::Error,
-                                    );
-                                }
+                        Ok(()) => match std::fs::remove_dir_all(&path) {
+                            Ok(()) => {
+                                app.incomplete_folders.remove(idx);
+                                app.log_event(
+                                    format!("Удалена неполная папка: {}.", path.display()),
+                                    crate::app::LogLevel::Info,
+                                );
+                                let items = build_incomplete_folder_items(&app.incomplete_folders);
+                                let total: u64 = app
+                                    .incomplete_folders
+                                    .iter()
+                                    .map(|f| f.total_size_bytes)
+                                    .sum();
+                                let count = app.incomplete_folders.len();
+                                let summary = format!(
+                                    "Всего: {} {} • общий вес: {}",
+                                    count,
+                                    folder_count_word(count),
+                                    format_size_bytes(total)
+                                );
+                                INCOMPLETE_FOLDERS_WINDOW.with(|cell2| {
+                                    if let Some(w) = cell2.borrow().as_ref() {
+                                        w.set_folders(slint::ModelRc::new(slint::VecModel::from(
+                                            items,
+                                        )));
+                                        w.set_selected_index(-1);
+                                        w.set_summary(summary.into());
+                                    }
+                                });
+                                crate::schedule_ui_sync();
                             }
-                        }
+                            Err(error) => {
+                                app.log_event(
+                                    format!("Не удалось удалить {}: {error}.", path.display()),
+                                    crate::app::LogLevel::Error,
+                                );
+                            }
+                        },
                         Err(e) => {
                             app.log_event(
                                 format!(

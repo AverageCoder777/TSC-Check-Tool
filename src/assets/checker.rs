@@ -178,7 +178,8 @@ fn walk_serz_for_blueprints(
         if clean == "iBlueprintLibrary-cAbsoluteBlueprintID" {
             if let Some((provider, product, blueprint)) = extract_blueprint_ids(children) {
                 let kind = context.unwrap_or(crate::domain::AssetKind::Other);
-                if let Some(path) = crate::reference::asset_relative_path(&provider, &product, &blueprint)
+                if let Some(path) =
+                    crate::reference::asset_relative_path(&provider, &product, &blueprint)
                 {
                     refs.push((path, kind));
                 }
@@ -211,7 +212,12 @@ fn extract_blueprint_ids(children: &[crate::serz::SerzNode]) -> Option<(String, 
 
     for child in children {
         // BlueprintSetID → iBlueprintLibrary-cBlueprintSetID с Provider/Product.
-        if let crate::serz::SerzNode::Element { name, children: bs_children, .. } = child {
+        if let crate::serz::SerzNode::Element {
+            name,
+            children: bs_children,
+            ..
+        } = child
+        {
             let clean = name.replace("::", "-");
             if clean == "BlueprintSetID" {
                 for bs_child in bs_children {
@@ -271,11 +277,17 @@ fn check_bare_blueprint_children(
     while i < children.len() {
         if let crate::serz::SerzNode::Property { name, value, .. } = &children[i]
             && name == "Provider"
-            && let Some(crate::serz::SerzNode::Property { name: n2, value: v2, .. }) =
-                children.get(i + 1)
+            && let Some(crate::serz::SerzNode::Property {
+                name: n2,
+                value: v2,
+                ..
+            }) = children.get(i + 1)
             && n2 == "Product"
-            && let Some(crate::serz::SerzNode::Property { name: n3, value: v3, .. }) =
-                children.get(i + 2)
+            && let Some(crate::serz::SerzNode::Property {
+                name: n3,
+                value: v3,
+                ..
+            }) = children.get(i + 2)
             && n3 == "BlueprintID"
         {
             let provider = crate::translit::decode_xml_text(value.trim());
@@ -744,13 +756,11 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
     if let Ok(data) = fs::read(&properties_path) {
         return Ok(crate::routes::decode_xml_bytes(&data));
     }
-    let entries = fs::read_dir(route_path).map_err(|error| {
-        format!("Не удалось прочитать {}: {error}", route_path.display())
-    })?;
+    let entries = fs::read_dir(route_path)
+        .map_err(|error| format!("Не удалось прочитать {}: {error}", route_path.display()))?;
     for entry in entries {
-        let entry = entry.map_err(|error| {
-            format!("Ошибка чтения {}: {error}", route_path.display())
-        })?;
+        let entry =
+            entry.map_err(|error| format!("Ошибка чтения {}: {error}", route_path.display()))?;
         if !entry
             .path()
             .extension()
@@ -801,12 +811,13 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
 /// зависеть от имени промежуточного контейнера (например, `iBlueprintSetID`).
 fn parse_preload_pairs(xml: &str) -> HashSet<(String, String)> {
     let mut pairs = HashSet::new();
-    let preload_re = regex::Regex::new(r"(?is)<RBlueprintSetPreLoad\b[^>]*>(.*?)</RBlueprintSetPreLoad\s*>")
-        .expect("valid regex");
-    let provider_re = regex::Regex::new(r"(?is)<Provider\b[^>]*>(.*?)</Provider\s*>")
-        .expect("valid regex");
-    let product_re = regex::Regex::new(r"(?is)<Product\b[^>]*>(.*?)</Product\s*>")
-        .expect("valid regex");
+    let preload_re =
+        regex::Regex::new(r"(?is)<RBlueprintSetPreLoad\b[^>]*>(.*?)</RBlueprintSetPreLoad\s*>")
+            .expect("valid regex");
+    let provider_re =
+        regex::Regex::new(r"(?is)<Provider\b[^>]*>(.*?)</Provider\s*>").expect("valid regex");
+    let product_re =
+        regex::Regex::new(r"(?is)<Product\b[^>]*>(.*?)</Product\s*>").expect("valid regex");
     for preload_cap in preload_re.captures_iter(xml) {
         let block = preload_cap.get(1).map(|c| c.as_str()).unwrap_or("");
         let providers: Vec<String> = provider_re

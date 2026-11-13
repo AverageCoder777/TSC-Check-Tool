@@ -499,16 +499,16 @@ impl CheckerApp {
             self.progress_pending = Some(pending);
             return;
         }
-    self.pop_ephemeral_progress();
-    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-    self.check_log.push_front(LogEntry {
-        text: format!("[{}] {}", timestamp, pending),
-        level: LogLevel::Info,
-    });
-    if self.check_log.len() > MAX_LOG_ENTRIES {
-        self.check_log.pop_back();
-    }
-    self.has_ephemeral_progress = true;
+        self.pop_ephemeral_progress();
+        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+        self.check_log.push_front(LogEntry {
+            text: format!("[{}] {}", timestamp, pending),
+            level: LogLevel::Info,
+        });
+        if self.check_log.len() > MAX_LOG_ENTRIES {
+            self.check_log.pop_back();
+        }
+        self.has_ephemeral_progress = true;
         self.last_progress_log = Some(Instant::now());
     }
     pub(crate) fn log_event(&mut self, message: impl Into<String>, level: LogLevel) {

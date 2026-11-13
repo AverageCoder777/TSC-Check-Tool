@@ -169,7 +169,8 @@ pub(crate) fn scan_routes_with_cache(
         }
     }
 
-    let result = scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads, log)?;
+    let result =
+        scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads, log)?;
     let cache_path = &cache_file;
     let cache = crate::domain::RouteScanCache {
         icon_scan_version: 6,

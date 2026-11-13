@@ -141,6 +141,7 @@ impl InventoryController {
                 if rw_path.as_os_str().is_empty() {
                     return;
                 }
+                #[cfg(windows)]
                 {
                     let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                     if full.exists() {
@@ -151,6 +152,8 @@ impl InventoryController {
                         crate::windows::open_in_file_explorer(&target);
                     }
                 }
+                #[cfg(not(windows))]
+                {}
             });
         }
         {
