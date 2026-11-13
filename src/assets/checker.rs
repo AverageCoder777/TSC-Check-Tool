@@ -31,7 +31,10 @@ pub(crate) fn analyze_route_file(
     let is_binary = file_path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
-    let xml_data = if is_binary {
+    // .bin файлы: разбираем SERZ-дерево напрямую, без сериализации в XML-строку
+    // и без регулярных выражений по тексту.
+    if is_binary {
+        // Проверка размера: слишком маленький BIN не содержит ссылок на ассеты.
         if fs::metadata(&file_path)
             .map(|metadata| metadata.len())
             .unwrap_or(0)
@@ -93,24 +96,33 @@ pub(crate) fn analyze_route_file(
                 };
             }
         };
-        crate::serz::SerzReader::to_xml(&node, 0, true).into_bytes()
-    } else {
-        match fs::read(&file_path) {
-            Ok(data) => data,
-            Err(error) => {
-                if is_archive {
-                    let _ = fs::remove_file(&file_path);
-                }
-                return FileAnalysis {
-                    from_cache: false,
-                    file: route_file.clone(),
-                    uses: Vec::new(),
-                    error: Some(format!(
-                        "{}: не удалось прочитать XML: {error}",
-                        file_path.display()
-                    )),
-                };
+        if is_archive {
+            let _ = fs::remove_file(&file_path);
+        }
+        return FileAnalysis {
+            from_cache: false,
+            file: route_file.clone(),
+            uses: extract_asset_references_from_serz(&node),
+            error: None,
+        };
+    }
+
+    // .xml файлы: оставляем существующий путь через текстовый XML.
+    let xml_data = match fs::read(&file_path) {
+        Ok(data) => data,
+        Err(error) => {
+            if is_archive {
+                let _ = fs::remove_file(&file_path);
             }
+            return FileAnalysis {
+                from_cache: false,
+                file: route_file.clone(),
+                uses: Vec::new(),
+                error: Some(format!(
+                    "{}: не удалось прочитать XML: {error}",
+                    file_path.display()
+                )),
+            };
         }
     };
 
@@ -127,6 +139,190 @@ pub(crate) fn analyze_route_file(
         uses: count_asset_uses(references),
         error: None,
     }
+}
+
+/// Обходит дерево `SerzNode` напрямую и извлекает ссылки на ассеты,
+/// без промежуточной сериализации в XML. Результат идентичен
+/// `extract_asset_references_with_locations`, но без аллокации большой строки.
+pub(crate) fn extract_asset_references_from_serz(
+    node: &crate::serz::SerzNode,
+) -> Vec<(String, u32, crate::domain::AssetKind)> {
+    let mut raw_refs: Vec<(String, crate::domain::AssetKind)> = Vec::new();
+    let mut context: Option<crate::domain::AssetKind> = None;
+    walk_serz_for_blueprints(node, &mut raw_refs, &mut context);
+    count_asset_uses_from_pairs(raw_refs)
+}
+
+/// Рекурсивный обход дерева SerzNode. Контекст (транспорт/декор/лофт)
+/// определяется ближайшим ранее встреченным элементом контекста и сохраняется
+/// до перезаписи другим контекстным элементом — аналогично линейному сканированию XML.
+fn walk_serz_for_blueprints(
+    node: &crate::serz::SerzNode,
+    refs: &mut Vec<(String, crate::domain::AssetKind)>,
+    context: &mut Option<crate::domain::AssetKind>,
+) {
+    if let crate::serz::SerzNode::Element { name, children, .. } = node {
+        let clean = name.replace("::", "-");
+        let prev_context = *context;
+
+        // Устанавливаем контекст при входе в соответствующий элемент.
+        if clean == "iRailVehicleBlueprint" {
+            *context = Some(crate::domain::AssetKind::Vehicle);
+        } else if clean == "SceneryRenderBlueprint" {
+            *context = Some(crate::domain::AssetKind::Scenery);
+        } else if clean == "RenderBlueprint" {
+            *context = Some(crate::domain::AssetKind::Loft);
+        }
+
+        // Блок абсолютного блюпринта: извлекаем Provider/Product/BlueprintID.
+        if clean == "iBlueprintLibrary-cAbsoluteBlueprintID" {
+            if let Some((provider, product, blueprint)) = extract_blueprint_ids(children) {
+                let kind = context.unwrap_or(crate::domain::AssetKind::Other);
+                if let Some(path) = crate::reference::asset_relative_path(&provider, &product, &blueprint)
+                {
+                    refs.push((path, kind));
+                }
+            }
+        } else {
+            // Запасной вариант: «голые» подряд идущие свойства
+            // Provider → Product → BlueprintID без обёртки.
+            check_bare_blueprint_children(
+                children,
+                refs,
+                context.unwrap_or(crate::domain::AssetKind::Other),
+            );
+        }
+
+        for child in children {
+            walk_serz_for_blueprints(child, refs, context);
+        }
+
+        *context = prev_context;
+    }
+}
+
+/// Извлекает (Provider, Product, BlueprintID) из потомков элемента
+/// `iBlueprintLibrary-cAbsoluteBlueprintID`, повторяя логику из
+/// `serz::replace_blueprint_references` / `collect_from_absolute_blueprint_id`.
+fn extract_blueprint_ids(children: &[crate::serz::SerzNode]) -> Option<(String, String, String)> {
+    let mut provider: Option<String> = None;
+    let mut product: Option<String> = None;
+    let mut blueprint: Option<String> = None;
+
+    for child in children {
+        // BlueprintSetID → iBlueprintLibrary-cBlueprintSetID с Provider/Product.
+        if let crate::serz::SerzNode::Element { name, children: bs_children, .. } = child {
+            let clean = name.replace("::", "-");
+            if clean == "BlueprintSetID" {
+                for bs_child in bs_children {
+                    if let crate::serz::SerzNode::Element {
+                        name: ibs_name,
+                        children: ibs_children,
+                        ..
+                    } = bs_child
+                    {
+                        let ibs_clean = ibs_name.replace("::", "-");
+                        if ibs_clean == "iBlueprintLibrary-cBlueprintSetID" {
+                            for prop in ibs_children {
+                                if let crate::serz::SerzNode::Property { name, value, .. } = prop {
+                                    if provider.is_none() && name == "Provider" {
+                                        provider =
+                                            Some(crate::translit::decode_xml_text(value.trim()));
+                                    }
+                                    if product.is_none() && name == "Product" {
+                                        product =
+                                            Some(crate::translit::decode_xml_text(value.trim()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // BlueprintID как прямое свойство текущего блока.
+        if let crate::serz::SerzNode::Property { name, value, .. } = child
+            && blueprint.is_none()
+            && name == "BlueprintID"
+        {
+            blueprint = Some(crate::translit::decode_xml_text(value.trim()));
+        }
+    }
+
+    let provider = provider?;
+    let product = product?;
+    let blueprint = blueprint?;
+
+    if provider.is_empty() || product.is_empty() || blueprint.is_empty() {
+        return None;
+    }
+
+    Some((provider, product, blueprint))
+}
+
+/// Проверяет прямых потомков элемента на последовательность
+/// Provider → Product → BlueprintID (без обёртки iBlueprintLibrary-cAbsoluteBlueprintID).
+fn check_bare_blueprint_children(
+    children: &[crate::serz::SerzNode],
+    refs: &mut Vec<(String, crate::domain::AssetKind)>,
+    kind: crate::domain::AssetKind,
+) {
+    let mut i = 0;
+    while i < children.len() {
+        if let crate::serz::SerzNode::Property { name, value, .. } = &children[i]
+            && name == "Provider"
+            && let Some(crate::serz::SerzNode::Property { name: n2, value: v2, .. }) =
+                children.get(i + 1)
+            && n2 == "Product"
+            && let Some(crate::serz::SerzNode::Property { name: n3, value: v3, .. }) =
+                children.get(i + 2)
+            && n3 == "BlueprintID"
+        {
+            let provider = crate::translit::decode_xml_text(value.trim());
+            let product = crate::translit::decode_xml_text(v2.trim());
+            let blueprint = crate::translit::decode_xml_text(v3.trim());
+            if let Some(path) =
+                crate::reference::asset_relative_path(&provider, &product, &blueprint)
+            {
+                refs.push((path, kind));
+            }
+            i += 3;
+            continue;
+        }
+        i += 1;
+    }
+}
+
+/// Считает вхождения пар (путь, тип), сохраняя порядок первого появления.
+fn count_asset_uses_from_pairs(
+    refs: Vec<(String, crate::domain::AssetKind)>,
+) -> Vec<(String, u32, crate::domain::AssetKind)> {
+    struct Entry {
+        count: u32,
+        kind: crate::domain::AssetKind,
+    }
+
+    let mut order = Vec::new();
+    let mut map: std::collections::HashMap<String, Entry> =
+        std::collections::HashMap::with_capacity(refs.len());
+
+    for (path, kind) in refs {
+        match map.get_mut(&path) {
+            Some(entry) => entry.count += 1,
+            None => {
+                order.push(path.clone());
+                map.insert(path, Entry { count: 1, kind });
+            }
+        }
+    }
+
+    order
+        .into_iter()
+        .filter_map(|path| {
+            map.remove(&path)
+                .map(|entry| (path, entry.count, entry.kind))
+        })
+        .collect()
 }
 
 /// Считает, сколько раз каждый ассет встречается в файле.

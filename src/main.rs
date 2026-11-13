@@ -8,7 +8,7 @@ use regex::Regex;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -424,7 +424,32 @@ fn main() {
         return;
     }
     handle_cli_args();
-    let app = Arc::new(Mutex::new(app::CheckerApp::default()));
+    // Фоновый поток записи полного лога на диск (AppData\TSC Check Tool\app.log).
+    let (log_tx, log_rx) = mpsc::channel::<crate::app::LogEntry>();
+    let log_path = crate::settings::log_file();
+    thread::spawn(move || {
+        if let Some(parent) = log_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .expect("Не удалось открыть файл лога");
+        let mut writer = BufWriter::new(file);
+        for entry in log_rx {
+            let line = format!(
+                "[{}] {}\n",
+                chrono::Local::now().format("%H:%M:%S"),
+                entry.text
+            );
+            let _ = writeln!(writer, "{}", line);
+        }
+    });
+
+    let mut app = app::CheckerApp::default();
+    app.log_tx = Some(log_tx);
+    let app = Arc::new(Mutex::new(app));
     let _ = APP.set(app.clone());
     let app_for_controllers = app.clone();
     let ui = MainWindow::new().unwrap();

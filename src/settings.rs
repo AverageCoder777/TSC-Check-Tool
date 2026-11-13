@@ -145,6 +145,11 @@ pub(crate) fn asset_replacement_log_file() -> PathBuf {
     app_data_dir().join("replacement_log.jsonl")
 }
 
+/// Путь к полному логу работы программы: `%APPDATA%\TSC Check Tool\app.log`.
+pub(crate) fn log_file() -> PathBuf {
+    app_data_dir().join("app.log")
+}
+
 pub(crate) fn append_asset_replacement_log(
     path: &Path,
     entry: &mut crate::domain::AssetReplacementLogEntry,

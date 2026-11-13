@@ -2,6 +2,8 @@
 
 use super::*;
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 enum CheckMessage {
@@ -39,10 +41,14 @@ pub(crate) enum LogLevel {
     Success = 3,
 }
 
+#[derive(Clone)]
 pub(crate) struct LogEntry {
     pub(crate) text: String,
     pub(crate) level: LogLevel,
 }
+
+/// Жёсткий лимит записей в кольцевом буфере лога для UI.
+const MAX_LOG_ENTRIES: usize = 1500;
 
 pub(crate) struct CheckerApp {
     pub(crate) rw_path: String,
@@ -60,7 +66,10 @@ pub(crate) struct CheckerApp {
     ignore_scenarios: bool,
     pub(crate) result: Option<crate::domain::CheckResult>,
     pub(crate) status: String,
-    pub(crate) check_log: Vec<LogEntry>,
+    /// Кольцевой буфер последних записей для UI (ограничен MAX_LOG_ENTRIES).
+    pub(crate) check_log: VecDeque<LogEntry>,
+    ///Sender в фоновый поток записи лога на диск (AppData\TSC Check Tool\app.log).
+    pub(crate) log_tx: Option<mpsc::Sender<LogEntry>>,
     pub(crate) progress_pending: Option<String>,
     pub(crate) last_progress_log: Option<Instant>,
     pub(crate) has_ephemeral_progress: bool,
@@ -147,7 +156,7 @@ impl Default for CheckerApp {
             ignore_scenarios: true,
             result: None,
             status,
-            check_log: Vec::new(),
+            check_log: VecDeque::new(),
             progress_pending: None,
             last_progress_log: None,
             has_ephemeral_progress: false,
@@ -180,6 +189,7 @@ impl Default for CheckerApp {
             synced_ignored_count: 0,
             synced_incomplete_count: 0,
             synced_thumbnails: false,
+            log_tx: None,
         }
     }
 }
@@ -468,7 +478,7 @@ impl CheckerApp {
     }
     fn pop_ephemeral_progress(&mut self) {
         if self.has_ephemeral_progress {
-            self.check_log.remove(0);
+            self.check_log.pop_front();
             self.has_ephemeral_progress = false;
         }
     }
@@ -484,16 +494,16 @@ impl CheckerApp {
             self.progress_pending = Some(pending);
             return;
         }
-        self.pop_ephemeral_progress();
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        self.check_log.insert(
-            0,
-            LogEntry {
-                text: format!("[{}] {}\n", timestamp, pending),
-                level: LogLevel::Info,
-            },
-        );
-        self.has_ephemeral_progress = true;
+    self.pop_ephemeral_progress();
+    let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+    self.check_log.push_front(LogEntry {
+        text: format!("[{}] {}\n", timestamp, pending),
+        level: LogLevel::Info,
+    });
+    if self.check_log.len() > MAX_LOG_ENTRIES {
+        self.check_log.pop_back();
+    }
+    self.has_ephemeral_progress = true;
         self.last_progress_log = Some(Instant::now());
     }
     pub(crate) fn log_event(&mut self, message: impl Into<String>, level: LogLevel) {
@@ -504,7 +514,13 @@ impl CheckerApp {
             text: format!("[{}] {}\n", timestamp, message),
             level,
         };
-        self.check_log.insert(0, new_entry);
+        if let Some(tx) = &self.log_tx {
+            let _ = tx.send(new_entry.clone());
+        }
+        self.check_log.push_front(new_entry);
+        if self.check_log.len() > MAX_LOG_ENTRIES {
+            self.check_log.pop_back();
+        }
     }
     pub(crate) fn is_checking(&self) -> bool {
         self.check.is_some()
