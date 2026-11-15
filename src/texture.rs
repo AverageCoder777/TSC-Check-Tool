@@ -116,16 +116,55 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
         return Err("no image blocks".into());
     }
 
-    let first = blocks[0];
-    let fmt_str = extract_format(first);
+    // Собираем мипмапы с размерами.
+    let mut mips: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(blocks.len());
+    for block in &blocks {
+        let w: u32 = extract_tag(block, "Width", "sUInt16")
+            .or_else(|| extract_tag(block, "Width", "sUInt32"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let h: u32 = extract_tag(block, "Height", "sUInt16")
+            .or_else(|| extract_tag(block, "Height", "sUInt32"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if w == 0 || h == 0 {
+            return Err("invalid mip dimensions".into());
+        }
+        let blob = extract_blob(block).ok_or("no blob")?;
+        let bytes = hex_decode(&blob);
+        if bytes.is_empty() {
+            return Err("empty mip blob".into());
+        }
+        mips.push((w, h, bytes));
+    }
+
+    let fmt_str = extract_format(blocks[0]);
     let d3d_fmt = tgpcdx_format_to_d3d(&fmt_str);
-    let width: u32 = extract_tag(first, "Width", "sUInt16")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let height: u32 = extract_tag(first, "Height", "sUInt16")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let mip_count = blocks.len() as u32;
+
+    // Сортируем от самого крупного уровня к самому мелкому (стандарт DirectX).
+    mips.sort_by_key(|a| std::cmp::Reverse(a.0 * a.1));
+
+    // Проверка размеров мипмапов по формуле DXT/несжатого формата.
+    for (w, h, bytes) in &mips {
+        let expected = expected_mip_size(*w, *h, d3d_fmt);
+        if expected > 0 && bytes.len() != expected {
+            // Допускаем расхождение только если не удалось вычислить точно; иначе ошибка.
+            // Для несжатых форматов expected может быть 0 (неизвестно) — пропускаем.
+            if expected != usize::MAX {
+                return Err(format!(
+                    "mip {}x{} size mismatch: got {}, expected {}",
+                    w,
+                    h,
+                    bytes.len(),
+                    expected
+                ));
+            }
+        }
+    }
+
+    let width = mips[0].0;
+    let height = mips[0].1;
+    let mip_count = mips.len() as u32;
 
     let mut dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
         height,
@@ -138,13 +177,12 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
     .map_err(|e| e.to_string())?;
 
     let mut offset = 0usize;
-    for block in &blocks {
-        let blob = extract_blob(block).ok_or("no blob")?;
-        let bytes = hex_decode(&blob);
+    for (_, _, bytes) in &mips {
         let sz = bytes.len();
-        if offset + sz <= dds.data.len() {
-            dds.data[offset..offset + sz].copy_from_slice(&bytes);
+        if offset + sz > dds.data.len() {
+            return Err("mip data exceeds dds buffer".into());
         }
+        dds.data[offset..offset + sz].copy_from_slice(bytes);
         offset += sz;
     }
 
@@ -344,13 +382,98 @@ fn hex_decode(s: &str) -> Vec<u8> {
 }
 
 fn tgpcdx_format_to_d3d(fmt: &str) -> ddsfile::D3DFormat {
-    if fmt.contains("INTERP_ALPHA") {
-        ddsfile::D3DFormat::DXT5
-    } else {
-        ddsfile::D3DFormat::DXT1
+    let u = fmt.to_uppercase();
+    if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
+        return ddsfile::D3DFormat::DXT5;
+    }
+    if u.contains("DXT3") || u.contains("BC2") {
+        return ddsfile::D3DFormat::DXT3;
+    }
+    if u.contains("DXT1") || u.contains("BC1") || u.contains("COMPRESSED") {
+        return ddsfile::D3DFormat::DXT1;
+    }
+    if u.contains("BGRA") {
+        return ddsfile::D3DFormat::A8R8G8B8;
+    }
+    if u.contains("RGBA") || u.contains("ARGB") {
+        return ddsfile::D3DFormat::A8B8G8R8;
+    }
+    if u.contains("L8") {
+        return ddsfile::D3DFormat::L8;
+    }
+    if u.contains("A8") {
+        return ddsfile::D3DFormat::A8;
+    }
+    ddsfile::D3DFormat::DXT1
+}
+
+fn expected_mip_size(w: u32, h: u32, fmt: ddsfile::D3DFormat) -> usize {
+    match fmt {
+        ddsfile::D3DFormat::DXT1 | ddsfile::D3DFormat::DXT2 | ddsfile::D3DFormat::DXT3
+        | ddsfile::D3DFormat::DXT4 | ddsfile::D3DFormat::DXT5 => {
+let bw = (w as usize).div_ceil(4);
+let bh = (h as usize).div_ceil(4);
+            let block = if matches!(fmt, ddsfile::D3DFormat::DXT1) {
+                8
+            } else {
+                16
+            };
+            bw.max(1) * bh.max(1) * block
+        }
+        ddsfile::D3DFormat::A8 | ddsfile::D3DFormat::L8 | ddsfile::D3DFormat::A4L4 => {
+            (w as usize) * (h as usize)
+        }
+        ddsfile::D3DFormat::R5G6B5
+        | ddsfile::D3DFormat::A1R5G5B5
+        | ddsfile::D3DFormat::X1R5G5B5
+        | ddsfile::D3DFormat::A4R4G4B4
+        | ddsfile::D3DFormat::X4R4G4B4
+        | ddsfile::D3DFormat::A8L8
+        | ddsfile::D3DFormat::L16 => (w as usize) * (h as usize) * 2,
+        _ => (w as usize) * (h as usize) * 4,
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Cursor;
+
+    #[test]
+    fn round_trip_tgpcdx_dds() {
+        let dir = tempfile::tempdir().unwrap();
+        let dds_path = dir.path().join("src.dds");
+        let dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
+            height: 4,
+            width: 4,
+            depth: None,
+            format: ddsfile::D3DFormat::DXT1,
+            mipmap_levels: Some(1),
+            caps2: None,
+        })
+        .unwrap();
+        let mut f = fs::File::create(&dds_path).unwrap();
+        dds.write(&mut f).unwrap();
+
+        let tg_path = dir.path().join("src.TgPcDx");
+        convert_dds_to_tgpcdx(&dds_path, &tg_path).unwrap();
+        assert!(tg_path.is_file());
+
+        let out_dds = dir.path().join("out.dds");
+        export_tgpcdx_to_dds(&tg_path, &out_dds).unwrap();
+        let data = fs::read(&out_dds).unwrap();
+        assert_eq!(&data[0..4], b"DDS ");
+
+        let dds2 = ddsfile::Dds::read(Cursor::new(&data)).unwrap();
+        assert_eq!(dds2.get_width(), 4);
+        assert_eq!(dds2.get_height(), 4);
+
+        let tg2 = dir.path().join("out.TgPcDx");
+        convert_dds_to_tgpcdx(&out_dds, &tg2).unwrap();
+        assert!(tg2.is_file());
+    }
+}
 fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
     if let Some(ref fourcc) = dds.header.spf.fourcc {
         let s = format!("{:?}", fourcc);

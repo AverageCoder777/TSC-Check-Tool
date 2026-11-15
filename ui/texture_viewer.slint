@@ -13,7 +13,7 @@ export component TextureViewerWindow inherits Window {
     in-out property <length> pan_x: 0px;
     in-out property <length> pan_y: 0px;
     in-out property <string> info-text: "";
-    in-out property <bool> show-alpha: true;
+    in-out property <bool> show-alpha: false;
 
     callback toggle-alpha();
     callback export-dds();
@@ -79,7 +79,7 @@ export component TextureViewerWindow inherits Window {
                 }
             }
         }
-        Button { text: @tr("Переключить альфа-канал"); clicked => { toggle-alpha(); } }
+        Button { text: show-alpha ? @tr("Обычный режим") : @tr("Переключить альфа-канал"); clicked => { toggle-alpha(); } }
         Button { text: @tr("Экспортировать DDS"); clicked => { export-dds(); } }
         Button { text: @tr("Заменить из DDS"); clicked => { replace-from-dds(); } }
     }

@@ -42,7 +42,6 @@ impl TextureController {
             let generation_id = preview_generation.fetch_add(1, Ordering::SeqCst) + 1;
             let preview_gen = preview_generation.clone();
 
-            // Извлекаем только один целевой PathBuf без клонирования всего списка
             let target_path = auditor_state_for_preview
                 .lock()
                 .ok()
@@ -100,6 +99,7 @@ impl TextureController {
                             });
                             v.set_pan_x(0.0);
                             v.set_pan_y(0.0);
+                            v.set_show_alpha(false);
                             v.set_info_text(info.into());
                             let _ = v.show();
                         }
@@ -108,73 +108,145 @@ impl TextureController {
             });
         });
 
+        self.bind_buttons();
+    }
+
+    pub fn bind_buttons(&self) {
         // Переключение альфа-канала
         let viewer_weak_toggle = self.weak.clone();
         let tex_state_for_toggle = self.tex_state.clone();
         self.window.on_toggle_alpha(move || {
+            let Some(v) = viewer_weak_toggle.upgrade() else { return };
+            let show_alpha = !v.get_show_alpha();
+            v.set_show_alpha(show_alpha);
+
             let Some(st) = tex_state_for_toggle.lock().ok().and_then(|g| g.clone()) else {
                 return;
             };
-            let (w, h, mut data, _) = st;
-            let show = viewer_weak_toggle
-                .upgrade()
-                .map(|v| v.get_show_alpha())
-                .unwrap_or(true);
-
-            if !show {
-                for i in (3..data.len()).step_by(4) {
-                    data[i] = 255;
+            let (w, h, rgba, path) = st;
+            let mut data = rgba.clone();
+            if show_alpha {
+                for i in (0..data.len()).step_by(4) {
+                    if i + 3 < data.len() {
+                        let a = data[i + 3];
+                        data[i] = a;
+                        data[i + 1] = a;
+                        data[i + 2] = a;
+                        data[i + 3] = 255;
+                    }
                 }
             }
             let img = crate::texture::rgba_to_slint_image(w, h, &data);
-            if let Some(v) = viewer_weak_toggle.upgrade() {
-                v.set_texture_image(img);
-            }
+            v.set_texture_image(img);
+            let info = if show_alpha {
+                format!("{} x {} px  TGPCDX  {}  [альфа]", w, h, path.display())
+            } else {
+                format!("{} x {} px  TGPCDX  {}", w, h, path.display())
+            };
+            v.set_info_text(info.into());
         });
 
-        // Экспорт в DDS (копируется только PathBuf, а не 16 МБ текстуры)
+        // Экспорт в DDS
         let tex_state_for_export = self.tex_state.clone();
+        let viewer_weak_export = self.weak.clone();
+        let ui_weak_export = crate::UI_WEAK.get().cloned();
         self.window.on_export_dds(move || {
             let path = tex_state_for_export
                 .lock()
                 .ok()
                 .and_then(|g| g.as_ref().map(|(_, _, _, p)| p.clone()));
+            let Some(path) = path else {
+                let msg = "Нет загруженной текстуры для экспорта".to_string();
+                notify(&viewer_weak_export, &ui_weak_export, &msg, crate::app::LogLevel::Warning);
+                return;
+            };
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("texture");
+            let default_name = format!("{}.dds", stem);
+            let out = rfd::FileDialog::new()
+                .add_filter("DirectDraw Surface (*.dds)", &["dds"])
+                .set_file_name(&default_name)
+                .save_file();
+            let Some(out) = out else { return };
 
-            if let Some(path) = path {
-                let out = rfd::FileDialog::new()
-                    .add_filter("DirectDraw Surface (*.dds)", &["dds"])
-                    .save_file();
-                if let Some(out) = out {
-                    let _ = crate::texture::export_tgpcdx_to_dds(&path, &out);
-                }
-            }
+            let viewer_weak = viewer_weak_export.clone();
+            let ui_weak = ui_weak_export.clone();
+            std::thread::spawn(move || {
+                let res = crate::texture::export_tgpcdx_to_dds(&path, &out);
+                let (msg, level) = match res {
+                    Ok(()) => (
+                        format!("Экспортировано DDS: {}", out.display()),
+                        crate::app::LogLevel::Success,
+                    ),
+                    Err(e) => (
+                        format!("Ошибка экспорта DDS: {e}"),
+                        crate::app::LogLevel::Error,
+                    ),
+                };
+                notify(&viewer_weak, &ui_weak, &msg, level);
+            });
         });
 
         // Замена из DDS
         let viewer_weak_replace = self.weak.clone();
         let tex_state_for_replace = self.tex_state.clone();
+        let ui_weak_replace = crate::UI_WEAK.get().cloned();
         self.window.on_replace_from_dds(move || {
             let path = tex_state_for_replace
                 .lock()
                 .ok()
                 .and_then(|g| g.as_ref().map(|(_, _, _, p)| p.clone()));
+            let Some(path) = path else {
+                let msg = "Нет загруженной текстуры для замены".to_string();
+                notify(&viewer_weak_replace, &ui_weak_replace, &msg, crate::app::LogLevel::Warning);
+                return;
+            };
 
-            let Some(path) = path else { return };
+            if std::fs::metadata(&path)
+                .map(|m| m.permissions().readonly())
+                .unwrap_or(false)
+            {
+                let msg = format!(
+                    "Файл доступен только для чтения (возможно, внутри .ap-архива): {}. Распакуйте перед заменой.",
+                    path.display()
+                );
+                notify(&viewer_weak_replace, &ui_weak_replace, &msg, crate::app::LogLevel::Warning);
+            }
 
             let input = rfd::FileDialog::new()
                 .add_filter("DirectDraw Surface (*.dds)", &["dds"])
                 .pick_file();
+            let Some(input) = input else { return };
 
-            if let Some(input) = input {
-                let _ = crate::texture::convert_dds_to_tgpcdx(&input, &path);
+            let viewer_weak = viewer_weak_replace.clone();
+            let ui_weak = ui_weak_replace.clone();
+            let tex_state = tex_state_for_replace.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = crate::external_editor::create_backup_file(&path) {
+                    let msg = format!("Не удалось создать резервную копию: {e}");
+                    notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Error);
+                    return;
+                }
+
+                match crate::texture::convert_dds_to_tgpcdx(&input, &path) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        let msg = format!("Ошибка замены из DDS: {e}");
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Error);
+                        return;
+                    }
+                }
+
                 if let Ok(data) = std::fs::read(&path)
                     && let Ok((w, h, rgba)) = crate::texture::decode_tgpcdx_to_rgba(&data)
                 {
-                    if let Ok(mut s) = tex_state_for_replace.lock() {
+                    if let Ok(mut s) = tex_state.lock() {
                         *s = Some((w, h, rgba.clone(), path.clone()));
                     }
                     let info = format!("{} x {} px  TGPCDX  {}", w, h, path.display());
-                    let vw = viewer_weak_replace.clone();
+                    let vw = viewer_weak.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(v) = vw.upgrade() {
                             let img = crate::texture::rgba_to_slint_image(w, h, &rgba);
@@ -188,10 +260,40 @@ impl TextureController {
                             });
                             v.set_pan_x(0.0);
                             v.set_pan_y(0.0);
+                            v.set_show_alpha(false);
                             v.set_info_text(info.into());
                         }
                     });
+                    let msg = format!("Текстура заменена из DDS: {}", path.display());
+                    notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
+                } else {
+                    let msg = "Не удалось перезагрузить превью после замены".to_string();
+                    notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Warning);
                 }
+            });
+        });
+    }
+}
+
+fn notify(
+    viewer_weak: &Weak<TextureViewerWindow>,
+    ui_weak: &Option<Weak<crate::MainWindow>>,
+    msg: &str,
+    level: crate::app::LogLevel,
+) {
+    let msg_v = msg.to_string();
+    let vw = viewer_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(v) = vw.upgrade() {
+            v.set_info_text(msg_v.clone().into());
+        }
+    });
+    if let Some(uiw) = ui_weak {
+        let msg_u = msg.to_string();
+        let uiw = uiw.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = uiw.upgrade() {
+                crate::log_event(&ui, &msg_u, level);
             }
         });
     }

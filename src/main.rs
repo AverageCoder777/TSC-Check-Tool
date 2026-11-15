@@ -440,7 +440,14 @@ fn open_texture_viewer(path: &Path) {
     };
     match crate::texture::decode_tgpcdx_to_rgba(&data) {
         Ok((w, h, rgba)) => {
-            let viewer = TextureViewerWindow::new().unwrap();
+            let controller = texture_controller::TextureController::new(Arc::new(Mutex::new(
+                AuditorState::default(),
+            )));
+            if let Ok(mut st) = controller.tex_state.lock() {
+                *st = Some((w, h, rgba.clone(), path.to_path_buf()));
+            }
+            controller.bind_buttons();
+            let viewer = controller.window;
             viewer.set_texture_image(crate::texture::rgba_to_slint_image(w, h, &rgba));
             viewer.set_texture_orig_width(w as i32);
             viewer.set_texture_orig_height(h as i32);
@@ -449,6 +456,9 @@ fn open_texture_viewer(path: &Path) {
             } else {
                 1.0
             });
+            viewer.set_pan_x(0.0);
+            viewer.set_pan_y(0.0);
+            viewer.set_show_alpha(false);
             viewer.set_info_text(format!("{} x {} px  TGPCDX  {}", w, h, path.display()).into());
             let _ = viewer.run();
             std::process::exit(0);
