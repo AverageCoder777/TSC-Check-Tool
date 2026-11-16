@@ -537,10 +537,15 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
         mh = (mh / 2).max(1);
     }
 
-    // Prefer modifying an existing target .TgPcDx, preserving preamble, node ids,
-    // Name and all other original attributes. Only Width/Height/Format and mip
-    // blobs are updated.
     if let Some(target_bytes) = target_bytes {
+        if let Some(meta) = &expected_meta
+            && meta.width == width
+            && meta.height == height
+            && let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &mips)
+        {
+            return write_output_bytes(output, &patched).map(|()| report);
+        }
+        // Fallback на полную пересборку только если изменилось разрешение (upscale/downscale)
         let mut reader = crate::serz::SerzReader::new(&target_bytes);
         if let Ok(mut root) = reader.parse() {
             let preamble = reader.preamble.clone();
@@ -716,19 +721,6 @@ fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn find_element<'a>(node: &'a crate::serz::SerzNode, name: &str) -> Option<&'a crate::serz::SerzNode> {
-    match node {
-        crate::serz::SerzNode::Element { name: n, children, .. } => {
-            if n == name {
-                Some(node)
-            } else {
-                children.iter().find_map(|c| find_element(c, name))
-            }
-        }
-        _ => None,
-    }
-}
-
 fn find_element_mut<'a>(
     node: &'a mut crate::serz::SerzNode,
     name: &str,
@@ -774,6 +766,19 @@ fn set_blob_data(elem: &mut crate::serz::SerzNode, data: &[u8]) {
     }
 }
 
+fn find_all_elements<'a>(node: &'a crate::serz::SerzNode, name: &str) -> Vec<&'a crate::serz::SerzNode> {
+    let mut out = Vec::new();
+    if let crate::serz::SerzNode::Element { name: n, children, .. } = node {
+        if n == name {
+            out.push(node);
+        }
+        for child in children {
+            out.extend(find_all_elements(child, name));
+        }
+    }
+    out
+}
+
 fn modify_tgpcdx_tree(
     root: &mut crate::serz::SerzNode,
     width: u32,
@@ -787,7 +792,10 @@ fn modify_tgpcdx_tree(
         set_property_value(tex, "Height", &height.to_string());
     }
 
-    let template = find_element(root, "cHcImageDx").cloned();
+    let templates: Vec<crate::serz::SerzNode> = find_all_elements(root, "cHcImageDx")
+        .into_iter()
+        .cloned()
+        .collect();
 
     let mip_container = find_element_mut(root, "Mip").ok_or("no Mip node")?;
     if let crate::serz::SerzNode::Element { children, .. } = mip_container {
@@ -796,8 +804,9 @@ fn modify_tgpcdx_tree(
         return Err("invalid Mip node".into());
     }
 
-    for (w, h, bytes) in mips {
-        let mut img = if let Some(t) = &template {
+    for (idx, (w, h, bytes)) in mips.iter().enumerate() {
+        let template = templates.get(idx).or_else(|| templates.first());
+        let mut img = if let Some(t) = template {
             t.clone()
         } else {
             crate::serz::SerzNode::Element {
@@ -850,7 +859,6 @@ fn modify_tgpcdx_tree(
     }
     Ok(())
 }
-
 fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
 
     if data.starts_with(b"SERZ") {
@@ -1249,5 +1257,55 @@ mod tests {
             "Для импорта требуется: DDS в формате DXT5, размеры степень двойки, с мипмапами"
         ));
         assert!(text.contains("TGPCDX  x\\y\\tex.TgPcDx"));
+    }
+    #[test]
+    fn preserves_serz_prefix_and_tail_on_reimport() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let dds_path = dir.path().join("src.dds");
+        let mut dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
+            height: 16,
+            width: 16,
+            depth: None,
+            format: ddsfile::D3DFormat::DXT1,
+            mipmap_levels: Some(5),
+            caps2: None,
+        })
+        .unwrap();
+        for (i, b) in dds.data.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(37).wrapping_add(11);
+        }
+        let mut f = fs::File::create(&dds_path).unwrap();
+        dds.write(&mut f).unwrap();
+
+        let tg_path = dir.path().join("src.TgPcDx");
+        convert_dds_to_tgpcdx(&dds_path, &tg_path).unwrap();
+        let orig = fs::read(&tg_path).unwrap();
+
+        // Modify only the first mip in an exported DDS, then reimport.
+        let out_dds = dir.path().join("out.dds");
+        export_tgpcdx_to_dds(&tg_path, &out_dds).unwrap();
+        let mut dds2 = fs::read(&out_dds).unwrap();
+        for b in &mut dds2[128..256] {
+            *b = b.wrapping_add(1);
+        }
+        fs::write(&out_dds, &dds2).unwrap();
+
+        let tg2_path = dir.path().join("dst.TgPcDx");
+        fs::copy(&tg_path, &tg2_path).unwrap();
+        convert_dds_to_tgpcdx(&out_dds, &tg2_path).unwrap();
+        let new = fs::read(&tg2_path).unwrap();
+
+        assert_eq!(new.len(), orig.len());
+
+        let marker = [0xFFu8, 0x42];
+        let pos = orig.windows(2).position(|w| w == marker).expect("marker");
+        let elem_count = u32::from_le_bytes(orig[pos + 2..pos + 6].try_into().unwrap());
+        let blob_start = pos;
+        let blob_end = pos + 6 + (elem_count as usize) * 2;
+
+        assert_eq!(&new[..blob_start], &orig[..blob_start]);
+        assert_eq!(&new[blob_end..], &orig[blob_end..]);
+        assert_ne!(&new[pos + 6..blob_end], &orig[pos + 6..blob_end]);
     }
 }

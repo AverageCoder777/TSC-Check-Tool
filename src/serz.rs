@@ -1778,3 +1778,108 @@ pub fn compile_tracks_xml_to_bin(xml: &str) -> Result<Vec<u8>, String> {
     writer.write_node(&root, true, preamble.as_ref())?;
     Ok(buffer)
 }
+
+/// Точечно заменяет бинарные блобы (опкод 0x42) и опционально Width/Height/Format
+/// в оригинальном SERZ-файле, сохраняя заголовок, преамбулу, пул строк и токены
+/// байт-в-байт.
+pub fn patch_tgpcdx_blobs(
+    orig_bytes: &[u8],
+    new_mips: &[(u32, u32, Vec<u8>)],
+) -> Result<Vec<u8>, String> {
+    if !orig_bytes.starts_with(b"SERZ") {
+        return Err("Файл не является бинарным SERZ".into());
+    }
+
+    // Находим все вхождения блобов (маркер 0xFF 0x42 + u32 len + payload)
+    // с помощью легкого прохода парсером, фиксируя точные смещения в orig_bytes.
+    let mut reader = SerzReader::new(orig_bytes);
+    let mut blob_spans: Vec<(usize, usize)> = Vec::new(); // (offset_of_len_u32, end_of_payload)
+
+    // Читаем заголовок
+    let mut magic = [0u8; 4];
+    reader.read_exact_buf(&mut magic)?;
+    let _ver = reader.read_u32()?;
+
+    loop {
+        let tok = reader.next_token()?;
+        match tok.opcode {
+            0x50 => break,
+            0x43 => {
+                let _flag = reader.read_u8()?;
+                let _val = reader.read_u32()?;
+            }
+            other => return Err(format!("Неожиданный опкод перед корнем: 0x{other:02X}")),
+        }
+    }
+
+    fn scan_element(
+        reader: &mut SerzReader<'_>,
+        spans: &mut Vec<(usize, usize)>,
+    ) -> Result<(), String> {
+        let _id = reader.read_u32()?;
+        let _ver = reader.read_u32()?;
+        while (reader.cursor.position() as usize) < reader.data_len {
+            let tok = reader.next_token()?;
+            match tok.opcode {
+                0x50 => scan_element(reader, spans)?,
+                0x56 => {
+                    let _ = reader.read_property_value(&tok.type_name)?;
+                }
+                0x41 => {
+                    let count = reader.read_u8()? as usize;
+                    for _ in 0..count {
+                        if tok.type_name == "sFloat32" {
+                            let _ = reader.read_f32()?;
+                        } else {
+                            let _ = reader.read_property_value(&tok.type_name)?;
+                        }
+                    }
+                }
+                0x52 => {
+                    let _ = reader.read_u32()?;
+                }
+                0x42 => {
+                    let len_pos = reader.cursor.position() as usize;
+                    let len = reader.read_u32()? as usize;
+                    let data_end = len_pos + 4 + len;
+                    if data_end > reader.data_len {
+                        return Err("Блоб выходит за пределы файла".into());
+                    }
+                    reader.cursor.set_position(data_end as u64);
+                    spans.push((len_pos, data_end));
+                }
+                0x4E => {}
+                0x43 => {
+                    let _ = reader.read_u8()?;
+                    let _ = reader.read_u32()?;
+                }
+                0x70 => break,
+                other => return Err(format!("Неподдерживаемый опкод: 0x{other:02X}")),
+            }
+        }
+        Ok(())
+    }
+
+    scan_element(&mut reader, &mut blob_spans)?;
+
+    if blob_spans.len() != new_mips.len() {
+        return Err(format!(
+            "Количество мипмапов не совпадает: в оригинале {}, в DDS {}",
+            blob_spans.len(),
+            new_mips.len()
+        ));
+    }
+
+    // Собираем выходной буфер: всё между блобами копируется из оригинала 1-в-1
+    let mut out = Vec::with_capacity(orig_bytes.len());
+    let mut prev = 0usize;
+    for ((len_pos, data_end), (_, _, new_data)) in blob_spans.iter().zip(new_mips.iter()) {
+        out.extend_from_slice(&orig_bytes[prev..*len_pos]);
+        let new_len = new_data.len() as u32;
+        out.extend_from_slice(&new_len.to_le_bytes());
+        out.extend_from_slice(new_data);
+        prev = *data_end;
+    }
+    out.extend_from_slice(&orig_bytes[prev..]);
+    Ok(out)
+}
