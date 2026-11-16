@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 arboard = "3.7.0"
-rfd = "0.17"
+rfd = "0.18"
 walkdir = "2.5"
 rayon = "1.12"
 zip = { version = "9", default-features = false, features = ["deflate"] }
@@ -13,7 +13,7 @@ regex = "1.13"
 tempfile = "3.27"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-slint = "1.18.1"
+slint = "1.19.0"
 chrono = "0.4"
 xml = "1.4"
 ddsfile = "0.6"
@@ -25,4 +25,4 @@ memchr = "2"
 open = "5"
 
 [build-dependencies]
-slint-build = "1.18.1"
+slint-build = "1.19.0"

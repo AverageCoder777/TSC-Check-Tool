@@ -20,7 +20,22 @@ export component TextureViewerWindow inherits Window {
     callback replace-from-dds();
 
     VerticalBox {
-        Text { text: info-text; }
+        Rectangle {
+            background: #252525;
+            border-width: 1px;
+            border-color: #3a3a3a;
+            border-radius: 6px;
+            VerticalBox {
+                padding: 10px;
+                Text {
+                    text: info-text;
+                    font-size: 13px;
+                    color: #e5e5e5;
+                    wrap: TextWrap.word-wrap;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
         Rectangle {
             horizontal-stretch: 1;
             vertical-stretch: 1;

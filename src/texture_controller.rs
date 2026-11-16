@@ -1,6 +1,6 @@
 use slint::ComponentHandle;
 use slint::Weak;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -81,7 +81,7 @@ impl TextureController {
                     if let Ok(mut st) = tex_state.lock() {
                         *st = Some((w, h, rgba.clone(), path.clone()));
                     }
-                    let info = format!("{} x {} px  TGPCDX  {}", w, h, path.display());
+                    let info = build_texture_info_text(&path, &data, w, h, false);
                     if preview_gen.load(Ordering::SeqCst) != generation_id {
                         return;
                     }
@@ -138,11 +138,7 @@ impl TextureController {
             }
             let img = crate::texture::rgba_to_slint_image(w, h, &data);
             v.set_texture_image(img);
-            let info = if show_alpha {
-                format!("{} x {} px  TGPCDX  {}  [альфа]", w, h, path.display())
-            } else {
-                format!("{} x {} px  TGPCDX  {}", w, h, path.display())
-            };
+            let info = build_texture_info_text(&path, &data, w, h, show_alpha);
             v.set_info_text(info.into());
         });
 
@@ -230,8 +226,14 @@ impl TextureController {
                     return;
                 }
 
-                match crate::texture::convert_dds_to_tgpcdx(&input, &path) {
-                    Ok(()) => {}
+                match crate::texture::convert_dds_to_tgpcdx_report(&input, &path) {
+                    Ok(report) => {
+                        let msg = format!(
+                            "Импорт DDS выполнен: формат {}, мипмапов {}, всего {} байт",
+                            report.dds_format, report.mip_count, report.total_bytes
+                        );
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
+                    }
                     Err(e) => {
                         let msg = format!("Ошибка замены из DDS: {e}");
                         notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Error);
@@ -245,7 +247,7 @@ impl TextureController {
                     if let Ok(mut s) = tex_state.lock() {
                         *s = Some((w, h, rgba.clone(), path.clone()));
                     }
-                    let info = format!("{} x {} px  TGPCDX  {}", w, h, path.display());
+                    let info = build_texture_info_text(&path, &data, w, h, false);
                     let vw = viewer_weak.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(v) = vw.upgrade() {
@@ -296,5 +298,17 @@ fn notify(
                 crate::log_event(&ui, &msg_u, level);
             }
         });
+    }
+}
+
+/// Собирает текст информационной панели просмотрщика из метаданных .TgPcDx.
+/// При неудаче парсинга возвращает старую компактную строку.
+fn build_texture_info_text(path: &Path, data: &[u8], w: u32, h: u32, show_alpha: bool) -> String {
+    match crate::texture::inspect_tgpcdx(data) {
+        Ok(info) => crate::texture::texture_info_text(&info, path, show_alpha),
+        Err(_) => {
+            let alpha = if show_alpha { "  [альфа]" } else { "" };
+            format!("{} x {} px  TGPCDX  {}{}", w, h, path.display(), alpha)
+        }
     }
 }
