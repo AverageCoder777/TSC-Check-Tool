@@ -497,6 +497,11 @@ pub fn inspect_tgpcdx_file(path: &Path) -> Result<TextureInfo, String> {
 /// Обновляет внутреннее имя текстуры (узел `Name` / `cDeltaString`) в `.TgPcDx`.
 #[allow(dead_code)]
 pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result<(), String> {
+    append_tgpcdx_log(&format!(
+        "update_tgpcdx_internal_name: path={}, new_name={}",
+        tgpcdx_path.display(),
+        new_name
+    ));
     let trimmed = new_name.trim();
     if trimmed.is_empty() {
         return Err("Внутреннее имя текстуры не может быть пустым".into());
