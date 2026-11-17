@@ -77,6 +77,7 @@ impl LoadedModel {
     fn load(path: &Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         let model = GeoModel::parse(&bytes)?;
+        crate::geo::log_parse_diagnostics(path, &model.diagnostics);
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for vertex in &model.vertices {
