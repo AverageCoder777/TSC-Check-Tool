@@ -464,6 +464,14 @@ fn open_texture_viewer(path: &Path) {
                 Err(_) => format!("{} x {} px  TGPCDX  {}", w, h, path.display()),
             };
             viewer.set_info_text(info.into());
+            // Имя текстуры для редактирования
+            if let Ok(info) = crate::texture::inspect_tgpcdx_with_path(&data, Some(path)) {
+                viewer.set_texture_name(info.name.into());
+            }
+            let enabled = !std::fs::metadata(path)
+                .map(|m| m.permissions().readonly())
+                .unwrap_or(false);
+            viewer.set_texture_name_enabled(enabled);
             let _ = viewer.run();
             std::process::exit(0);
         }

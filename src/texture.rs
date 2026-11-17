@@ -494,6 +494,154 @@ pub fn inspect_tgpcdx_file(path: &Path) -> Result<TextureInfo, String> {
     inspect_tgpcdx_with_path(&data, Some(path))
 }
 
+/// Обновляет внутреннее имя текстуры (узел `Name` / `cDeltaString`) в `.TgPcDx`.
+#[allow(dead_code)]
+pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result<(), String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("Внутреннее имя текстуры не может быть пустым".into());
+    }
+    // Нормализация путей TS Classic: прямые слэши -> обратные.
+    let normalized = trimmed.replace('/', "\\");
+
+    // Файл внутри .ap-архива доступен только для чтения — редактирование невозможно.
+    let meta = std::fs::metadata(tgpcdx_path).map_err(|e| e.to_string())?;
+    if meta.permissions().readonly() {
+        return Err(format!(
+            "Файл доступен только для чтения (возможно, внутри .ap-архива): {}. Распакуйте файл перед редактированием.",
+            tgpcdx_path.display()
+        ));
+    }
+
+    let data = std::fs::read(tgpcdx_path).map_err(|e| e.to_string())?;
+
+    // Резервная копия <путь>.TgPcDx.bak, если её ещё нет.
+    let bak_path = PathBuf::from(format!("{}.bak", tgpcdx_path.display()));
+    if !bak_path.exists() {
+        std::fs::copy(tgpcdx_path, &bak_path).map_err(|e| {
+            format!("Не удалось создать резервную копию {}: {e}", bak_path.display())
+        })?;
+        append_tgpcdx_log(&format!(
+            "Создана резервная копия: {}",
+            bak_path.display()
+        ));
+    }
+
+    // Парсим SERZ с сохранением преамбулы (или XML).
+    let is_serz = data.starts_with(b"SERZ");
+    let (mut root, preamble) = if is_serz {
+        let mut reader = crate::serz::SerzReader::new(&data);
+        let node = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        (node, reader.preamble.clone())
+    } else {
+        let text = String::from_utf8(data.clone()).map_err(|e| format!("invalid text: {e}"))?;
+        crate::serz::SerzNode::from_xml_str(&text).map_err(|e| format!("xml parse: {e}"))?
+    };
+
+    // Обновляем все cHcTexture/Name.
+    let updated = update_internal_name_in_node(&mut root, &normalized);
+    if !updated {
+        return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
+    }
+
+    let out_bytes = if is_serz {
+        crate::serz::encode_to_vec(&root, preamble.as_ref()).map_err(|e| format!("serz encode: {e}"))?
+    } else {
+        crate::serz::SerzReader::to_xml(&root, 0, true).into_bytes()
+    };
+
+    if out_bytes.is_empty() {
+        return Err("Пустой результат сериализации".into());
+    }
+
+    write_output_bytes(tgpcdx_path, &out_bytes)?;
+
+    append_tgpcdx_log(&format!(
+        "Обновлено внутреннее имя текстуры {}: {}",
+        tgpcdx_path.display(),
+        normalized
+    ));
+    Ok(())
+}
+
+/// Вариант для работы с байтами.
+#[allow(dead_code)]
+pub fn update_tgpcdx_internal_name_bytes(data: &[u8], new_name: &str) -> Result<Vec<u8>, String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("Внутреннее имя текстуры не может быть пустым".into());
+    }
+    let normalized = trimmed.replace('/', "\\");
+
+    let is_serz = data.starts_with(b"SERZ");
+    let (mut root, preamble) = if is_serz {
+        let mut reader = crate::serz::SerzReader::new(data);
+        let node = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        (node, reader.preamble.clone())
+    } else {
+        let text = String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?;
+        crate::serz::SerzNode::from_xml_str(&text).map_err(|e| format!("xml parse: {e}"))?
+    };
+
+    if !update_internal_name_in_node(&mut root, &normalized) {
+        return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
+    }
+
+    let out_bytes = if is_serz {
+        crate::serz::encode_to_vec(&root, preamble.as_ref()).map_err(|e| format!("serz encode: {e}"))?
+    } else {
+        crate::serz::SerzReader::to_xml(&root, 0, true).into_bytes()
+    };
+    if out_bytes.is_empty() {
+        return Err("Пустой результат сериализации".into());
+    }
+    Ok(out_bytes)
+}
+
+#[allow(dead_code)]
+fn update_internal_name_in_node(node: &mut crate::serz::SerzNode, new_name: &str) -> bool {
+    let mut changed = false;
+    if let crate::serz::SerzNode::Element { name, children, .. } = node {
+        if name == "cHcTexture" {
+            for child in children.iter_mut() {
+                if let crate::serz::SerzNode::Property {
+                    name: prop_name,
+                    type_name,
+                    value,
+                    ..
+                } = child
+                    && prop_name == "Name"
+                    && type_name == "cDeltaString"
+                {
+                    *value = new_name.to_string();
+                    changed = true;
+                }
+            }
+        }
+        for child in children.iter_mut() {
+            if update_internal_name_in_node(child, new_name) {
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn append_tgpcdx_log(message: &str) {
+    use std::io::Write;
+    let log_path = crate::settings::log_file();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(f, "{}", message);
+    }
+}
+
 #[allow(dead_code)]
 pub fn inspect_texture(data: &[u8]) -> Result<TextureInfo, String> {
     inspect_tgpcdx(data)
@@ -1650,5 +1798,74 @@ mod tests {
         assert_eq!(&new[..blob_start], &orig[..blob_start]);
         assert_eq!(&new[blob_end..], &orig[blob_end..]);
         assert_ne!(&new[pos + 6..blob_end], &orig[pos + 6..blob_end]);
+    }
+
+    #[test]
+    fn update_tgpcdx_internal_name_preserves_metadata_and_blob() {
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let dds_path = dir.path().join("src.dds");
+        let mut dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
+            height: 16,
+            width: 16,
+            depth: None,
+            format: ddsfile::D3DFormat::DXT1,
+            mipmap_levels: Some(5),
+            caps2: None,
+        })
+        .unwrap();
+        for (i, b) in dds.data.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(37).wrapping_add(11);
+        }
+        let mut f = fs::File::create(&dds_path).unwrap();
+        dds.write(&mut f).unwrap();
+
+        let tg_path = dir.path().join("src.TgPcDx");
+        convert_dds_to_tgpcdx(&dds_path, &tg_path).unwrap();
+        let orig_bytes = fs::read(&tg_path).unwrap();
+        let orig_info = inspect_tgpcdx_with_path(&orig_bytes, Some(&tg_path)).unwrap();
+
+        fn first_blob(data: &[u8]) -> Vec<u8> {
+            let xml = serz_bytes_to_xml(data).unwrap();
+            let block = all_image_blocks(&xml)[0];
+            hex_decode(&extract_blob(block).unwrap())
+        }
+        let orig_blob = first_blob(&orig_bytes);
+
+        // Длиннее.
+        update_tgpcdx_internal_name(
+            &tg_path,
+            "Provider\\Product\\Folder\\LongerTextureName",
+        )
+        .unwrap();
+        let long_bytes = fs::read(&tg_path).unwrap();
+        let long_info = inspect_tgpcdx_with_path(&long_bytes, Some(&tg_path)).unwrap();
+        assert_eq!(long_info.name, "Provider\\Product\\Folder\\LongerTextureName");
+        assert_eq!(long_info.width, orig_info.width);
+        assert_eq!(long_info.height, orig_info.height);
+        assert_eq!(long_info.format, orig_info.format);
+        assert_eq!(long_info.is_swizzled, orig_info.is_swizzled);
+        assert_eq!(long_info.total_blob_bytes, orig_info.total_blob_bytes);
+        assert_eq!(first_blob(&long_bytes), orig_blob);
+
+        // Короче.
+        update_tgpcdx_internal_name(&tg_path, "X").unwrap();
+        let short_bytes = fs::read(&tg_path).unwrap();
+        let short_info = inspect_tgpcdx_with_path(&short_bytes, Some(&tg_path)).unwrap();
+        assert_eq!(short_info.name, "X");
+        assert_eq!(short_info.width, orig_info.width);
+        assert_eq!(short_info.height, orig_info.height);
+        assert_eq!(short_info.format, orig_info.format);
+        assert_eq!(short_info.is_swizzled, orig_info.is_swizzled);
+        assert_eq!(short_info.total_blob_bytes, orig_info.total_blob_bytes);
+        assert_eq!(first_blob(&short_bytes), orig_blob);
+    }
+
+    #[test]
+    fn update_tgpcdx_internal_name_rejects_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let tg_path = dir.path().join("x.TgPcDx");
+        std::fs::write(&tg_path, b"").unwrap();
+        assert!(update_tgpcdx_internal_name(&tg_path, "   ").is_err());
     }
 }

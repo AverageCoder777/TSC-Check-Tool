@@ -1,4 +1,4 @@
-import { VerticalBox, Button } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, Button, LineEdit } from "std-widgets.slint";
 
 export component TextureViewerWindow inherits Window {
     title: @tr("Просмотр текстур");
@@ -14,12 +14,28 @@ export component TextureViewerWindow inherits Window {
     in-out property <length> pan_y: 0px;
     in-out property <string> info-text: "";
     in-out property <bool> show-alpha: false;
+    in-out property <string> texture-name: "";
+    in-out property <bool> texture-name-enabled: true;
 
     callback toggle-alpha();
     callback export-dds();
     callback replace-from-dds();
+    callback save-texture-internal-name(string);
+    callback texture-name-from-file();
 
     VerticalBox {
+        HorizontalBox {
+            spacing: 6px;
+            Text { text: @tr("Имя:"); vertical-alignment: center; }
+            LineEdit {
+                text <=> root.texture-name;
+                enabled: root.texture-name-enabled;
+                horizontal-stretch: 1;
+                accepted => { root.save-texture-internal-name(self.text); }
+            }
+            Button { text: @tr("Сохранить"); enabled: root.texture-name-enabled; clicked => { root.save-texture-internal-name(root.texture-name); } }
+            Button { text: @tr("По имени файла"); enabled: root.texture-name-enabled; clicked => { root.texture-name-from-file(); } }
+        }
         Rectangle {
             background: #252525;
             border-width: 1px;

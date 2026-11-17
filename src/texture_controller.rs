@@ -101,9 +101,98 @@ impl TextureController {
                             v.set_pan_y(0.0);
                             v.set_show_alpha(false);
                             v.set_info_text(info.into());
+                            if let Ok(i) = crate::texture::inspect_tgpcdx_with_path(&data, Some(&path)) {
+                                v.set_texture_name(i.name.into());
+                            }
+                            let enabled = !std::fs::metadata(&path).map(|m| m.permissions().readonly()).unwrap_or(false);
+                            v.set_texture_name_enabled(enabled);
                             let _ = v.show();
                         }
                     });
+                }
+            });
+        });
+
+        // Сохранение внутреннего имени текстуры
+        let tex_state_for_name = self.tex_state.clone();
+        let viewer_weak_name = self.weak.clone();
+        let ui_weak_name = crate::UI_WEAK.get().cloned();
+        self.window.on_save_texture_internal_name(move |new_name| {
+            let path = tex_state_for_name
+                .lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|(_, _, _, p)| p.clone()));
+            let Some(path) = path else {
+                return;
+            };
+            let viewer_weak = viewer_weak_name.clone();
+            let ui_weak = ui_weak_name.clone();
+            let tex_state = tex_state_for_name.clone();
+            let new_name = new_name.to_string();
+            std::thread::spawn(move || {
+                match crate::texture::update_tgpcdx_internal_name(&path, &new_name) {
+                    Ok(()) => {
+                        if let Ok(data) = std::fs::read(&path)
+                            && let Ok((w, h, rgba)) = crate::texture::decode_tgpcdx_to_rgba(&data)
+                        {
+                            if let Ok(mut s) = tex_state.lock() {
+                                *s = Some((w, h, rgba.clone(), path.clone()));
+                            }
+                            let info = build_texture_info_text(&path, &data, w, h, false);
+                            let name = crate::texture::inspect_tgpcdx_with_path(&data, Some(&path))
+                                .map(|i| i.name)
+                                .unwrap_or_default();
+                            let vw = viewer_weak.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(v) = vw.upgrade() {
+                                    let img = crate::texture::rgba_to_slint_image(w, h, &rgba);
+                                    v.set_texture_image(img);
+                                    v.set_info_text(info.into());
+                                    v.set_texture_name(name.into());
+                                }
+                            });
+                        }
+                        let msg = format!("Внутреннее имя текстуры сохранено: {}", path.display());
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
+                    }
+                    Err(e) => {
+                        let msg = format!("Ошибка сохранения имени: {e}");
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Error);
+                    }
+                }
+            });
+        });
+
+        // Подстановка имени по имени файла
+        let tex_state_for_fn = self.tex_state.clone();
+        let viewer_weak_fn = self.weak.clone();
+        self.window.on_texture_name_from_file(move || {
+            let (path, current_name) = match tex_state_for_fn.lock().ok().and_then(|g| g.clone()) {
+                Some((_, _, _, p)) => {
+                    let nm = crate::texture::inspect_tgpcdx_file(&p)
+                        .map(|i| i.name)
+                        .unwrap_or_default();
+                    (p, nm)
+                }
+                None => return,
+            };
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let prefix = if let Some(pos) = current_name.rfind('\\') {
+                format!("{}\\", &current_name[..pos])
+            } else if let Some(pos) = current_name.rfind('/') {
+                format!("{}/", &current_name[..pos])
+            } else {
+                String::new()
+            };
+            let new_name = format!("{}{}", prefix, stem);
+            let vw = viewer_weak_fn.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(v) = vw.upgrade() {
+                    v.set_texture_name(new_name.into());
                 }
             });
         });
@@ -241,33 +330,37 @@ impl TextureController {
                     }
                 }
 
-                if let Ok(data) = std::fs::read(&path)
-                    && let Ok((w, h, rgba)) = crate::texture::decode_tgpcdx_to_rgba(&data)
-                {
-                    if let Ok(mut s) = tex_state.lock() {
-                        *s = Some((w, h, rgba.clone(), path.clone()));
-                    }
-                    let info = build_texture_info_text(&path, &data, w, h, false);
-                    let vw = viewer_weak.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(v) = vw.upgrade() {
-                            let img = crate::texture::rgba_to_slint_image(w, h, &rgba);
-                            v.set_texture_image(img);
-                            v.set_texture_orig_width(w as i32);
-                            v.set_texture_orig_height(h as i32);
-                            v.set_zoom_factor(if w > 640 || h > 480 {
-                                (640.0 / w as f32).min(480.0 / h as f32)
-                            } else {
-                                1.0
+                        if let Ok(data) = std::fs::read(&path)
+                            && let Ok((w, h, rgba)) = crate::texture::decode_tgpcdx_to_rgba(&data)
+                        {
+                            if let Ok(mut s) = tex_state.lock() {
+                                *s = Some((w, h, rgba.clone(), path.clone()));
+                            }
+                            let info = build_texture_info_text(&path, &data, w, h, false);
+                            let edited_name = crate::texture::inspect_tgpcdx_with_path(&data, Some(&path))
+                                .map(|i| i.name)
+                                .unwrap_or_default();
+                            let vw = viewer_weak.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(v) = vw.upgrade() {
+                                    let img = crate::texture::rgba_to_slint_image(w, h, &rgba);
+                                    v.set_texture_image(img);
+                                    v.set_texture_orig_width(w as i32);
+                                    v.set_texture_orig_height(h as i32);
+                                    v.set_zoom_factor(if w > 640 || h > 480 {
+                                        (640.0 / w as f32).min(480.0 / h as f32)
+                                    } else {
+                                        1.0
+                                    });
+                                    v.set_pan_x(0.0);
+                                    v.set_pan_y(0.0);
+                                    v.set_show_alpha(false);
+                                    v.set_info_text(info.into());
+                                    v.set_texture_name(edited_name.into());
+                                }
                             });
-                            v.set_pan_x(0.0);
-                            v.set_pan_y(0.0);
-                            v.set_show_alpha(false);
-                            v.set_info_text(info.into());
-                        }
-                    });
-                    let msg = format!("Текстура заменена из DDS: {}", path.display());
-                    notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
+                            let msg = format!("Текстура заменена из DDS: {}", path.display());
+                            notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
                 } else {
                     let msg = "Не удалось перезагрузить превью после замены".to_string();
                     notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Warning);
