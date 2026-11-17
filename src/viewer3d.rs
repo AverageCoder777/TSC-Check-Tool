@@ -369,10 +369,7 @@ fn render_worker(
         }
     });
     let mut filter = String::new();
-    loop {
-        let Ok(command) = receiver.recv() else {
-            break;
-        };
+    while let Ok(command) = receiver.recv() {
         let mut need_render = false;
         let mut list_dirty = false;
         let mut pending = Some(command);

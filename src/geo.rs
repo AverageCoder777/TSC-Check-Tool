@@ -188,17 +188,23 @@ impl GeoModel {
         };
         let textures = crate::auditor::extract_geo_texture_references(&xml);
         let material_bindings = find_material_bindings(&root, &textures, &id_map);
+        let transform_names = collect_transform_names(&root);
+        let context = NodeContext {
+            material_bindings: &material_bindings,
+            ids: &id_map,
+            world_transforms: &world_transforms,
+            transform_names: &transform_names,
+        };
         let mut raw_batches = Vec::new();
         find_submeshes(
             &root,
             None,
-            &material_bindings,
-            &id_map,
+            &context,
             Mat4::IDENTITY,
-            &world_transforms,
             None,
             None,
             false,
+            None,
             &mut HashSet::new(),
             &mut raw_batches,
         );
@@ -1230,6 +1236,60 @@ fn find_named_values<'a>(node: &'a SerzNode, expected: &str) -> Option<Vec<&'a S
     }
 }
 
+fn collect_transform_names(root: &SerzNode) -> Vec<String> {
+    fn push_name(output: &mut Vec<String>, value: &str) {
+        let name = value.trim();
+        if !name.is_empty() {
+            output.push(name.to_owned());
+        }
+    }
+    fn push_strings(node: &SerzNode, output: &mut Vec<String>) {
+        match node {
+            SerzNode::Property { value, .. } => push_name(output, value),
+            SerzNode::Array { values, .. } => {
+                for value in values {
+                    push_name(output, value);
+                }
+            }
+            SerzNode::Element { children, .. } => {
+                for child in children {
+                    push_strings(child, output);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn collect(node: &SerzNode, output: &mut Vec<String>) {
+        match node {
+            SerzNode::Property { name, value, .. }
+                if name.eq_ignore_ascii_case("transformname") =>
+            {
+                push_name(output, value);
+            }
+            SerzNode::Array { name, values, .. } if name.eq_ignore_ascii_case("transformname") => {
+                for value in values {
+                    push_name(output, value);
+                }
+            }
+            SerzNode::Element { name, children, .. } => {
+                if name.eq_ignore_ascii_case("transformname") {
+                    for child in children {
+                        push_strings(child, output);
+                    }
+                } else {
+                    for child in children {
+                        collect(child, output);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut names = Vec::new();
+    collect(root, &mut names);
+    names
+}
+
 fn compute_world_transforms(local: &[Mat4], parents: &[i32]) -> Vec<Mat4> {
     fn resolve(
         index: usize,
@@ -1626,8 +1686,29 @@ fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
     (offset, normal_offset, uv_offset)
 }
 
-fn find_geometry_buffers(
-    node: &SerzNode,
+/// Picks a stride that actually divides the buffer. A wrong stride shifts every
+/// later position read into neighbouring attributes, scattering whole batches.
+fn select_vertex_stride(
+    bytes_len: usize,
+    explicit: Option<usize>,
+    declared: Option<usize>,
+    declaration: usize,
+    fvf_stride: usize,
+) -> usize {
+    let valid = |stride: usize| stride > 0 && bytes_len.is_multiple_of(stride);
+    explicit
+        .filter(|stride| valid(*stride))
+        .or(Some(declaration).filter(|stride| valid(*stride)))
+        .or(declared.filter(|stride| valid(*stride)))
+        .or(Some(fvf_stride).filter(|stride| valid(*stride)))
+        .or(explicit)
+        .or(declared)
+        .or(Some(declaration).filter(|stride| *stride > 0))
+        .or(Some(fvf_stride).filter(|stride| *stride > 0))
+        .unwrap_or(32)
+}
+
+fn find_geometry_buffers(node: &SerzNode,
     ids: &HashMap<u32, &SerzNode>,
     batches: &[RawSubmesh],
     vertices: &mut Vec<VertexBuffer>,
@@ -1687,16 +1768,19 @@ fn find_geometry_buffers(
                 let declared_stride = declared_vertex_count
                     .filter(|count| *count > 0 && bytes.len() % count == 0)
                     .map(|count| bytes.len() / count);
-                let stride = find_direct_number(children, &["vertexstride", "stride"], ids)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .or(declared_stride)
-                    .or_else(|| {
-                        (declaration.declaration_stride > 0
-                            && bytes.len() % declaration.declaration_stride == 0)
-                            .then_some(declaration.declaration_stride)
-                    })
-                    .or((fvf != 0).then_some(fvf_stride).filter(|value| *value > 0))
-                    .unwrap_or(32);
+                let explicit_stride = find_direct_number(
+                    children,
+                    &["vertexstride", "stride", "vertexsize", "vertexstridebytes"],
+                    ids,
+                )
+                .and_then(|value| usize::try_from(value).ok());
+                let stride = select_vertex_stride(
+                    bytes.len(),
+                    explicit_stride,
+                    declared_stride,
+                    declaration.declaration_stride,
+                    fvf_stride,
+                );
                 let position = find_direct_number(children, &["positionoffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.position)
@@ -2121,19 +2205,31 @@ fn find_reference(children: &[SerzNode], expected: &str) -> Option<u32> {
     None
 }
 
+struct NodeContext<'a> {
+    material_bindings: &'a HashMap<u32, MaterialBinding>,
+    ids: &'a HashMap<u32, &'a SerzNode>,
+    world_transforms: &'a [Mat4],
+    transform_names: &'a [String],
+}
+
 fn find_submeshes(
     node: &SerzNode,
     inherited_material: Option<u32>,
-    material_bindings: &HashMap<u32, MaterialBinding>,
-    ids: &HashMap<u32, &SerzNode>,
+    context: &NodeContext<'_>,
     parent_transform: Mat4,
-    world_transforms: &[Mat4],
     inherited_transform_id: Option<usize>,
     inherited_lod: Option<u32>,
     inherited_excluded: bool,
+    inherited_node_name: Option<&str>,
     reference_stack: &mut HashSet<u32>,
     output: &mut Vec<RawSubmesh>,
 ) {
+    let NodeContext {
+        material_bindings,
+        ids,
+        world_transforms,
+        transform_names,
+    } = context;
     if let SerzNode::Reference { name, target_id } = node {
         if name.eq_ignore_ascii_case("material") {
             return;
@@ -2143,13 +2239,12 @@ fn find_submeshes(
                 find_submeshes(
                     target,
                     inherited_material,
-                    material_bindings,
-                    ids,
+                    context,
                     parent_transform,
-                    world_transforms,
                     inherited_transform_id,
                     inherited_lod,
                     inherited_excluded,
+                    inherited_node_name,
                     reference_stack,
                     output,
                 );
@@ -2237,15 +2332,29 @@ fn find_submeshes(
     let transform = parent_transform * local_transform;
     let binding = material_reference.and_then(|reference| material_bindings.get(&reference));
     let batch_node_name = {
-        let label = node_label.trim();
-        if label.is_empty() {
-            format!(
-                "Node #{}",
-                active_transform_id.unwrap_or_else(|| usize::try_from(*id).unwrap_or(0))
-            )
-        } else {
-            label.to_owned()
-        }
+        let own_label = node_label.trim();
+        let inherited_label = inherited_node_name.map(str::trim).filter(|name| !name.is_empty());
+        let transform_name = active_transform_id
+            .and_then(|transform_id| transform_names.get(transform_id))
+            .map(|name| name.trim())
+            .filter(|name| !name.is_empty());
+        own_label
+            .is_empty()
+            .then_some(inherited_label)
+            .flatten()
+            .or(transform_name)
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                format!(
+                    "Node #{}",
+                    active_transform_id.unwrap_or_else(|| usize::try_from(*id).unwrap_or(0))
+                )
+            })
+    };
+    let effective_node_name = if batch_node_name.starts_with("Node #") {
+        inherited_node_name
+    } else {
+        Some(batch_node_name.as_str())
     };
     if clean_name.contains("primlist")
         || clean_name.contains("primitivelist")
@@ -2260,18 +2369,30 @@ fn find_submeshes(
         );
         let topology = find_primitive_topology(node, ids);
         let is_primitive_set = clean_name.contains("primitivesetdescdx");
-        let count = find_number(children, &["indexcount", "numindices"], ids).or_else(|| {
-            find_number(children, &["primcount", "numprimitives"], ids).and_then(|value| {
-                if is_primitive_set {
-                    Some(value)
-                } else {
-                    match topology {
-                        PrimitiveTopology::TriangleList => value.checked_mul(3),
-                        PrimitiveTopology::TriangleStrip => value.checked_add(2),
-                    }
+        // RailWorks stores `NumPrimitives` as a raw index count on primitive-set descriptors,
+        // but as a primitive count on legacy list nodes. Never read past the implied range:
+        // strips over-reading by a couple of indices bridge distant vertices into long webs.
+        let primitives_to_indices = |value: u64| {
+            if is_primitive_set {
+                Some(value)
+            } else {
+                match topology {
+                    PrimitiveTopology::TriangleList => value.checked_mul(3),
+                    PrimitiveTopology::TriangleStrip => value.checked_add(2),
                 }
-            })
-        });
+            }
+        };
+        let count = match (
+            find_number(children, &["indexcount", "numindices"], ids),
+            find_number(children, &["primcount", "numprimitives"], ids),
+        ) {
+            (Some(index_count), Some(primitives)) => {
+                primitives_to_indices(primitives).map(|implied| index_count.min(implied))
+            }
+            (Some(index_count), None) => Some(index_count),
+            (None, Some(primitives)) => primitives_to_indices(primitives),
+            (None, None) => None,
+        };
         if let (Some(first), Some(count)) = (first, count)
             && let (Ok(first_index), Ok(index_count)) = (u32::try_from(first), u32::try_from(count))
         {
@@ -2318,7 +2439,7 @@ fn find_submeshes(
                     .map(|id| world_transforms.get(id).copied().unwrap_or(Mat4::IDENTITY))
                     .unwrap_or(transform),
                 excluded,
-                node_name: batch_node_name,
+                node_name: batch_node_name.clone(),
                 material_name: binding
                     .map(|binding| binding.material_name.clone())
                     .unwrap_or_else(|| "default".into()),
@@ -2351,13 +2472,12 @@ fn find_submeshes(
         find_submeshes(
             child,
             material_reference,
-            material_bindings,
-            ids,
+            context,
             transform,
-            world_transforms,
             active_transform_id,
             child_lod.or(lod),
             excluded,
+            effective_node_name,
             reference_stack,
             output,
         );
@@ -2969,29 +3089,27 @@ fn convert_to_triangle_list(
                 u32::MAX
             };
             let mut triangles = Vec::with_capacity(indices.len().saturating_sub(2) * 3);
-            let mut strip = Vec::new();
-            for &index in indices.iter().chain(std::iter::once(&restart_index)) {
+            let mut segment_start = 0;
+            for (position, &index) in indices.iter().enumerate() {
                 if index == restart_index {
-                    append_strip_triangles(&strip, &mut triangles);
-                    strip.clear();
-                } else {
-                    strip.push(index);
+                    segment_start = position + 1;
+                    continue;
+                }
+                if position < segment_start + 2 {
+                    continue;
+                }
+                let mut a = indices[position - 2];
+                let mut b = indices[position - 1];
+                if (position - segment_start) % 2 == 1 {
+                    std::mem::swap(&mut a, &mut b);
+                }
+                // Degenerate slots connect strips and must be dropped, but they still
+                // advance the winding parity exactly like DirectX does.
+                if a != b && b != index && a != index {
+                    triangles.extend_from_slice(&[a, b, index]);
                 }
             }
             triangles
-        }
-    }
-}
-
-fn append_strip_triangles(strip: &[u32], output: &mut Vec<u32>) {
-    for (triangle_index, window) in strip.windows(3).enumerate() {
-        let (a, b, c) = if triangle_index % 2 == 0 {
-            (window[0], window[1], window[2])
-        } else {
-            (window[1], window[0], window[2])
-        };
-        if a != b && b != c && a != c {
-            output.extend_from_slice(&[a, b, c]);
         }
     }
 }
@@ -4399,16 +4517,22 @@ mod tests {
             Mat4::from_translation(Vec3::Y),
         ];
         let mut batches = Vec::new();
+        let no_bindings = HashMap::new();
+        let context = NodeContext {
+            material_bindings: &no_bindings,
+            ids: &ids,
+            world_transforms: &transforms,
+            transform_names: &[],
+        };
         find_submeshes(
             &root,
             None,
-            &HashMap::new(),
-            &ids,
+            &context,
             Mat4::IDENTITY,
-            &transforms,
             None,
             None,
             false,
+            None,
             &mut HashSet::new(),
             &mut batches,
         );
@@ -4445,16 +4569,22 @@ mod tests {
         let root = SerzNode::from_xml_str(root_xml).unwrap().0;
         let transforms = [Mat4::IDENTITY, Mat4::from_translation(Vec3::Y)];
         let mut batches = Vec::new();
+        let (no_bindings, no_ids) = (HashMap::new(), HashMap::new());
+        let context = NodeContext {
+            material_bindings: &no_bindings,
+            ids: &no_ids,
+            world_transforms: &transforms,
+            transform_names: &[],
+        };
         find_submeshes(
             &root,
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &context,
             Mat4::IDENTITY,
-            &transforms,
             None,
             None,
             false,
+            None,
             &mut HashSet::new(),
             &mut batches,
         );
@@ -4479,6 +4609,67 @@ mod tests {
             convert_to_triangle_list(&[0, 1, 2, 2, 3, 4], PrimitiveTopology::TriangleStrip, "u16"),
             [0, 1, 2, 3, 2, 4]
         );
+    }
+
+    #[test]
+    fn restarts_strip_winding_after_restart_indices() {
+        assert_eq!(
+            convert_to_triangle_list(
+                &[0, 1, 2, 3, u32::from(u16::MAX), 4, 5, 6],
+                PrimitiveTopology::TriangleStrip,
+                "u16"
+            ),
+            [0, 1, 2, 2, 1, 3, 4, 5, 6]
+        );
+    }
+
+    #[test]
+    fn clamps_triangle_strip_batches_to_declared_primitive_count() {
+        let batch = r#"
+            <cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">8</IndexCount>
+                <PrimCount d:type="sUInt32">4</PrimCount>
+                <PrimitiveType d:type="cDeltaString">eTriangleStrip</PrimitiveType>
+            </cHcPrimitiveList>
+        "#;
+        let source = xml(
+            &triangle_vertices(6),
+            &[0, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0],
+            32,
+        )
+        .replace("</Root>", &format!("{batch}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.indices, [0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5]);
+        assert!(model.diagnostics.batch_ranges[0].contains("count=6"));
+    }
+
+    #[test]
+    fn selects_a_vertex_stride_that_divides_the_buffer() {
+        assert_eq!(select_vertex_stride(3 * 36, Some(52), Some(36), 0, 0), 36);
+        assert_eq!(select_vertex_stride(3 * 52, Some(52), Some(52), 0, 0), 52);
+        assert_eq!(select_vertex_stride(96, None, None, 0, 0), 32);
+    }
+
+    #[test]
+    fn resolves_batch_node_names_from_transform_name_table() {
+        let batch = r#"
+            <TransformName d:type="cDeltaString">Body</TransformName>
+            <TransformName d:type="cDeltaString">Cabin</TransformName>
+            <cHcGeometryNode>
+                <TransformID d:type="sUInt32">1</TransformID>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList>
+            </cHcGeometryNode>
+        "#;
+        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
+            .replace("</Root>", &format!("{batch}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.submeshes[0].node_name, "Cabin");
     }
 
     #[test]
@@ -4630,16 +4821,22 @@ mod tests {
         let root = SerzNode::from_xml_str(root_xml).unwrap().0;
         let transforms = [Mat4::IDENTITY, Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))];
         let mut batches = Vec::new();
+        let (no_bindings, no_ids) = (HashMap::new(), HashMap::new());
+        let context = NodeContext {
+            material_bindings: &no_bindings,
+            ids: &no_ids,
+            world_transforms: &transforms,
+            transform_names: &[],
+        };
         find_submeshes(
             &root,
             None,
-            &HashMap::new(),
-            &HashMap::new(),
+            &context,
             Mat4::IDENTITY,
-            &transforms,
             None,
             None,
             false,
+            None,
             &mut HashSet::new(),
             &mut batches,
         );
