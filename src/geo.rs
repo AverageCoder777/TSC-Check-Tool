@@ -2333,14 +2333,37 @@ fn direct_text<'a>(
 
 fn lod_from_name(name: &str) -> Option<u32> {
     let lower = name.to_ascii_lowercase();
-    let start = lower.find("lod")? + 3;
-    let digits = lower[start..].trim_start_matches(|character: char| {
-        character == '_' || character == '-' || character.is_ascii_whitespace()
-    });
-    let end = digits
-        .find(|character: char| !character.is_ascii_digit())
-        .unwrap_or(digits.len());
-    (end > 0).then(|| digits[..end].parse().ok()).flatten()
+    if let Some(start) = lower.find("lod") {
+        let digits = lower[start + 3..].trim_start_matches(|character: char| {
+            character == '_' || character == '-' || character.is_ascii_whitespace()
+        });
+        let end = digits
+            .find(|character: char| !character.is_ascii_digit())
+            .unwrap_or(digits.len());
+        if end > 0 {
+            if let Ok(level) = digits[..end].parse::<u32>() {
+                return Some(level);
+            }
+        }
+    }
+    // RailWorks LOD distance prefixes: "1_0500_", "1_1000_", "2_...", etc.
+    // Prefix 1 => LOD0, 2 => LOD1, ...
+    let bytes = lower.as_bytes();
+    for index in 0..bytes.len() {
+        if (b'1'..=b'4').contains(&bytes[index])
+            && index + 1 < bytes.len()
+            && bytes[index + 1] == b'_'
+        {
+            let mut end = index + 2;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            if end > index + 2 && end < bytes.len() && bytes[end] == b'_' {
+                return Some((bytes[index] - b'1') as u32);
+            }
+        }
+    }
+    None
 }
 
 fn lod_name_is_nonzero(name: &str) -> bool {
@@ -2363,6 +2386,22 @@ fn lod_name_is_nonzero(name: &str) -> bool {
         }
         remaining = after_lod;
     }
+    // RailWorks LOD distance prefixes: prefix 2/3/4 => higher LOD.
+    let bytes = lower.as_bytes();
+    for index in 0..bytes.len() {
+        if (b'2'..=b'4').contains(&bytes[index])
+            && index + 1 < bytes.len()
+            && bytes[index + 1] == b'_'
+        {
+            let mut end = index + 2;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            if end > index + 2 && end < bytes.len() && bytes[end] == b'_' {
+                return true;
+            }
+        }
+    }
     false
 }
 
@@ -2377,6 +2416,24 @@ fn is_helper_name(name: &str) -> bool {
         "collision",
         "occlusion",
         "dummy",
+        "helper",
+        "proxy",
+        "pivot",
+        "bogie_ref",
+        "bogey_ref",
+        "_wi",
+        "_winter",
+        "winter_",
+        "snow",
+        "_au",
+        "_sp",
+        "summer_off",
+        "number",
+        "numbers",
+        "digit",
+        "digits",
+        "rvn",
+        "decal",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
@@ -4359,7 +4416,7 @@ mod tests {
         archive.write_all(b"texture data").unwrap();
         archive.finish().unwrap();
 
-        let (resolved_path, bytes) =
+        let (resolved_path, _bytes) =
             resolve_texture_data(&geo_path, r"Textures\[00]body.TgPcDx").unwrap();
         assert!(resolved_path.contains("!Provider\\Product\\Textures\\body.TgPcDx"));
     }
@@ -4491,6 +4548,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn filters_lod0_winter_shadow_and_decal_batches() {
+        let batches = r#"
+            <LOD0><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></LOD0>
+            <mesh_2_0500_><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></mesh_2_0500_>
+            <winter_body><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></winter_body>
+            <shadow><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></shadow>
+            <number_plate><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></number_plate>
+            <TrainDecalNode><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></TrainDecalNode>
+        "#;
+        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
+            .replace("</Root>", &format!("{batches}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.submeshes.len(), 1);
+        assert_eq!(model.indices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn multi_level_parent_child_matrix_multiplication() {
+        let local = [
+            Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+            Mat4::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+            Mat4::from_translation(Vec3::new(0.0, 0.0, 3.0)),
+        ];
+        let parents = [-1, 0, 1];
+        let world = compute_world_transforms(&local, &parents);
+        assert_eq!(world[0].w_axis.truncate(), Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(world[1].w_axis.truncate(), Vec3::new(1.0, 2.0, 0.0));
+        assert_eq!(world[2].w_axis.truncate(), Vec3::new(1.0, 2.0, 3.0));
+    }
     #[test]
     fn declared_vertex_count_resolves_stride_when_fvf_differs() {
         let vertices = vec![0u8; 52 * 3];
