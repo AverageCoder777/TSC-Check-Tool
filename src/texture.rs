@@ -157,9 +157,9 @@ pub fn dds_compression_of(dds: &ddsfile::Dds) -> DdsCompression {
         return match d3d {
             ddsfile::D3DFormat::DXT5 => DdsCompression::Dxt5,
             ddsfile::D3DFormat::DXT3 => DdsCompression::Dxt3,
-            ddsfile::D3DFormat::DXT1
-            | ddsfile::D3DFormat::DXT2
-            | ddsfile::D3DFormat::DXT4 => DdsCompression::Dxt1,
+            ddsfile::D3DFormat::DXT1 | ddsfile::D3DFormat::DXT2 | ddsfile::D3DFormat::DXT4 => {
+                DdsCompression::Dxt1
+            }
             ddsfile::D3DFormat::A8R8G8B8
             | ddsfile::D3DFormat::A8B8G8R8
             | ddsfile::D3DFormat::X8R8G8B8
@@ -368,7 +368,10 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
         "Формат: {} | DDS: {}\n",
         info.format_label, dds_name
     ));
-    s.push_str(&format!("IsSwizzled: {}\n", if info.is_swizzled { 1 } else { 0 }));
+    s.push_str(&format!(
+        "IsSwizzled: {}\n",
+        if info.is_swizzled { 1 } else { 0 }
+    ));
     s.push_str(&format!(
         "Для импорта требуется: DDS в формате {}, размеры степень двойки, с мипмапами\n",
         dds_name
@@ -387,7 +390,9 @@ pub fn mip_level_bytes(w: u32, h: u32, fmt: DdsCompression) -> Option<usize> {
     match fmt {
         DdsCompression::Dxt1 => Some(bw * bh * 8),
         DdsCompression::Dxt3 | DdsCompression::Dxt5 => Some(bw * bh * 16),
-        DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => Some((w as usize) * (h as usize) * 4),
+        DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => {
+            Some((w as usize) * (h as usize) * 4)
+        }
         DdsCompression::L8 | DdsCompression::A8 => Some((w as usize) * (h as usize)),
         DdsCompression::Unknown => None,
     }
@@ -434,7 +439,9 @@ pub fn validate_dds_mip_chain(
     for _ in 0..declared_levels {
         let size =
             mip_level_bytes(mw, mh, fmt).ok_or("невозможно вычислить размер уровня мипмапа")?;
-        total = total.checked_add(size).ok_or("переполнение при суммировании уровней мипмапов")?;
+        total = total
+            .checked_add(size)
+            .ok_or("переполнение при суммировании уровней мипмапов")?;
         mw = (mw / 2).max(1);
         mh = (mh / 2).max(1);
     }
@@ -485,8 +492,7 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
 
     // Целевой .TgPcDx — источник ожидаемого формата и длины цепочки мипмапов.
     let target_bytes = fs::read(output).ok();
-    let expected_meta =
-        target_bytes.as_deref().and_then(|b| inspect_tgpcdx(b).ok());
+    let expected_meta = target_bytes.as_deref().and_then(|b| inspect_tgpcdx(b).ok());
 
     // 2. Проверка соответствия формата сжатия оригиналу.
     if let Some(meta) = &expected_meta {
@@ -541,9 +547,16 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
         if let Some(meta) = &expected_meta
             && meta.width == width
             && meta.height == height
-            && let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &mips)
         {
-            return write_output_bytes(output, &patched).map(|()| report);
+            let packed_mips: Vec<(u32, u32, Vec<u8>)> = if meta.mip_count == 1 {
+                vec![(width, height, all.to_vec())]
+            } else {
+                mips.clone()
+            };
+
+            if let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &packed_mips) {
+                return write_output_bytes(output, &patched).map(|()| report);
+            }
         }
         // Fallback на полную пересборку только если изменилось разрешение (upscale/downscale)
         let mut reader = crate::serz::SerzReader::new(&target_bytes);
@@ -707,8 +720,6 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
     Ok(())
 }
 
-
-
 fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = output.with_extension("tmp");
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
@@ -743,7 +754,9 @@ fn find_element_mut<'a>(
 fn set_property_value(elem: &mut crate::serz::SerzNode, name: &str, value: &str) -> bool {
     if let crate::serz::SerzNode::Element { children, .. } = elem {
         for child in children.iter_mut() {
-            if let crate::serz::SerzNode::Property { name: n, value: v, .. } = child
+            if let crate::serz::SerzNode::Property {
+                name: n, value: v, ..
+            } = child
                 && n == name
             {
                 *v = value.to_string();
@@ -762,13 +775,21 @@ fn set_blob_data(elem: &mut crate::serz::SerzNode, data: &[u8]) {
                 return;
             }
         }
-        children.push(crate::serz::SerzNode::Blob { data: data.to_vec() });
+        children.push(crate::serz::SerzNode::Blob {
+            data: data.to_vec(),
+        });
     }
 }
 
-fn find_all_elements<'a>(node: &'a crate::serz::SerzNode, name: &str) -> Vec<&'a crate::serz::SerzNode> {
+fn find_all_elements<'a>(
+    node: &'a crate::serz::SerzNode,
+    name: &str,
+) -> Vec<&'a crate::serz::SerzNode> {
     let mut out = Vec::new();
-    if let crate::serz::SerzNode::Element { name: n, children, .. } = node {
+    if let crate::serz::SerzNode::Element {
+        name: n, children, ..
+    } = node
+    {
         if n == name {
             out.push(node);
         }
@@ -860,7 +881,6 @@ fn modify_tgpcdx_tree(
     Ok(())
 }
 fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
-
     if data.starts_with(b"SERZ") {
         let mut reader = crate::serz::SerzReader::new(data);
         let node = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
@@ -988,10 +1008,13 @@ fn tgpcdx_format_to_d3d(fmt: &str) -> ddsfile::D3DFormat {
 
 fn expected_mip_size(w: u32, h: u32, fmt: ddsfile::D3DFormat) -> usize {
     match fmt {
-        ddsfile::D3DFormat::DXT1 | ddsfile::D3DFormat::DXT2 | ddsfile::D3DFormat::DXT3
-        | ddsfile::D3DFormat::DXT4 | ddsfile::D3DFormat::DXT5 => {
-let bw = (w as usize).div_ceil(4);
-let bh = (h as usize).div_ceil(4);
+        ddsfile::D3DFormat::DXT1
+        | ddsfile::D3DFormat::DXT2
+        | ddsfile::D3DFormat::DXT3
+        | ddsfile::D3DFormat::DXT4
+        | ddsfile::D3DFormat::DXT5 => {
+            let bw = (w as usize).div_ceil(4);
+            let bh = (h as usize).div_ceil(4);
             let block = if matches!(fmt, ddsfile::D3DFormat::DXT1) {
                 8
             } else {
@@ -1063,7 +1086,6 @@ fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
     "HC_IMAGE_FORMAT_COMPRESSED".into()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1096,7 +1118,11 @@ mod tests {
         let mut root = reader.parse().unwrap();
         let preamble = reader.preamble.clone();
         let tex = find_element_mut(&mut root, "cHcTexture").unwrap();
-        assert!(set_property_value(tex, "Name", "TrainSimContent\\Textures\\Sample"));
+        assert!(set_property_value(
+            tex,
+            "Name",
+            "TrainSimContent\\Textures\\Sample"
+        ));
         let patched = crate::serz::encode_to_vec(&root, preamble.as_ref()).unwrap();
         fs::write(&tg_path, &patched).unwrap();
 
@@ -1116,7 +1142,9 @@ mod tests {
 
         let data = fs::read(&tg_path).unwrap();
         let xml = serz_bytes_to_xml(&data).unwrap();
-        assert!(xml.contains(r#"<Name d:type="cDeltaString">TrainSimContent\Textures\Sample</Name>"#));
+        assert!(
+            xml.contains(r#"<Name d:type="cDeltaString">TrainSimContent\Textures\Sample</Name>"#)
+        );
         assert!(xml.contains("HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA"));
 
         let blocks = all_image_blocks(&xml);
@@ -1150,9 +1178,18 @@ mod tests {
                 w = (w / 2).max(1);
                 h = (h / 2).max(1);
             }
-            assert_eq!(levels, 11, "{fmt:?} должен содержать 11 уровней для 1024x1024");
-            assert_eq!(total, expected_total, "{fmt:?} неверный суммарный размер цепочки");
-            assert_eq!(mip_level_bytes(1024, 1024, fmt), Some(256 * 256 * block_bytes));
+            assert_eq!(
+                levels, 11,
+                "{fmt:?} должен содержать 11 уровней для 1024x1024"
+            );
+            assert_eq!(
+                total, expected_total,
+                "{fmt:?} неверный суммарный размер цепочки"
+            );
+            assert_eq!(
+                mip_level_bytes(1024, 1024, fmt),
+                Some(256 * 256 * block_bytes)
+            );
             assert_eq!(mip_level_bytes(2, 2, fmt), Some(block_bytes));
             assert_eq!(mip_level_bytes(1, 1, fmt), Some(block_bytes));
 
@@ -1166,21 +1203,18 @@ mod tests {
     #[test]
     fn test_validate_dds_rejects_invalid_chains() {
         // Обрезанный буфер данных.
-        assert!(validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 11, 100, Some(11))
-            .is_err());
+        assert!(
+            validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 11, 100, Some(11)).is_err()
+        );
         // Лишние данные после цепочки мипмапов.
-        assert!(validate_dds_mip_chain(
-            1024,
-            1024,
-            DdsCompression::Dxt1,
-            11,
-            699_064 + 1,
-            Some(11),
-        )
-        .is_err());
+        assert!(
+            validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 11, 699_064 + 1, Some(11),)
+                .is_err()
+        );
         // Мипмапов меньше, чем в исходном .TgPcDx.
-        assert!(validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 1, 699_064, Some(11))
-            .is_err());
+        assert!(
+            validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 1, 699_064, Some(11)).is_err()
+        );
         // Без ожидания от оригинала один уровень допустим.
         let one = mip_level_bytes(1024, 1024, DdsCompression::Dxt1).unwrap();
         assert!(validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 1, one, None).is_ok());
