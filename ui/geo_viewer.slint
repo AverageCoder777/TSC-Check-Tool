@@ -1,0 +1,129 @@
+import { VerticalBox, HorizontalBox, Button } from "std-widgets.slint";
+
+export component GeoViewerWindow inherits Window {
+    title: "GeoPcDx 3D Viewer";
+    preferred-width: 1000px;
+    preferred-height: 720px;
+    min-width: 640px;
+    min-height: 480px;
+
+    in-out property <image> frame;
+    in-out property <string> model-name: "";
+    in-out property <string> status-text: "Loading model...";
+    in-out property <string> stats-text: "";
+    in-out property <string> texture-status: "";
+    in-out property <bool> wireframe: false;
+    in-out property <float> yaw: 0.7;
+    in-out property <float> pitch: 0.25;
+    in-out property <float> distance: 4.0;
+    in-out property <float> initial-distance: 4.0;
+    in-out property <float> pan-x: 0.0;
+    in-out property <float> pan-y: 0.0;
+
+    callback camera-changed(float, float, float, float, float, float, float, bool);
+    VerticalBox {
+        spacing: 6px;
+        padding: 8px;
+        HorizontalBox {
+            spacing: 8px;
+            Text { text: root.model-name; color: #e5e5e5; vertical-alignment: center; horizontal-stretch: 1; }
+            Button {
+                text: root.wireframe ? "Solid" : "Wireframe";
+                clicked => {
+                    root.wireframe = !root.wireframe;
+                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe);
+                }
+            }
+            Button {
+                text: "Reset camera";
+                clicked => {
+                    root.yaw = 0.7;
+                    root.pitch = 0.25;
+                    root.distance = root.initial-distance;
+                    root.pan-x = 0.0;
+                    root.pan-y = 0.0;
+                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe);
+                }
+            }
+        }
+        viewport := Rectangle {
+            background: #1c2028;
+            border-width: 1px;
+            border-color: #3a414c;
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+            clip: true;
+            Image {
+                source: root.frame;
+                width: parent.width;
+                height: parent.height;
+                image-fit: contain;
+            }
+            TouchArea {
+                width: 100%;
+                height: 100%;
+                property <float> last-x: 0;
+                property <float> last-y: 0;
+                property <bool> panning: false;
+
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down) {
+                        last-x = self.mouse-x / 1px;
+                        last-y = self.mouse-y / 1px;
+                        panning = event.button == PointerEventButton.right;
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        let dx = self.mouse-x / 1px - last-x;
+                        let dy = self.mouse-y / 1px - last-y;
+                        if (panning) {
+                            root.pan-x += dx * root.distance * 0.002;
+                            root.pan-y -= dy * root.distance * 0.002;
+                        } else {
+                            root.yaw += dx * 0.01;
+                            root.pitch = Math.max(-1.45, Math.min(1.45, root.pitch + dy * 0.01));
+                        }
+                        last-x = self.mouse-x / 1px;
+                        last-y = self.mouse-y / 1px;
+                        root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
+                    }
+                }
+                scroll-event(event) => {
+                    if (event.delta-y > 0) {
+                        root.distance = Math.max(0.1, root.distance / 1.12);
+                    } else if (event.delta-y < 0) {
+                        root.distance = Math.min(500.0, root.distance * 1.12);
+                    }
+                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
+                    accept
+                }
+            }
+            Rectangle {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: 58px;
+                background: #b8141820;
+                border-radius: 4px;
+                VerticalBox {
+                    padding: 6px;
+                    Text { text: root.status-text; color: #f0f0f0; font-size: 13px; }
+                    Text { text: root.stats-text; color: #c9d1dc; font-size: 12px; }
+                }
+            }
+        }
+        Text {
+            text: root.texture-status;
+            color: #c9d1dc;
+            font-size: 12px;
+            wrap: TextWrap.word-wrap;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: "Left drag: orbit    Right drag: pan    Wheel: zoom";
+            color: #8993a2;
+            font-size: 11px;
+        }
+    }
+}

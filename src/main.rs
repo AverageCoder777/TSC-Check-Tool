@@ -28,6 +28,8 @@ mod blueprint;
 mod domain;
 mod external_editor;
 mod fs_utils;
+mod geo;
+mod gpu_renderer;
 mod graph_view;
 mod inventory_controller;
 mod inventory_ui;
@@ -42,6 +44,7 @@ mod settings_controller;
 mod texture;
 mod texture_controller;
 mod translit;
+mod viewer3d;
 mod windows;
 mod xml_scan;
 
@@ -522,11 +525,7 @@ fn handle_cli_args() {
             && path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| {
-                    e.eq_ignore_ascii_case("bin")
-                        || e.eq_ignore_ascii_case("geopcdx")
-                        || e.eq_ignore_ascii_case("xsec")
-                })
+                .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("xsec"))
                 .unwrap_or(false);
         if is_asset {
             println!("[ExternalEditor] Запуск синхронизации для: {:?}", path);
@@ -537,6 +536,17 @@ fn handle_cli_args() {
                     std::process::exit(1);
                 }
             }
+        }
+        if path.is_file()
+            && path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("geopcdx"))
+        {
+            if let Err(error) = crate::viewer3d::show_geo_viewer(&path) {
+                crate::external_editor::show_native_error("GeoPcDx Viewer", &error);
+                std::process::exit(1);
+            }
+            std::process::exit(0);
         }
     }
 }
