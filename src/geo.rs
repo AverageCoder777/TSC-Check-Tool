@@ -100,6 +100,7 @@ struct RawSubmesh {
 impl GeoModel {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         let root = parse_serz_document(data)?;
+        let id_map = build_id_map(&root);
         let local_transforms = find_named_values(&root, "SourceLToPTransform")
             .into_iter()
             .flatten()
@@ -123,7 +124,7 @@ impl GeoModel {
         let mut vertex_data = Vec::new();
         let mut index_data = Vec::new();
         let mut xml = String::new();
-        find_geometry_buffers(&root, &mut vertex_data, &mut index_data);
+        find_geometry_buffers(&root, &id_map, &mut vertex_data, &mut index_data);
         xml.push_str(&SerzReader::to_xml(&root, 0, true));
 
         let first_vertex_buffer = vertex_data
@@ -185,17 +186,20 @@ impl GeoModel {
             String::from_utf8_lossy(data).into_owned()
         };
         let textures = crate::auditor::extract_geo_texture_references(&xml);
-        let material_bindings = find_material_bindings(&root, &textures);
+        let material_bindings = find_material_bindings(&root, &textures, &id_map);
         let mut raw_batches = Vec::new();
+        let mut visited_submesh_refs = HashSet::new();
         find_submeshes(
             &root,
             None,
             &material_bindings,
+            &id_map,
             Mat4::IDENTITY,
             &world_transforms,
             None,
             None,
             false,
+            &mut visited_submesh_refs,
             &mut raw_batches,
         );
         let has_batch_ranges = !raw_batches.is_empty();
@@ -206,7 +210,7 @@ impl GeoModel {
         let primitive_type = if let Some(batch) = render_batches.first() {
             batch.topology
         } else {
-            find_primitive_topology(&root)
+            find_primitive_topology(&root, &id_map)
         };
         let batch_ranges = render_batches
             .iter()
@@ -366,24 +370,20 @@ impl GeoAssembly {
             Arc::clone(&parts[0].model),
         );
         let mut linked_geometry = Vec::new();
-        if let Some((blueprint_path, blueprint_document, blueprint_root)) =
-            find_geometry_blueprint(path, path.file_stem().unwrap_or_default().to_string_lossy().as_ref())
-        {
+        if let Some((blueprint_path, blueprint_document, blueprint_root)) = find_geometry_blueprint(
+            path,
+            path.file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .as_ref(),
+        ) {
             let id_map = build_id_map(&blueprint_document);
             let mut attachments = Vec::new();
-            collect_blueprint_attachments(
-                &blueprint_root,
-                &id_map,
-                false,
-                false,
-                &mut attachments,
-            );
+            collect_blueprint_attachments(&blueprint_root, &id_map, false, false, &mut attachments);
             for attachment in attachments {
-                let Some(blueprint_path) = resolve_asset_path(
-                    &blueprint_path,
-                    &attachment.blueprint_reference,
-                    "bin",
-                ) else {
+                let Some(blueprint_path) =
+                    resolve_asset_path(&blueprint_path, &attachment.blueprint_reference, "bin")
+                else {
                     log_assembly_warning(
                         path,
                         &format!(
@@ -445,11 +445,8 @@ impl GeoAssembly {
                     );
                     continue;
                 };
-                let Some(model) = load_cached_geometry(
-                    &geometry_path,
-                    path,
-                    &mut geometry_cache,
-                ) else {
+                let Some(model) = load_cached_geometry(&geometry_path, path, &mut geometry_cache)
+                else {
                     continue;
                 };
                 linked_geometry.push(geometry_path.clone());
@@ -489,7 +486,10 @@ impl GeoAssembly {
         &self,
         side_by_side: bool,
     ) -> Result<(GeoModel, Vec<(PathBuf, String)>), String> {
-        let primary = self.parts.first().ok_or("assembly has no primary geometry")?;
+        let primary = self
+            .parts
+            .first()
+            .ok_or("assembly has no primary geometry")?;
         let (primary_min, primary_max) = model_bounds(&primary.model, Mat4::IDENTITY);
         let mut next_x = primary_max.x;
         let mut diagnostics = primary.model.diagnostics.clone();
@@ -568,7 +568,11 @@ impl GeoAssembly {
                 part.model
                     .indices
                     .iter()
-                    .map(|index| index.checked_add(vertex_offset).ok_or("assembly index overflow"))
+                    .map(|index| {
+                        index
+                            .checked_add(vertex_offset)
+                            .ok_or("assembly index overflow")
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
             );
             for submesh in &part.model.submeshes {
@@ -655,10 +659,7 @@ fn find_geometry_blueprint(
 
 fn build_id_map(root: &SerzNode) -> HashMap<u32, &SerzNode> {
     fn collect<'a>(node: &'a SerzNode, ids: &mut HashMap<u32, &'a SerzNode>) {
-        if let SerzNode::Element {
-            id, children, ..
-        } = node
-        {
+        if let SerzNode::Element { id, children, .. } = node {
             if *id != 0 {
                 ids.insert(*id, node);
             }
@@ -671,6 +672,26 @@ fn build_id_map(root: &SerzNode) -> HashMap<u32, &SerzNode> {
     let mut ids = HashMap::new();
     collect(root, &mut ids);
     ids
+}
+
+fn resolve_ref_node<'a>(
+    node: &'a SerzNode,
+    ids: &HashMap<u32, &'a SerzNode>,
+    reference_stack: &mut HashSet<u32>,
+) -> Option<&'a SerzNode> {
+    match node {
+        SerzNode::Reference { target_id, .. } => {
+            if !reference_stack.insert(*target_id) {
+                return None;
+            }
+            let target = ids
+                .get(target_id)
+                .and_then(|target| resolve_ref_node(target, ids, reference_stack));
+            reference_stack.remove(target_id);
+            target
+        }
+        _ => Some(node),
+    }
 }
 
 fn matching_geometry_blueprint(
@@ -688,8 +709,9 @@ fn matching_geometry_blueprint(
         && ["geometryid", "collisiongeometryid"]
             .iter()
             .any(|property| {
-                find_named_text(node, &[*property], ids)
-                    .is_some_and(|reference| asset_reference_stem(&reference).eq_ignore_ascii_case(geometry_stem))
+                find_named_text(node, &[*property], ids).is_some_and(|reference| {
+                    asset_reference_stem(&reference).eq_ignore_ascii_case(geometry_stem)
+                })
             })
     {
         return Some(node.clone());
@@ -751,9 +773,9 @@ fn find_named_text(
                                     || candidate.eq_ignore_ascii_case("collisiongeometryid")
                             })
                             .then(|| {
-                                children.iter().find_map(|child| {
-                                    find_named_text(child, &["blueprintid"], ids)
-                                })
+                                children
+                                    .iter()
+                                    .find_map(|child| find_named_text(child, &["blueprintid"], ids))
                             })
                             .flatten()
                     })
@@ -933,11 +955,7 @@ fn collect_blueprint_attachments_inner(
     }
 }
 
-fn attachment_transform(
-    node: &SerzNode,
-    ids: &HashMap<u32, &SerzNode>,
-    is_bogey: bool,
-) -> Mat4 {
+fn attachment_transform(node: &SerzNode, ids: &HashMap<u32, &SerzNode>, is_bogey: bool) -> Mat4 {
     if let Some(values) = find_named_numbers(node, &["matrix"], ids)
         && let Some(matrix) = matrix_from_values(&values)
     {
@@ -966,7 +984,11 @@ fn attachment_transform(
     Mat4::IDENTITY
 }
 
-fn find_named_number(node: &SerzNode, names: &[&str], ids: &HashMap<u32, &SerzNode>) -> Option<f32> {
+fn find_named_number(
+    node: &SerzNode,
+    names: &[&str],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<f32> {
     find_named_text(node, names, ids)?.parse().ok()
 }
 
@@ -988,7 +1010,12 @@ fn find_named_numbers(
                 .iter()
                 .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
         {
-            Some(values.iter().flat_map(|value| parse_float_values(value)).collect())
+            Some(
+                values
+                    .iter()
+                    .flat_map(|value| parse_float_values(value))
+                    .collect(),
+            )
         }
         SerzNode::Reference { name, target_id }
             if names
@@ -1177,10 +1204,11 @@ fn compute_world_transforms(local: &[Mat4], parents: &[i32]) -> Vec<Mat4> {
     world
 }
 
-fn find_transform_id(children: &[SerzNode]) -> Option<usize> {
+fn find_transform_id(children: &[SerzNode], ids: &HashMap<u32, &SerzNode>) -> Option<usize> {
     direct_text(
         children,
         &["transformid", "primarytransformid", "childtransformid"],
+        ids,
     )
     .and_then(|value| value.trim().parse::<i64>().ok())
     .filter(|&value| value >= 0)
@@ -1206,9 +1234,7 @@ fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
         parsed.z_axis.truncate(),
     ];
     let lengths = basis.map(Vec3::length);
-    if lengths
-        .iter()
-        .any(|length| !(0.8..=1.25).contains(length))
+    if lengths.iter().any(|length| !(0.8..=1.25).contains(length))
         || (basis[0].dot(basis[1]).abs() > 0.2)
         || (basis[0].dot(basis[2]).abs() > 0.2)
         || (basis[1].dot(basis[2]).abs() > 0.2)
@@ -1235,16 +1261,12 @@ fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option
         return None;
     }
     let mut relative = PathBuf::from(&normalized);
-    if relative
-        .components()
-        .next()
-        .is_some_and(|component| {
-            component
-                .as_os_str()
-                .to_string_lossy()
-                .eq_ignore_ascii_case("Assets")
-        })
-    {
+    if relative.components().next().is_some_and(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("Assets")
+    }) {
         relative = relative.components().skip(1).collect();
     }
     let variants = if relative
@@ -1292,7 +1314,10 @@ fn load_cached_geometry(
         Err(error) => {
             log_assembly_warning(
                 main_path,
-                &format!("Unable to load attached geometry {}: {error}", path.display()),
+                &format!(
+                    "Unable to load attached geometry {}: {error}",
+                    path.display()
+                ),
             );
             None
         }
@@ -1304,7 +1329,12 @@ fn find_sibling_part_geometries(path: &Path) -> Vec<PathBuf> {
         return Vec::new();
     };
     let part_names = [
-        "bogey", "bogie", "coupler", "pantograph", "underframe", "detail",
+        "bogey",
+        "bogie",
+        "coupler",
+        "pantograph",
+        "underframe",
+        "detail",
     ];
     let mut siblings = std::fs::read_dir(parent)
         .into_iter()
@@ -1335,7 +1365,8 @@ fn model_bounds(model: &GeoModel, transform: Mat4) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     for &index in &model.indices {
-        let position = transform.transform_point3(Vec3::from_array(model.vertices[index as usize].position));
+        let position =
+            transform.transform_point3(Vec3::from_array(model.vertices[index as usize].position));
         min = min.min(position);
         max = max.max(position);
     }
@@ -1370,7 +1401,10 @@ pub(crate) fn log_assembly_warning(path: &Path, message: &str) {
         )
     })();
     if let Err(error) = result {
-        eprintln!("Failed to write assembly warning to {}: {error}", log_path.display());
+        eprintln!(
+            "Failed to write assembly warning to {}: {error}",
+            log_path.display()
+        );
     }
 }
 
@@ -1408,85 +1442,157 @@ struct VertexAttributeOffsets {
 
 fn find_geometry_buffers(
     node: &SerzNode,
+    ids: &HashMap<u32, &SerzNode>,
     vertices: &mut Vec<VertexBuffer>,
     indices: &mut Vec<IndexBuffer>,
 ) {
-    let SerzNode::Element { name, children, .. } = node else {
-        return;
-    };
-    let clean_name = name.replace("::", "-").to_ascii_lowercase();
-    if clean_name.contains("chcvertexbuffer") {
-        if let Some((bytes, _fields)) = find_blob(children, "vertexdata") {
-            let declared_vertex_count = find_number(children, &["numvertices"])
-                .and_then(|value| usize::try_from(value).ok());
-            let stride = find_number(children, &["vertexstride", "stride"])
-                .and_then(|value| usize::try_from(value).ok())
-                .or_else(|| {
-                    declared_vertex_count
-                        .filter(|count| *count > 0 && bytes.len() % count == 0)
-                        .map(|count| bytes.len() / count)
-                })
-                .unwrap_or(32);
-            let declaration = find_vertex_attribute_offsets(children);
-            let position = find_number(children, &["positionoffset"])
-                .and_then(|value| usize::try_from(value).ok())
-                .or(declaration.position)
-                .unwrap_or(0);
-            let normal = find_number(children, &["normaloffset"])
-                .and_then(|value| usize::try_from(value).ok())
-                .or(declaration.normal)
-                .or_else(|| (stride >= 24).then_some(12));
-            let uv = find_number(children, &["texcoord0offset", "uvoffset"])
-                .and_then(|value| usize::try_from(value).ok())
-                .or(declaration.uv)
-                .or_else(|| (stride >= 32).then_some(24));
-            let layout = format!(
-                "VertexData/cHcGeometryVertexDataDx/VertexBuffer/cHcVertexBufferDx: vertices={} stride={} position={} normal={:?} texcoord0={:?} declaration=[{}]",
-                declared_vertex_count
-                    .map(|count| count.to_string())
-                    .unwrap_or_else(|| "?".into()),
-                stride,
-                position,
-                normal,
-                uv,
-                declaration.declaration,
-            );
-            vertices.push(VertexBuffer {
-                bytes,
-                stride,
-                position_offset: position,
-                normal_offset: normal,
-                uv_offset: uv,
-                layout,
-            });
-        }
-    }
-    if clean_name.contains("chcindexbuffer") {
-        if let Some(index_buffer) = find_index_data(children) {
-            indices.push(index_buffer);
-        }
-    }
-    for child in children {
-        find_geometry_buffers(child, vertices, indices);
-    }
-}
-
-fn find_vertex_attribute_offsets(children: &[SerzNode]) -> VertexAttributeOffsets {
     fn collect(
         node: &SerzNode,
+        ids: &HashMap<u32, &SerzNode>,
+        vertices: &mut Vec<VertexBuffer>,
+        indices: &mut Vec<IndexBuffer>,
+        reference_stack: &mut HashSet<u32>,
+        visited_elements: &mut HashSet<u32>,
+    ) {
+        if let SerzNode::Reference { target_id, .. } = node {
+            if reference_stack.insert(*target_id) {
+                if let Some(target) = resolve_ref_node(node, ids, &mut HashSet::new()) {
+                    collect(
+                        target,
+                        ids,
+                        vertices,
+                        indices,
+                        reference_stack,
+                        visited_elements,
+                    );
+                }
+                reference_stack.remove(target_id);
+            }
+            return;
+        }
+        let SerzNode::Element {
+            name,
+            id,
+            children,
+            ..
+        } = node
+        else {
+            return;
+        };
+        if *id != 0 && !visited_elements.insert(*id) {
+            return;
+        }
+        let clean_name = name.replace("::", "-").to_ascii_lowercase();
+        if clean_name.contains("chcvertexbuffer") {
+            if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
+                let declared_vertex_count = find_number(children, &["numvertices"], ids)
+                    .and_then(|value| usize::try_from(value).ok());
+                let stride = find_number(children, &["vertexstride", "stride"], ids)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .or_else(|| {
+                        declared_vertex_count
+                            .filter(|count| *count > 0 && bytes.len() % count == 0)
+                            .map(|count| bytes.len() / count)
+                    })
+                    .unwrap_or(32);
+                let declaration = find_vertex_attribute_offsets(children, ids);
+                let position = find_number(children, &["positionoffset"], ids)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .or(declaration.position)
+                    .unwrap_or(0);
+                let normal = find_number(children, &["normaloffset"], ids)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .or(declaration.normal)
+                    .or_else(|| (stride >= 24).then_some(12));
+                let uv = find_number(children, &["texcoord0offset", "uvoffset"], ids)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .or(declaration.uv)
+                    .or_else(|| (stride >= 32).then_some(24));
+                let layout = format!(
+                    "VertexData/cHcGeometryVertexDataDx/VertexBuffer/cHcVertexBufferDx: vertices={} stride={} position={} normal={:?} texcoord0={:?} declaration=[{}]",
+                    declared_vertex_count
+                        .map(|count| count.to_string())
+                        .unwrap_or_else(|| "?".into()),
+                    stride,
+                    position,
+                    normal,
+                    uv,
+                    declaration.declaration,
+                );
+                vertices.push(VertexBuffer {
+                    bytes,
+                    stride,
+                    position_offset: position,
+                    normal_offset: normal,
+                    uv_offset: uv,
+                    layout,
+                });
+            }
+        }
+        if clean_name.contains("chcindexbuffer") {
+            if let Some(index_buffer) = find_index_data(children, ids) {
+                indices.push(index_buffer);
+            }
+        }
+        for child in children {
+            collect(
+                child,
+                ids,
+                vertices,
+                indices,
+                reference_stack,
+                visited_elements,
+            );
+        }
+    }
+
+    collect(
+        node,
+        ids,
+        vertices,
+        indices,
+        &mut HashSet::new(),
+        &mut HashSet::new(),
+    );
+}
+
+fn find_vertex_attribute_offsets(
+    children: &[SerzNode],
+    ids: &HashMap<u32, &SerzNode>,
+) -> VertexAttributeOffsets {
+    fn collect(
+        node: &SerzNode,
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
         stream_offsets: &mut HashMap<u64, usize>,
         attributes: &mut VertexAttributeOffsets,
         declaration: &mut Vec<String>,
     ) {
+        if let SerzNode::Reference { target_id, .. } = node {
+            if reference_stack.insert(*target_id) {
+                if let Some(target) = ids.get(target_id) {
+                    collect(
+                        target,
+                        ids,
+                        reference_stack,
+                        stream_offsets,
+                        attributes,
+                        declaration,
+                    );
+                }
+                reference_stack.remove(target_id);
+            }
+            return;
+        }
         let SerzNode::Element { name, children, .. } = node else {
             return;
         };
         let clean_name = name.to_ascii_lowercase();
         if clean_name.contains("elementdecl") {
-            let usage = find_text(children, &["usage"]).unwrap_or_default();
-            let type_name = find_text(children, &["type"]).unwrap_or_default();
-            let stream_index = find_number(children, &["streamindex"]).unwrap_or(0);
-            let explicit_offset = find_number(children, &["offset", "byteoffset"])
+            let usage = find_text(children, &["usage"], ids).unwrap_or_default();
+            let type_name = find_text(children, &["type"], ids).unwrap_or_default();
+            let stream_index = find_number(children, &["streamindex"], ids).unwrap_or(0);
+            let explicit_offset = find_number(children, &["offset", "byteoffset"], ids)
                 .and_then(|value| usize::try_from(value).ok());
             let offset =
                 explicit_offset.unwrap_or_else(|| *stream_offsets.entry(stream_index).or_default());
@@ -1501,7 +1607,7 @@ fn find_vertex_attribute_offsets(children: &[SerzNode]) -> VertexAttributeOffset
                 } else if usage_lower.contains("normal") && attributes.normal.is_none() {
                     attributes.normal = Some(offset);
                 } else if usage_lower.contains("texcoord")
-                    && find_number(children, &["usageindex"]).unwrap_or(0) == 0
+                    && find_number(children, &["usageindex"], ids).unwrap_or(0) == 0
                     && attributes.uv.is_none()
                 {
                     attributes.uv = Some(offset);
@@ -1513,7 +1619,14 @@ fn find_vertex_attribute_offsets(children: &[SerzNode]) -> VertexAttributeOffset
             ));
         }
         for child in children {
-            collect(child, stream_offsets, attributes, declaration);
+            collect(
+                child,
+                ids,
+                reference_stack,
+                stream_offsets,
+                attributes,
+                declaration,
+            );
         }
     }
 
@@ -1528,6 +1641,8 @@ fn find_vertex_attribute_offsets(children: &[SerzNode]) -> VertexAttributeOffset
     for child in children {
         collect(
             child,
+            ids,
+            &mut HashSet::new(),
             &mut stream_offsets,
             &mut attributes,
             &mut declaration,
@@ -1555,9 +1670,26 @@ fn vertex_element_size(type_name: &str) -> Option<usize> {
     }
 }
 
-fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, MaterialBinding> {
-    fn collect_delta_strings(node: &SerzNode, output: &mut Vec<String>) {
+fn find_material_bindings(
+    node: &SerzNode,
+    textures: &[String],
+    ids: &HashMap<u32, &SerzNode>,
+) -> HashMap<u32, MaterialBinding> {
+    fn collect_delta_strings(
+        node: &SerzNode,
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+        output: &mut Vec<String>,
+    ) {
         match node {
+            SerzNode::Reference { target_id, .. } => {
+                if reference_stack.insert(*target_id) {
+                    if let Some(target) = ids.get(target_id) {
+                        collect_delta_strings(target, ids, reference_stack, output);
+                    }
+                    reference_stack.remove(target_id);
+                }
+            }
             SerzNode::Property {
                 name,
                 type_name,
@@ -1587,7 +1719,7 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
                     .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
             {
                 for child in children {
-                    collect_delta_strings(child, output);
+                    collect_delta_strings(child, ids, reference_stack, output);
                 }
             }
             _ => {}
@@ -1597,24 +1729,48 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
     fn collect(
         node: &SerzNode,
         textures: &[String],
+        ids: &HashMap<u32, &SerzNode>,
         next_index: &mut u32,
         bindings: &mut HashMap<u32, MaterialBinding>,
+        visited_elements: &mut HashSet<u32>,
+        reference_stack: &mut HashSet<u32>,
     ) {
+        if let SerzNode::Reference { target_id, .. } = node {
+            if reference_stack.insert(*target_id) {
+                if let Some(target) = ids.get(target_id) {
+                    collect(
+                        target,
+                        textures,
+                        ids,
+                        next_index,
+                        bindings,
+                        visited_elements,
+                        reference_stack,
+                    );
+                }
+                reference_stack.remove(target_id);
+            }
+            return;
+        }
         let SerzNode::Element {
             name, id, children, ..
         } = node
         else {
             return;
         };
+        if *id != 0 && !visited_elements.insert(*id) {
+            return;
+        }
         if name.eq_ignore_ascii_case("cHcEffectMaterialDx")
             || name.eq_ignore_ascii_case("cHcExplicitStateMaterial")
         {
             let material_index = *next_index;
             *next_index = (*next_index).saturating_add(1);
-            let mut texture_references = collect_text_values(children, &["texturebyname"]);
+            let mut texture_references = collect_text_values(children, &["texturebyname"], ids);
             let mut delta_strings = Vec::new();
+            let mut reference_stack = HashSet::new();
             for child in children {
-                collect_delta_strings(child, &mut delta_strings);
+                collect_delta_strings(child, ids, &mut reference_stack, &mut delta_strings);
             }
             texture_references.extend(delta_strings.into_iter().filter(|value| {
                 value.contains('\\')
@@ -1634,12 +1790,13 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
                 .map(|(index, _)| index)
                 .unwrap_or(0) as u32;
             let shader_name =
-                find_text(children, &["shadername", "effectname"]).unwrap_or_default();
-            let material_name = find_text(children, &["name", "materialname"]).unwrap_or_default();
+                find_text(children, &["shadername", "effectname"], ids).unwrap_or_default();
+            let material_name =
+                find_text(children, &["name", "materialname"], ids).unwrap_or_default();
             let texture_is_shadow = texture_references
                 .iter()
                 .any(|texture| texture.to_ascii_lowercase().contains("shadow"));
-            let subtract_alpha = find_text(children, &["framealphamode"])
+            let subtract_alpha = find_text(children, &["framealphamode"], ids)
                 .is_some_and(|mode| mode.eq_ignore_ascii_case("ALPHA_MODE_SUBTRACT"));
             bindings.insert(
                 *id,
@@ -1655,13 +1812,29 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
             );
         }
         for child in children {
-            collect(child, textures, next_index, bindings);
+            collect(
+                child,
+                textures,
+                ids,
+                next_index,
+                bindings,
+                visited_elements,
+                reference_stack,
+            );
         }
     }
 
     let mut bindings = HashMap::new();
     let mut next_index = 0;
-    collect(node, textures, &mut next_index, &mut bindings);
+    collect(
+        node,
+        textures,
+        ids,
+        &mut next_index,
+        &mut bindings,
+        &mut HashSet::new(),
+        &mut HashSet::new(),
+    );
     bindings
 }
 
@@ -1686,25 +1859,51 @@ fn find_submeshes(
     node: &SerzNode,
     inherited_material: Option<u32>,
     material_bindings: &HashMap<u32, MaterialBinding>,
+    ids: &HashMap<u32, &SerzNode>,
     parent_transform: Mat4,
     world_transforms: &[Mat4],
     inherited_transform_id: Option<usize>,
     inherited_lod: Option<u32>,
     inherited_excluded: bool,
+    reference_stack: &mut HashSet<u32>,
     output: &mut Vec<RawSubmesh>,
 ) {
+    if let SerzNode::Reference { name, target_id } = node {
+        if name.eq_ignore_ascii_case("material") {
+            return;
+        }
+        if reference_stack.insert(*target_id) {
+            if let Some(target) = resolve_ref_node(node, ids, &mut HashSet::new()) {
+                find_submeshes(
+                    target,
+                    inherited_material,
+                    material_bindings,
+                    ids,
+                    parent_transform,
+                    world_transforms,
+                    inherited_transform_id,
+                    inherited_lod,
+                    inherited_excluded,
+                    reference_stack,
+                    output,
+                );
+            }
+            reference_stack.remove(target_id);
+        }
+        return;
+    }
     let SerzNode::Element { name, children, .. } = node else {
         return;
     };
     let clean_name = name.replace("::", "-").to_ascii_lowercase();
     let node_label =
-        direct_text(children, &["name", "nodename", "transformname"]).unwrap_or_default();
+        direct_text(children, &["name", "nodename", "transformname"], ids).unwrap_or_default();
     let lod = lod_from_name(name)
         .or_else(|| lod_from_name(node_label))
         .or_else(|| {
             clean_name
                 .contains("lod")
-                .then(|| find_number(children, &["lodlevel", "lodindex", "level"]))
+                .then(|| find_number(children, &["lodlevel", "lodindex", "level"], ids))
                 .flatten()
                 .and_then(|level| u32::try_from(level).ok())
         })
@@ -1721,7 +1920,7 @@ fn find_submeshes(
         || material_reference
             .and_then(|reference| material_bindings.get(&reference))
             .is_some_and(|binding| binding.excluded);
-    let active_transform_id = find_transform_id(children).or(inherited_transform_id);
+    let active_transform_id = find_transform_id(children, ids).or(inherited_transform_id);
     let local_transform = find_local_transform(children);
     let transform = parent_transform * local_transform;
     if clean_name.contains("primlist")
@@ -1733,11 +1932,12 @@ fn find_submeshes(
         let first = find_number(
             children,
             &["firstindex", "startindex", "indexstart", "indexarraystart"],
+            ids,
         );
-        let topology = find_primitive_topology(node);
+        let topology = find_primitive_topology(node, ids);
         let is_primitive_set = clean_name.contains("primitivesetdescdx");
-        let count = find_number(children, &["indexcount", "numindices"]).or_else(|| {
-            find_number(children, &["primcount", "numprimitives"]).and_then(|value| {
+        let count = find_number(children, &["indexcount", "numindices"], ids).or_else(|| {
+            find_number(children, &["primcount", "numprimitives"], ids).and_then(|value| {
                 if is_primitive_set {
                     Some(value)
                 } else {
@@ -1751,7 +1951,7 @@ fn find_submeshes(
         if let (Some(first), Some(count)) = (first, count)
             && let (Ok(first_index), Ok(index_count)) = (u32::try_from(first), u32::try_from(count))
         {
-            let material_index = find_number(children, &["materialindex", "materialid"])
+            let material_index = find_number(children, &["materialindex", "materialid"], ids)
                 .and_then(|value| u32::try_from(value).ok())
                 .or_else(|| {
                     material_reference
@@ -1761,13 +1961,13 @@ fn find_submeshes(
             let texture_index = material_reference
                 .and_then(|reference| material_bindings.get(&reference))
                 .map(|binding| binding.texture_index);
-            let base_vertex = find_number(children, &["vertexindexbase", "basevertex"])
+            let base_vertex = find_number(children, &["vertexindexbase", "basevertex"], ids)
                 .and_then(|value| i32::try_from(value).ok())
                 .unwrap_or(0);
-            let vertex_buffer_index = find_number(children, &["vertexbufferindex"])
+            let vertex_buffer_index = find_number(children, &["vertexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(0);
-            let index_buffer_index = find_number(children, &["indexbufferindex"])
+            let index_buffer_index = find_number(children, &["indexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(0);
             output.push(RawSubmesh {
@@ -1791,7 +1991,12 @@ fn find_submeshes(
         clean_name.contains("lodlist") || clean_name.contains("chcsgnodelodselector");
     let mut next_lod = 0;
     for child in children {
-        let child_lod = if is_lod_container && matches!(child, SerzNode::Element { .. }) {
+        let is_lod_child = matches!(child, SerzNode::Element { .. })
+            || matches!(
+                child,
+                SerzNode::Reference { name, .. } if !name.eq_ignore_ascii_case("material")
+            );
+        let child_lod = if is_lod_container && is_lod_child {
             let level = next_lod;
             next_lod += 1;
             if level > 0 {
@@ -1805,17 +2010,23 @@ fn find_submeshes(
             child,
             material_reference,
             material_bindings,
+            ids,
             transform,
             world_transforms,
             active_transform_id,
             child_lod.or(lod),
             excluded,
+            reference_stack,
             output,
         );
     }
 }
 
-fn direct_text<'a>(children: &'a [SerzNode], expected: &[&str]) -> Option<&'a str> {
+fn direct_text<'a>(
+    children: &'a [SerzNode],
+    expected: &[&str],
+    ids: &HashMap<u32, &'a SerzNode>,
+) -> Option<&'a str> {
     children.iter().find_map(|child| match child {
         SerzNode::Property { name, value, .. }
             if expected
@@ -1824,15 +2035,29 @@ fn direct_text<'a>(children: &'a [SerzNode], expected: &[&str]) -> Option<&'a st
         {
             Some(value.as_str())
         }
+        SerzNode::Array { name, values, .. }
+            if expected
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            values.first().map(String::as_str)
+        }
+        SerzNode::Reference { name, target_id }
+            if expected
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            ids.get(target_id)
+                .and_then(|target| resolve_ref_text(target, ids, &mut HashSet::new()))
+        }
         SerzNode::Element { name, children, .. }
             if expected
                 .iter()
                 .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
         {
-            children.iter().find_map(|property| match property {
-                SerzNode::Property { value, .. } => Some(value.as_str()),
-                _ => None,
-            })
+            children
+                .iter()
+                .find_map(|property| resolve_ref_text(property, ids, &mut HashSet::new()))
         }
         _ => None,
     })
@@ -1864,8 +2089,18 @@ fn is_helper_name(name: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
-fn collect_text_values(children: &[SerzNode], expected: &[&str]) -> Vec<String> {
-    fn collect(node: &SerzNode, expected: &[&str], output: &mut Vec<String>) {
+fn collect_text_values(
+    children: &[SerzNode],
+    expected: &[&str],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Vec<String> {
+    fn collect(
+        node: &SerzNode,
+        expected: &[&str],
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+        output: &mut Vec<String>,
+    ) {
         match node {
             SerzNode::Property { name, value, .. }
                 if expected
@@ -1874,36 +2109,77 @@ fn collect_text_values(children: &[SerzNode], expected: &[&str]) -> Vec<String> 
             {
                 output.push(value.trim().to_owned());
             }
+            SerzNode::Array { name, values, .. }
+                if expected
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            {
+                output.extend(values.iter().map(|value| value.trim().to_owned()));
+            }
+            SerzNode::Reference { name, target_id } => {
+                if reference_stack.insert(*target_id) {
+                    if let Some(target) = ids.get(target_id) {
+                        if expected
+                            .iter()
+                            .any(|candidate| name.eq_ignore_ascii_case(candidate))
+                        {
+                            collect_descendant_text(target, ids, reference_stack, output);
+                        } else {
+                            collect(target, expected, ids, reference_stack, output);
+                        }
+                    }
+                    reference_stack.remove(target_id);
+                }
+            }
             SerzNode::Element { name, children, .. }
                 if expected
                     .iter()
                     .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
             {
-                collect_descendant_text(children, output);
+                for child in children {
+                    collect_descendant_text(child, ids, reference_stack, output);
+                }
             }
             SerzNode::Element { children, .. } => {
                 for child in children {
-                    collect(child, expected, output);
+                    collect(child, expected, ids, reference_stack, output);
                 }
             }
             _ => {}
         }
     }
 
-    fn collect_descendant_text(children: &[SerzNode], output: &mut Vec<String>) {
-        for child in children {
-            match child {
-                SerzNode::Property { value, .. } => output.push(value.trim().to_owned()),
-                SerzNode::Array { values, .. } => output.extend(values.iter().cloned()),
-                SerzNode::Element { children, .. } => collect_descendant_text(children, output),
-                _ => {}
+    fn collect_descendant_text(
+        node: &SerzNode,
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+        output: &mut Vec<String>,
+    ) {
+        match node {
+            SerzNode::Property { value, .. } => output.push(value.trim().to_owned()),
+            SerzNode::Array { values, .. } => {
+                output.extend(values.iter().map(|value| value.trim().to_owned()));
             }
+            SerzNode::Element { children, .. } => {
+                for child in children {
+                    collect_descendant_text(child, ids, reference_stack, output);
+                }
+            }
+            SerzNode::Reference { target_id, .. } => {
+                if reference_stack.insert(*target_id) {
+                    if let Some(target) = ids.get(target_id) {
+                        collect_descendant_text(target, ids, reference_stack, output);
+                    }
+                    reference_stack.remove(target_id);
+                }
+            }
+            _ => {}
         }
     }
 
     let mut values = Vec::new();
     for child in children {
-        collect(child, expected, &mut values);
+        collect(child, expected, ids, &mut HashSet::new(), &mut values);
     }
     values
 }
@@ -1919,7 +2195,10 @@ fn texture_priority(reference: &str) -> u8 {
         .any(|suffix| stem.ends_with(suffix))
     {
         0
-    } else if ["_nm", "_emiss"].iter().any(|suffix| stem.ends_with(suffix)) {
+    } else if ["_nm", "_emiss"]
+        .iter()
+        .any(|suffix| stem.ends_with(suffix))
+    {
         2
     } else {
         1
@@ -1968,19 +2247,20 @@ fn find_local_transform(children: &[SerzNode]) -> Mat4 {
     Mat4::IDENTITY
 }
 
-fn find_index_data(children: &[SerzNode]) -> Option<IndexBuffer> {
-    if let Some((values, type_name)) = find_index_array(children) {
+fn find_index_data(children: &[SerzNode], ids: &HashMap<u32, &SerzNode>) -> Option<IndexBuffer> {
+    if let Some((values, type_name)) = find_index_array(children, ids) {
         let width = width_from_type_name(&type_name)?;
         return Some(IndexBuffer {
             indices: values,
             element_type: type_name_from_width(width),
         });
     }
-    let (bytes, _) = find_blob(children, "indexdata")?;
-    let width = find_number(children, &["indexsize", "indexelementsize"])
+    let (bytes, _) = find_blob(children, "indexdata", ids)?;
+    let width = find_number(children, &["indexsize", "indexelementsize"], ids)
         .and_then(index_width_from_number)
         .or_else(|| {
-            find_text(children, &["indexformat", "indextype"]).and_then(index_width_from_type_name)
+            find_text(children, &["indexformat", "indextype"], ids)
+                .and_then(index_width_from_type_name)
         })
         .unwrap_or(2);
     Some(IndexBuffer {
@@ -1989,9 +2269,26 @@ fn find_index_data(children: &[SerzNode]) -> Option<IndexBuffer> {
     })
 }
 
-fn find_index_array(children: &[SerzNode]) -> Option<(Vec<u32>, String)> {
-    for child in children {
-        match child {
+fn find_index_array(
+    children: &[SerzNode],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<(Vec<u32>, String)> {
+    fn find(
+        node: &SerzNode,
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+    ) -> Option<(Vec<u32>, String)> {
+        if let SerzNode::Reference { target_id, .. } = node {
+            if !reference_stack.insert(*target_id) {
+                return None;
+            }
+            let found = ids
+                .get(target_id)
+                .and_then(|target| find(target, ids, reference_stack));
+            reference_stack.remove(target_id);
+            return found;
+        }
+        match node {
             SerzNode::Array {
                 name,
                 type_name,
@@ -2001,19 +2298,27 @@ fn find_index_array(children: &[SerzNode]) -> Option<(Vec<u32>, String)> {
                     .iter()
                     .map(|value| value.parse::<u32>().ok())
                     .collect::<Option<Vec<_>>>()?;
-                return Some((parsed, type_name.clone()));
+                Some((parsed, type_name.clone()))
             }
             SerzNode::Element { name, children, .. } => {
                 if name.eq_ignore_ascii_case("indexdata")
-                    && let Some(found) = find_index_array(children)
+                    && let Some(found) = children
+                        .iter()
+                        .find_map(|child| find(child, ids, reference_stack))
                 {
                     return Some(found);
                 }
-                if let Some(found) = find_index_array(children) {
-                    return Some(found);
-                }
+                children
+                    .iter()
+                    .find_map(|child| find(child, ids, reference_stack))
             }
-            _ => {}
+            _ => None,
+        }
+    }
+
+    for child in children {
+        if let Some(found) = find(child, ids, &mut HashSet::new()) {
+            return Some(found);
         }
     }
     None
@@ -2049,30 +2354,59 @@ fn type_name_from_width(width: usize) -> &'static str {
     if width == 4 { "u32" } else { "u16" }
 }
 
-fn find_primitive_topology(node: &SerzNode) -> PrimitiveTopology {
-    match node {
-        SerzNode::Property { name, value, .. }
-            if name.eq_ignore_ascii_case("primitive")
-                || name.eq_ignore_ascii_case("primitivetype")
-                || name.eq_ignore_ascii_case("primtype")
-                || name.eq_ignore_ascii_case("topology") =>
-        {
-            parse_primitive_topology(value)
-        }
-        SerzNode::Element { name, children, .. } => {
-            if name.to_ascii_lowercase().contains("trianglestrip") {
-                return PrimitiveTopology::TriangleStrip;
+fn find_primitive_topology(node: &SerzNode, ids: &HashMap<u32, &SerzNode>) -> PrimitiveTopology {
+    fn find(
+        node: &SerzNode,
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+    ) -> Option<PrimitiveTopology> {
+        match node {
+            SerzNode::Property { name, value, .. } if is_primitive_type_name(name) => {
+                Some(parse_primitive_topology(value))
             }
-            for child in children {
-                let topology = find_primitive_topology(child);
-                if topology == PrimitiveTopology::TriangleStrip {
-                    return topology;
+            SerzNode::Array { name, values, .. } if is_primitive_type_name(name) => {
+                values.first().map(|value| parse_primitive_topology(value))
+            }
+            SerzNode::Reference { name, target_id } => {
+                if !reference_stack.insert(*target_id) {
+                    return None;
                 }
+                let result = ids.get(target_id).and_then(|target| {
+                    if is_primitive_type_name(name) {
+                        resolve_ref_text(target, ids, reference_stack).map(parse_primitive_topology)
+                    } else {
+                        find(target, ids, reference_stack)
+                    }
+                });
+                reference_stack.remove(target_id);
+                result
             }
-            PrimitiveTopology::TriangleList
+            SerzNode::Element { name, children, .. } => {
+                if is_primitive_type_name(name)
+                    && let Some(value) = children
+                        .iter()
+                        .find_map(|child| resolve_ref_text(child, ids, reference_stack))
+                {
+                    return Some(parse_primitive_topology(value));
+                }
+                if name.to_ascii_lowercase().contains("trianglestrip") {
+                    return Some(PrimitiveTopology::TriangleStrip);
+                }
+                children
+                    .iter()
+                    .find_map(|child| find(child, ids, reference_stack))
+            }
+            _ => None,
         }
-        _ => PrimitiveTopology::TriangleList,
     }
+
+    find(node, ids, &mut HashSet::new()).unwrap_or_default()
+}
+
+fn is_primitive_type_name(name: &str) -> bool {
+    ["primitive", "primitivetype", "primtype", "topology"]
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
 }
 
 fn parse_primitive_topology(value: &str) -> PrimitiveTopology {
@@ -2248,9 +2582,28 @@ fn append_transformed_submesh(
     Ok(())
 }
 
-fn find_blob(children: &[SerzNode], expected: &str) -> Option<(Vec<u8>, String)> {
-    for child in children {
-        match child {
+fn find_blob(
+    children: &[SerzNode],
+    expected: &str,
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<(Vec<u8>, String)> {
+    fn find(
+        node: &SerzNode,
+        expected: &str,
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+    ) -> Option<(Vec<u8>, String)> {
+        if let SerzNode::Reference { target_id, .. } = node {
+            if !reference_stack.insert(*target_id) {
+                return None;
+            }
+            let found = ids
+                .get(target_id)
+                .and_then(|target| find(target, expected, ids, reference_stack));
+            reference_stack.remove(target_id);
+            return found;
+        }
+        match node {
             SerzNode::Element { name, children, .. } => {
                 if name.eq_ignore_ascii_case(expected)
                     && let Some(data) = children.iter().find_map(|node| match node {
@@ -2260,51 +2613,123 @@ fn find_blob(children: &[SerzNode], expected: &str) -> Option<(Vec<u8>, String)>
                 {
                     return Some((data, name.clone()));
                 }
-                if let Some(found) = find_blob(children, expected) {
-                    return Some(found);
-                }
+                children
+                    .iter()
+                    .find_map(|child| find(child, expected, ids, reference_stack))
             }
             SerzNode::Blob { data } if expected == "vertexdata" || expected == "indexdata" => {
-                return Some((data.clone(), String::new()));
+                Some((data.clone(), String::new()))
             }
-            _ => {}
+            _ => None,
+        }
+    }
+
+    for child in children {
+        if let Some(found) = find(child, expected, ids, &mut HashSet::new()) {
+            return Some(found);
         }
     }
     None
 }
 
-fn find_number(children: &[SerzNode], expected: &[&str]) -> Option<u64> {
-    find_text(children, expected)?.parse().ok()
+fn find_number(
+    children: &[SerzNode],
+    expected: &[&str],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<u64> {
+    find_text(children, expected, ids)?.trim().parse().ok()
 }
 
-fn find_text<'a>(children: &'a [SerzNode], expected: &[&str]) -> Option<&'a str> {
-    for child in children {
-        match child {
+fn find_text<'a>(
+    children: &'a [SerzNode],
+    expected: &[&str],
+    ids: &HashMap<u32, &'a SerzNode>,
+) -> Option<&'a str> {
+    fn find<'a>(
+        node: &'a SerzNode,
+        expected: &[&str],
+        ids: &HashMap<u32, &'a SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+    ) -> Option<&'a str> {
+        match node {
             SerzNode::Property { name, value, .. }
                 if expected
                     .iter()
                     .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
             {
-                return Some(value);
+                Some(value)
+            }
+            SerzNode::Array { name, values, .. }
+                if expected
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            {
+                values.first().map(String::as_str)
+            }
+            SerzNode::Reference { name, target_id } => {
+                if !reference_stack.insert(*target_id) {
+                    return None;
+                }
+                let result = ids.get(target_id).and_then(|target| {
+                    if expected
+                        .iter()
+                        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+                    {
+                        resolve_ref_text(target, ids, reference_stack)
+                    } else {
+                        find(target, expected, ids, reference_stack)
+                    }
+                });
+                reference_stack.remove(target_id);
+                result
             }
             SerzNode::Element { name, children, .. }
                 if expected
                     .iter()
                     .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
             {
-                if let Some(SerzNode::Property { value, .. }) = children.first() {
-                    return Some(value);
-                }
+                children
+                    .iter()
+                    .find_map(|child| resolve_ref_text(child, ids, reference_stack))
             }
-            SerzNode::Element { children, .. } => {
-                if let Some(value) = find_text(children, expected) {
-                    return Some(value);
-                }
-            }
-            _ => {}
+            SerzNode::Element { children, .. } => children
+                .iter()
+                .find_map(|child| find(child, expected, ids, reference_stack)),
+            _ => None,
+        }
+    }
+
+    for child in children {
+        if let Some(value) = find(child, expected, ids, &mut HashSet::new()) {
+            return Some(value);
         }
     }
     None
+}
+
+fn resolve_ref_text<'a>(
+    node: &'a SerzNode,
+    ids: &HashMap<u32, &'a SerzNode>,
+    reference_stack: &mut HashSet<u32>,
+) -> Option<&'a str> {
+    match node {
+        SerzNode::Property { value, .. } => Some(value),
+        SerzNode::Array { values, .. } => values.first().map(String::as_str),
+        SerzNode::Element { children, .. } => children
+            .iter()
+            .find_map(|child| resolve_ref_text(child, ids, reference_stack)),
+        SerzNode::Reference { target_id, .. } => {
+            if !reference_stack.insert(*target_id) {
+                return None;
+            }
+            let value = ids
+                .get(target_id)
+                .and_then(|target| resolve_ref_text(target, ids, reference_stack));
+            reference_stack.remove(target_id);
+            value
+        }
+        _ => None,
+    }
 }
 
 fn decode_indices(data: &[u8], width: usize) -> Result<Vec<u32>, String> {
@@ -2501,8 +2926,7 @@ pub fn resolve_texture_data(geo_path: &Path, reference: &str) -> Option<(String,
                 targets
                     .iter()
                     .any(|target| {
-                        normalized == *target
-                            || normalized.ends_with(&format!("\\{target}"))
+                        normalized == *target || normalized.ends_with(&format!("\\{target}"))
                     })
                     .then_some((index, name))
             });
@@ -2530,7 +2954,9 @@ fn strip_texture_slot_prefix(reference: &str) -> String {
     };
     if prefix.starts_with('[')
         && prefix.ends_with(']')
-        && prefix[1..3].chars().all(|character| character.is_ascii_hexdigit())
+        && prefix[1..3]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
     {
         let stripped = &file[4..];
         if let Some(parent) = parent {
@@ -2671,12 +3097,8 @@ mod tests {
         std::fs::write(&bogey_path, b"").unwrap();
 
         let (found_path, _, _) = find_geometry_blueprint(&geometry_path, "main").unwrap();
-        let resolved = resolve_asset_path(
-            &found_path,
-            r"Provider\Product\Bogies\Front.xml",
-            "bin",
-        )
-        .unwrap();
+        let resolved =
+            resolve_asset_path(&found_path, r"Provider\Product\Bogies\Front.xml", "bin").unwrap();
 
         assert_eq!(found_path, blueprint_path);
         assert_eq!(resolved, bogey_path);
@@ -2684,11 +3106,7 @@ mod tests {
 
     #[test]
     fn composes_attached_parts_and_side_by_side_layouts() {
-        let source = xml(
-            &triangle_vertices(3),
-            &[0, 0, 1, 0, 2, 0],
-            32,
-        );
+        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32);
         let model = Arc::new(GeoModel::parse(source.as_bytes()).unwrap());
         let assembly = GeoAssembly {
             parts: vec![
@@ -2864,6 +3282,68 @@ mod tests {
         assert_eq!(model.indices, [0, 1, 2, 0, 1, 2, 2, 1, 3]);
         assert!(model.diagnostics.batch_ranges[0].contains("start=0 count=3"));
         assert!(model.diagnostics.batch_ranges[1].contains("start=3 count=4"));
+    }
+
+    #[test]
+    fn resolves_referenced_primitive_types_for_triangle_strips() {
+        let batches = r#"
+            <cHcPrimitiveSetDescDx>
+                <NumPrimitives d:id="43">
+                    <Value d:type="sUInt32">4</Value>
+                </NumPrimitives>
+                <PrimitiveType d:id="42">
+                    <Value d:type="cDeltaString">PRIMTYPE_TRIANGLESTRIP</Value>
+                </PrimitiveType>
+                <IndexArrayStart d:type="sUInt32">0</IndexArrayStart>
+                <VertexIndexBase d:id="44">
+                    <Value d:type="sUInt32">0</Value>
+                </VertexIndexBase>
+                <VertexIndexMin d:id="45">
+                    <Value d:type="sUInt32">0</Value>
+                </VertexIndexMin>
+                <VertexIndexRange d:id="46">
+                    <Value d:type="sUInt32">4</Value>
+                </VertexIndexRange>
+            </cHcPrimitiveSetDescDx>
+            <cHcPrimitiveSetDescDx>
+                <NumPrimitives d:type="ref">43</NumPrimitives>
+                <PrimitiveType d:type="ref">42</PrimitiveType>
+                <IndexArrayStart d:type="sUInt32">4</IndexArrayStart>
+                <VertexIndexBase d:type="ref">44</VertexIndexBase>
+                <VertexIndexMin d:type="ref">45</VertexIndexMin>
+                <VertexIndexRange d:type="ref">46</VertexIndexRange>
+            </cHcPrimitiveSetDescDx>
+        "#;
+        let source = xml(
+            &triangle_vertices(4),
+            &[0, 0, 1, 0, 2, 0, 3, 0, 0, 0, 1, 0, 2, 0, 3, 0],
+            32,
+        )
+        .replace("</Root>", &format!("{batches}</Root>"));
+        let parsed_root = parse_serz_document(source.as_bytes()).unwrap();
+        let ids = build_id_map(&parsed_root);
+        let SerzNode::Element { children, .. } = &parsed_root else {
+            panic!("expected root element");
+        };
+        assert_eq!(find_number(children, &["numprimitives"], &ids), Some(4));
+        assert_eq!(find_number(children, &["vertexindexbase"], &ids), Some(0));
+        assert_eq!(find_number(children, &["vertexindexmin"], &ids), Some(0));
+        assert_eq!(find_number(children, &["vertexindexrange"], &ids), Some(4));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(
+            model.diagnostics.primitive_type,
+            PrimitiveTopology::TriangleStrip
+        );
+        assert_eq!(model.diagnostics.batch_ranges.len(), 2);
+        assert!(
+            model
+                .diagnostics
+                .batch_ranges
+                .iter()
+                .all(|range| range.contains("topology=TriangleStrip"))
+        );
+        assert_eq!(model.indices, [0, 1, 2, 2, 1, 3, 0, 1, 2, 2, 1, 3]);
     }
 
     #[test]
@@ -3141,7 +3621,7 @@ mod tests {
             r"Textures\body_diffuse.TgPcDx".to_owned(),
             r"Textures\shadow.TgPcDx".to_owned(),
         ];
-        let bindings = find_material_bindings(&root, &textures);
+        let bindings = find_material_bindings(&root, &textures, &build_id_map(&root));
 
         assert_eq!(bindings[&7].texture_index, 1);
         assert!(!bindings[&7].excluded);
