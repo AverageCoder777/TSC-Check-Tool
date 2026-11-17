@@ -459,7 +459,7 @@ fn open_texture_viewer(path: &Path) {
             viewer.set_pan_x(0.0);
             viewer.set_pan_y(0.0);
             viewer.set_show_alpha(false);
-            let info = match crate::texture::inspect_tgpcdx(&data) {
+            let info = match crate::texture::inspect_tgpcdx_with_path(&data, Some(path)) {
                 Ok(info) => crate::texture::texture_info_text(&info, path, false),
                 Err(_) => format!("{} x {} px  TGPCDX  {}", w, h, path.display()),
             };

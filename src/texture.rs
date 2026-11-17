@@ -2,7 +2,7 @@
 
 use std::fmt::Write as FmtWrite;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     let xml = if data.starts_with(b"SERZ") {
@@ -254,6 +254,7 @@ fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
 
 /// Экстрагированные метаданные тектуры .TgPcDx для панели информации.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TextureInfo {
     pub name: String,
     pub is_swizzled: bool,
@@ -263,12 +264,39 @@ pub struct TextureInfo {
     pub min_width: u32,
     pub min_height: u32,
     pub format: String,
+    pub raw_format: String,
     pub format_label: String,
     pub dds_format: Option<&'static str>,
+    pub texture_count: u32,
+    pub mip_storage_mode: String,
+    pub flags_u16: u16,
+    pub flags: u16,
+    pub unnamed_u16: u16,
+    pub image_flags: u16,
+    pub pre_blob_u16: u16,
+    pub file_size_bytes: u64,
+    pub total_blob_bytes: u64,
+    pub header_bytes: u64,
+    pub name_matches_filename: bool,
+    pub has_bak: bool,
+    pub bak_size_bytes: u64,
+    pub backup_size_bytes: u64,
 }
 
+/// Алиасы для совместимости с ожидаемыми именами структуры.
+#[allow(dead_code)]
+pub type TgpcdxInfo = TextureInfo;
+#[allow(dead_code)]
+pub type TextureInspectReport = TextureInfo;
+
+/// Извлекает метаданные текстуры из файла .TgPcDx (SERZ или простой XML).
 /// Извлекает метаданные текстуры из файла .TgPcDx (SERZ или простой XML).
 pub fn inspect_tgpcdx(data: &[u8]) -> Result<TextureInfo, String> {
+    inspect_tgpcdx_with_path(data, None)
+}
+
+/// Вариант с указанием пути на диске: позволяет сверить имя и проверить .bak.
+pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<TextureInfo, String> {
     let xml = if data.starts_with(b"SERZ") {
         serz_bytes_to_xml(data)?
     } else {
@@ -280,12 +308,16 @@ pub fn inspect_tgpcdx(data: &[u8]) -> Result<TextureInfo, String> {
         return Err("no image blocks".into());
     }
 
+    // Количество текстур в группе cHcTextureGroup.
+    let texture_count = count_c_hc_textures(&xml).max(1);
+
     let mut width = 0u32;
     let mut height = 0u32;
     let mut min_width = u32::MAX;
     let mut min_height = u32::MAX;
-    let mut format = String::new();
+    let mut raw_format = String::new();
     let mut is_swizzled = false;
+    let mut flags_u16 = 0u16;
 
     for block in &blocks {
         let w: u32 = extract_tag(block, "Width", "sUInt16")
@@ -305,13 +337,15 @@ pub fn inspect_tgpcdx(data: &[u8]) -> Result<TextureInfo, String> {
         }
         min_width = min_width.min(w);
         min_height = min_height.min(h);
-        if format.is_empty() {
-            format = extract_format(block);
+        if raw_format.is_empty() {
+            raw_format = extract_tag(block, "Format", "cDeltaString")
+                .unwrap_or_else(|| extract_format(block));
         }
         if !is_swizzled {
-            is_swizzled = extract_tag(block, "IsSwizzled", "bool")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(false);
+            is_swizzled = parse_bool_tag(block, "IsSwizzled");
+        }
+        if flags_u16 == 0 {
+            flags_u16 = extract_unnamed_u16(block);
         }
     }
 
@@ -323,21 +357,151 @@ pub fn inspect_tgpcdx(data: &[u8]) -> Result<TextureInfo, String> {
         min_height = height;
     }
 
+    // Сырой тег формата (fallback).
+    if raw_format.is_empty() {
+        raw_format = extract_format(blocks[0]);
+    }
+
+    // Размеры blob-данных.
+    let total_blob_bytes: u64 = blocks
+        .iter()
+        .map(|b| extract_blob(b).map(|s| hex_decode(&s).len() as u64).unwrap_or(0))
+        .sum();
+    // Если blob-строки не распознались, используем d:size.
+    let total_blob_bytes = if total_blob_bytes == 0 {
+        blocks
+            .iter()
+            .map(|b| extract_blob_size(b))
+            .sum()
+    } else {
+        total_blob_bytes
+    };
+
+    // Режим хранения мипмапов.
+    let (mip_count, min_width, min_height, mip_storage_mode) = if blocks.len() <= 1 {
+        // Единый упакованный блоб: вычисляем реальное число уровней.
+        let fmt = tgpcdx_dds_compression(&raw_format);
+        let mut levels = 1u32;
+        let mut mw = width;
+        let mut mh = height;
+        let mut sum = mip_level_bytes(width, height, fmt).unwrap_or(0) as u64;
+        if fmt != DdsCompression::Unknown && total_blob_bytes > sum {
+            let mut w = (width / 2).max(1);
+            let mut h = (height / 2).max(1);
+            while sum < total_blob_bytes {
+                let sz = mip_level_bytes(w, h, fmt).unwrap_or(0) as u64;
+                if sz == 0 || sum + sz > total_blob_bytes {
+                    break;
+                }
+                sum += sz;
+                levels += 1;
+                mw = w;
+                mh = h;
+                if w == 1 && h == 1 {
+                    break;
+                }
+                w = (w / 2).max(1);
+                h = (h / 2).max(1);
+            }
+        }
+        if sum != total_blob_bytes && total_blob_bytes > 0 {
+            // Не совпало — оставляем хотя бы 1.
+            levels = levels.max(1);
+        }
+        (
+            levels,
+            mw,
+            mh,
+            "Единый упакованный блоб (1× cHcImageDx)".to_string(),
+        )
+    } else {
+        (
+            blocks.len() as u32,
+            min_width,
+            min_height,
+            format!("Раздельные узлы ({}× cHcImageDx)", blocks.len()),
+        )
+    };
+
     let name = extract_tag(&xml, "Name", "cDeltaString").unwrap_or_default();
-    let (format_label, dds_format) = format_label_and_dds_name(&format);
+
+    let (format_label, dds_format) = format_label_and_dds_name(&raw_format);
+    let format = raw_format.clone();
+
+    // Путь / файл.
+    let (file_size_bytes, has_bak, bak_size_bytes, name_matches_filename) = match path {
+        Some(p) => {
+            let fs_size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(data.len() as u64);
+            let bak_path = PathBuf::from(format!("{}.bak", p.display()));
+            let (has, bak_sz) = match std::fs::metadata(&bak_path) {
+                Ok(m) => (true, m.len()),
+                Err(_) => (false, 0u64),
+            };
+            let file_stem = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let internal_tail = name
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or(&name);
+            let matches = !file_stem.is_empty()
+                && file_stem.eq_ignore_ascii_case(internal_tail);
+            (fs_size, has, bak_sz, matches)
+        }
+        None => (
+            data.len() as u64,
+            false,
+            0u64,
+            false,
+        ),
+    };
+
+    let header_bytes = file_size_bytes.saturating_sub(total_blob_bytes);
 
     Ok(TextureInfo {
         name,
         is_swizzled,
         width,
         height,
-        mip_count: blocks.len() as u32,
+        mip_count,
         min_width,
         min_height,
         format,
+        raw_format,
         format_label,
         dds_format,
+        texture_count,
+        mip_storage_mode,
+        flags_u16,
+        flags: flags_u16,
+        unnamed_u16: flags_u16,
+        image_flags: flags_u16,
+        pre_blob_u16: flags_u16,
+        file_size_bytes,
+        total_blob_bytes,
+        header_bytes,
+        name_matches_filename,
+        has_bak,
+        bak_size_bytes,
+        backup_size_bytes: bak_size_bytes,
     })
+}
+
+#[allow(dead_code)]
+pub fn inspect_tgpcdx_file(path: &Path) -> Result<TextureInfo, String> {
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
+    inspect_tgpcdx_with_path(&data, Some(path))
+}
+
+#[allow(dead_code)]
+pub fn inspect_texture(data: &[u8]) -> Result<TextureInfo, String> {
+    inspect_tgpcdx(data)
+}
+
+#[allow(dead_code)]
+pub fn inspect_texture_file(path: &Path) -> Result<TextureInfo, String> {
+    inspect_tgpcdx_file(path)
 }
 
 /// Собирает многострочный текст информационной панели окна просмотра текстур.
@@ -345,32 +509,45 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
     let dds_name = info.dds_format.map_or("неизвестный", |n| n);
     let mut s = String::new();
     if !info.name.is_empty() {
-        s.push_str(&format!("Имя: {}\n", info.name));
-    }
-    if info.mip_count > 1 {
-        s.push_str(&format!(
-            "Разрешение: {}×{} px | Мипмапов: {} ({}×{} → {}×{})\n",
-            info.width,
-            info.height,
-            info.mip_count,
-            info.width,
-            info.height,
-            info.min_width,
-            info.min_height,
-        ));
-    } else {
-        s.push_str(&format!(
-            "Разрешение: {}×{} px | Мипмапов: {}\n",
-            info.width, info.height, info.mip_count,
-        ));
+        let mark = if info.name_matches_filename {
+            "✓"
+        } else {
+            "⚠ имя файла отличается"
+        };
+        s.push_str(&format!("Внутреннее имя (Name): {} {}\n", info.name, mark));
     }
     s.push_str(&format!(
-        "Формат: {} | DDS: {}\n",
-        info.format_label, dds_name
+        "Разрешение: {}×{} px | Текстур в группе: {} | Мипмапов: {} ({}×{} → {}×{}) [{}]\n",
+        info.width,
+        info.height,
+        info.texture_count,
+        info.mip_count,
+        info.width,
+        info.height,
+        info.min_width,
+        info.min_height,
+        info.mip_storage_mode,
     ));
     s.push_str(&format!(
-        "IsSwizzled: {}\n",
-        if info.is_swizzled { 1 } else { 0 }
+        "Формат: {} [{}] | DDS: {} | IsSwizzled: {} | Flags(u16): {}\n",
+        info.format_label,
+        info.raw_format,
+        dds_name,
+        if info.is_swizzled { 1 } else { 0 },
+        info.flags_u16,
+    ));
+    let bak = if info.has_bak {
+        "есть"
+    } else {
+        "нет"
+    };
+    s.push_str(&format!(
+        "Размер файла: {} ({} Б) | Пиксели (blob): {} Б | Заголовок: {} Б | Бэкап (.bak): {}\n",
+        format_size_bytes(info.file_size_bytes),
+        format_bytes_spaces(info.file_size_bytes),
+        format_bytes_spaces(info.total_blob_bytes),
+        format_bytes_spaces(info.header_bytes),
+        bak,
     ));
     s.push_str(&format!(
         "Для импорта требуется: DDS в формате {}, размеры степень двойки, с мипмапами\n",
@@ -381,6 +558,26 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
     }
     s.push_str(&format!("TGPCDX  {}", path.display()));
     s
+}
+
+fn format_size_bytes(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} МБ", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} КБ", bytes as f64 / 1024.0)
+    }
+}
+
+fn format_bytes_spaces(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            out.insert(0, ' ');
+        }
+        out.insert(0, c);
+    }
+    out
 }
 
 /// Ожидаемый размер одного уровня мипмапа в байтах.
@@ -957,6 +1154,102 @@ fn extract_blob(block: &str) -> Option<String> {
     Some(block[content_start..end].to_string())
 }
 
+fn count_c_hc_textures(xml: &str) -> u32 {
+    let mut count = 0usize;
+    let mut search = xml;
+    while let Some(pos) = search.find("<cHcTexture") {
+        let after = &search[pos + "<cHcTexture".len()..];
+        let next = after.chars().next();
+        if next == Some(' ') || next == Some('>') || next == Some('\t') || next == Some('\n') {
+            count += 1;
+        }
+        // advance past this occurrence
+        if pos + 1 >= search.len() {
+            break;
+        }
+        search = &search[pos + 1..];
+    }
+    count as u32
+}
+
+fn parse_bool_tag(block: &str, tag: &str) -> bool {
+    for dtype in ["bool", "sUInt32", "sUInt8", "sInt32", "sUInt16"] {
+        if let Some(v) = extract_tag(block, tag, dtype) {
+            let t = v.trim().to_lowercase();
+            if t == "1" || t == "true" || t == "yes" {
+                return true;
+            }
+            if t == "0" || t == "false" || t == "no" {
+                return false;
+            }
+            if let Ok(n) = t.parse::<u32>() {
+                return n != 0;
+            }
+        }
+    }
+    false
+}
+
+fn extract_unnamed_u16(block: &str) -> u16 {
+    if let Some(blob_pos) = block.find("<d:blob") {
+        let pre = &block[..blob_pos];
+        if let Some(start) = pre.rfind("<e d:type=\"sUInt16\">") {
+            let rest = &pre[start + "<e d:type=\"sUInt16\">".len()..];
+            if let Some(end) = rest.find("</e>")
+            && let Ok(v) = rest[..end].trim().parse::<u16>()
+        {
+            return v;
+        }
+        }
+    }
+    // Fallback: any <e d:type="sUInt16"> in block.
+    if let Some(start) = block.find("<e d:type=\"sUInt16\">") {
+        let rest = &block[start + "<e d:type=\"sUInt16\">".len()..];
+        if let Some(end) = rest.find("</e>")
+            && let Ok(v) = rest[..end].trim().parse::<u16>()
+        {
+            return v;
+        }
+    }
+    0
+}
+
+fn extract_blob_size(block: &str) -> u64 {
+    let marker = "<d:blob d:size=\"";
+    if let Some(start) = block.find(marker) {
+        let rest = &block[start + marker.len()..];
+        if let Some(end) = rest.find('"')
+            && let Ok(n) = rest[..end].parse::<u64>()
+        {
+            return n;
+        }
+    }
+    0
+}
+
+fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
+    let u = fmt.to_uppercase();
+    if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
+        return DdsCompression::Dxt5;
+    }
+    if u.contains("EXPL_ALPHA") || u.contains("DXT3") || u.contains("BC2") {
+        return DdsCompression::Dxt3;
+    }
+    if u.contains("COMPRESSED") || u.contains("DXT1") || u.contains("BC1") {
+        return DdsCompression::Dxt1;
+    }
+    if u.contains("8888") || u.contains("RGBA") || u.contains("BGRA") || u.contains("ARGB") {
+        return DdsCompression::Rgba8888;
+    }
+    if u.contains("L8") {
+        return DdsCompression::L8;
+    }
+    if u.contains("A8") {
+        return DdsCompression::A8;
+    }
+    DdsCompression::Unknown
+}
+
 /// Потоковое прямое декодирование Hex без промежуточных строк и подстрок.
 fn hex_decode(s: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(s.len() / 2);
@@ -1233,8 +1526,23 @@ mod tests {
             min_width: 1,
             min_height: 1,
             format: "HC_IMAGE_FORMAT_COMPRESSED".into(),
+            raw_format: "HC_IMAGE_FORMAT_COMPRESSED".into(),
             format_label: "DXT1 (BC1, без альфы / 1-bit альфа)".into(),
             dds_format: Some("DXT1"),
+            texture_count: 1,
+            mip_storage_mode: "Единый упакованный блоб (1× cHcImageDx)".into(),
+            flags_u16: 0,
+            flags: 0,
+            unnamed_u16: 0,
+            image_flags: 0,
+            pre_blob_u16: 0,
+            file_size_bytes: 0,
+            total_blob_bytes: 0,
+            header_bytes: 0,
+            name_matches_filename: false,
+            has_bak: false,
+            bak_size_bytes: 0,
+            backup_size_bytes: 0,
         };
         let expected = tgpcdx_format_to_dds_name(&original.format).unwrap();
         let actual = DdsCompression::Dxt5.as_dds_name();
@@ -1283,10 +1591,11 @@ mod tests {
         assert_eq!(info.dds_format, Some("DXT5"));
 
         let text = texture_info_text(&info, Path::new("x\\y\\tex.TgPcDx"), false);
-        assert!(text.contains("Имя: TrainSimContent\\Textures\\Sample"));
-        assert!(text.contains("Разрешение: 1024×1024 px | Мипмапов: 1"));
-        assert!(text.contains("Формат: DXT5 (BC3, плавная альфа) | DDS: DXT5"));
+        assert!(text.contains("Внутреннее имя (Name): TrainSimContent\\Textures\\Sample"));
+        assert!(text.contains("Разрешение: 1024×1024 px | Текстур в группе: 1 | Мипмапов: 1"));
+        assert!(text.contains("Формат: DXT5 (BC3, плавная альфа) [HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA] | DDS: DXT5"));
         assert!(text.contains("IsSwizzled: 0"));
+        assert!(text.contains("Flags(u16): 0"));
         assert!(text.contains(
             "Для импорта требуется: DDS в формате DXT5, размеры степень двойки, с мипмапами"
         ));

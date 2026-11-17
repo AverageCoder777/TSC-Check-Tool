@@ -304,7 +304,7 @@ fn notify(
 /// Собирает текст информационной панели просмотрщика из метаданных .TgPcDx.
 /// При неудаче парсинга возвращает старую компактную строку.
 fn build_texture_info_text(path: &Path, data: &[u8], w: u32, h: u32, show_alpha: bool) -> String {
-    match crate::texture::inspect_tgpcdx(data) {
+    match crate::texture::inspect_tgpcdx_with_path(data, Some(path)) {
         Ok(info) => crate::texture::texture_info_text(&info, path, show_alpha),
         Err(_) => {
             let alpha = if show_alpha { "  [альфа]" } else { "" };
