@@ -4619,10 +4619,3 @@ mod tests {
         assert_eq!(model.diagnostics.vertex_count, 3);
     }
 }
-
-
-
-
-
-
-
