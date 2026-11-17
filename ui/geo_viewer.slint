@@ -1,4 +1,14 @@
-import { VerticalBox, HorizontalBox, Button } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, Button, CheckBox, LineEdit, ListView } from "std-widgets.slint";
+
+export struct BatchEntry {
+    index: int,
+    node-name: string,
+    material-name: string,
+    shader-name: string,
+    lod-level: int,
+    triangle-count: int,
+    visible: bool,
+}
 
 export component GeoViewerWindow inherits Window {
     title: "GeoPcDx 3D Viewer";
@@ -14,6 +24,8 @@ export component GeoViewerWindow inherits Window {
     in-out property <string> texture-status: "";
     in-out property <bool> textures-expanded: false;
     in-out property <bool> wireframe: false;
+    in-out property <bool> batches-expanded: true;
+    in-out property <[BatchEntry]> batch-items: [];
     in-out property <float> yaw: 0.7;
     in-out property <float> pitch: 0.25;
     in-out property <float> distance: 4.0;
@@ -23,6 +35,9 @@ export component GeoViewerWindow inherits Window {
 
     callback camera-changed(float, float, float, float, float, float, float, bool);
     callback open-in-editor();
+    callback toggle-batch(int, bool);
+    callback apply-batch-preset(string);
+    callback filter-batches(string);
     VerticalBox {
         spacing: 6px;
         padding: 8px;
@@ -51,117 +66,180 @@ export component GeoViewerWindow inherits Window {
                     root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe);
                 }
             }
+            Button {
+                text: root.batches-expanded ? "Hide batches" : "Batches";
+                clicked => { root.batches-expanded = !root.batches-expanded; }
+            }
         }
-        viewport := Rectangle {
-            background: #1c2028;
-            border-width: 1px;
-            border-color: #3a414c;
-            horizontal-stretch: 1;
-            vertical-stretch: 1;
-            clip: true;
-            Image {
-                source: root.frame;
-                width: parent.width;
-                height: parent.height;
-                image-fit: contain;
-            }
-            TouchArea {
-                width: 100%;
-                height: 100%;
-                property <float> last-x: 0;
-                property <float> last-y: 0;
-                property <bool> panning: false;
-
-                pointer-event(event) => {
-                    if (event.kind == PointerEventKind.down) {
-                        last-x = self.mouse-x / 1px;
-                        last-y = self.mouse-y / 1px;
-                        panning = event.button == PointerEventButton.right;
-                    }
-                }
-                moved => {
-                    if (self.pressed) {
-                        let dx = self.mouse-x / 1px - last-x;
-                        let dy = self.mouse-y / 1px - last-y;
-                        if (panning) {
-                            root.pan-x += dx * root.distance * 0.002;
-                            root.pan-y -= dy * root.distance * 0.002;
-                        } else {
-                            root.yaw += dx * 0.01;
-                            root.pitch = Math.max(-1.45, Math.min(1.45, root.pitch + dy * 0.01));
-                        }
-                        last-x = self.mouse-x / 1px;
-                        last-y = self.mouse-y / 1px;
-                        root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
-                    }
-                }
-                scroll-event(event) => {
-                    if (event.delta-y > 0) {
-                        root.distance = Math.max(0.1, root.distance / 1.12);
-                    } else if (event.delta-y < 0) {
-                        root.distance = Math.min(500.0, root.distance * 1.12);
-                    }
-                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
-                    accept
-                }
-            }
-            if root.status-text != "" : Rectangle {
-                x: 8px;
-                y: 8px;
-                width: Math.min(parent.width - 16px, 560px);
-                height: 34px;
-                background: #b8141820;
-                border-radius: 4px;
-                Text {
-                    x: 8px;
-                    y: 0px;
-                    width: parent.width - 16px;
-                    height: parent.height;
-                    text: root.status-text;
-                    color: #f0f0f0;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
-            }
-            Rectangle {
-                x: 8px;
-                y: parent.height - 34px;
-                width: Math.min(parent.width - 16px, 560px);
-                height: 26px;
-                background: #b8141820;
-                border-radius: 4px;
-                Text {
-                    x: 8px;
-                    y: 0px;
-                    width: parent.width - 16px;
-                    height: parent.height;
-                    text: root.stats-text;
-                    color: #c9d1dc;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    wrap: TextWrap.no-wrap;
-                }
-            }
-            if root.textures-expanded : Rectangle {
-                x: 8px;
-                y: parent.height - self.height - 42px;
-                width: Math.min(parent.width - 16px, 480px);
-                height: Math.min(260px, parent.height - 64px);
-                background: #e8242a33;
+        HorizontalBox {
+            spacing: 6px;
+            viewport := Rectangle {
+                background: #1c2028;
                 border-width: 1px;
-                border-color: #586170;
-                border-radius: 4px;
+                border-color: #3a414c;
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
                 clip: true;
-                Text {
+                Image {
+                    source: root.frame;
+                    width: parent.width;
+                    height: parent.height;
+                    image-fit: contain;
+                }
+                TouchArea {
+                    width: 100%;
+                    height: 100%;
+                    property <float> last-x: 0;
+                    property <float> last-y: 0;
+                    property <bool> panning: false;
+
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            last-x = self.mouse-x / 1px;
+                            last-y = self.mouse-y / 1px;
+                            panning = event.button == PointerEventButton.right;
+                        }
+                    }
+                    moved => {
+                        if (self.pressed) {
+                            let dx = self.mouse-x / 1px - last-x;
+                            let dy = self.mouse-y / 1px - last-y;
+                            if (panning) {
+                                root.pan-x += dx * root.distance * 0.002;
+                                root.pan-y -= dy * root.distance * 0.002;
+                            } else {
+                                root.yaw += dx * 0.01;
+                                root.pitch = Math.max(-1.45, Math.min(1.45, root.pitch + dy * 0.01));
+                            }
+                            last-x = self.mouse-x / 1px;
+                            last-y = self.mouse-y / 1px;
+                            root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
+                        }
+                    }
+                    scroll-event(event) => {
+                        if (event.delta-y > 0) {
+                            root.distance = Math.max(0.1, root.distance / 1.12);
+                        } else if (event.delta-y < 0) {
+                            root.distance = Math.min(500.0, root.distance * 1.12);
+                        }
+                        root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
+                        accept
+                    }
+                }
+                if root.status-text != "" : Rectangle {
                     x: 8px;
-                    y: 6px;
-                    width: parent.width - 16px;
-                    height: parent.height - 12px;
-                    text: root.texture-status;
-                    color: #e5e5e5;
-                    font-size: 11px;
-                    vertical-alignment: top;
-                    wrap: TextWrap.word-wrap;
+                    y: 8px;
+                    width: Math.min(parent.width - 16px, 560px);
+                    height: 34px;
+                    background: #b8141820;
+                    border-radius: 4px;
+                    Text {
+                        x: 8px;
+                        y: 0px;
+                        width: parent.width - 16px;
+                        height: parent.height;
+                        text: root.status-text;
+                        color: #f0f0f0;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle {
+                    x: 8px;
+                    y: parent.height - 34px;
+                    width: Math.min(parent.width - 16px, 560px);
+                    height: 26px;
+                    background: #b8141820;
+                    border-radius: 4px;
+                    Text {
+                        x: 8px;
+                        y: 0px;
+                        width: parent.width - 16px;
+                        height: parent.height;
+                        text: root.stats-text;
+                        color: #c9d1dc;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        wrap: TextWrap.no-wrap;
+                    }
+                }
+                if root.textures-expanded : Rectangle {
+                    x: 8px;
+                    y: parent.height - self.height - 42px;
+                    width: Math.min(parent.width - 16px, 480px);
+                    height: Math.min(260px, parent.height - 64px);
+                    background: #e8242a33;
+                    border-width: 1px;
+                    border-color: #586170;
+                    border-radius: 4px;
+                    clip: true;
+                    Text {
+                        x: 8px;
+                        y: 6px;
+                        width: parent.width - 16px;
+                        height: parent.height - 12px;
+                        text: root.texture-status;
+                        color: #e5e5e5;
+                        font-size: 11px;
+                        vertical-alignment: top;
+                        wrap: TextWrap.word-wrap;
+                    }
+                }
+            }
+            if root.batches-expanded : Rectangle {
+                width: 300px;
+                background: #1f242c;
+                border-width: 1px;
+                border-color: #3a414c;
+                border-radius: 4px;
+                VerticalBox {
+                    padding: 8px;
+                    spacing: 6px;
+                    HorizontalBox {
+                        spacing: 4px;
+                        Button { text: "LOD0"; clicked => { root.apply-batch-preset("lod0"); } }
+                        Button { text: "All"; clicked => { root.apply-batch-preset("all"); } }
+                        Button { text: "None"; clicked => { root.apply-batch-preset("none"); } }
+                    }
+                    LineEdit {
+                        placeholder-text: "Filter node / material / shader";
+                        edited(text) => { root.filter-batches(text); }
+                    }
+                    Text {
+                        text: "\{root.batch-items.length} batches";
+                        color: #8993a2;
+                        font-size: 11px;
+                    }
+                    ListView {
+                        for item[idx] in root.batch-items : Rectangle {
+                            height: 50px;
+                            HorizontalBox {
+                                spacing: 6px;
+                                padding: 2px;
+                                CheckBox {
+                                    checked: item.visible;
+                                    toggled => { root.toggle-batch(item.index, self.checked); }
+                                }
+                                VerticalBox {
+                                    spacing: 2px;
+                                    Text {
+                                        text: "[#\{item.index}] \{item.node-name} (LOD\{item.lod-level})";
+                                        color: #e5e5e5;
+                                        font-size: 12px;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: "\{item.material-name} • \{item.triangle-count} tris";
+                                        color: #8993a2;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

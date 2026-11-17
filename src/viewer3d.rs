@@ -20,6 +20,13 @@ pub(crate) struct Camera {
     pub(crate) wireframe: bool,
 }
 
+enum ViewCommand {
+    Camera(Camera),
+    ToggleBatch { index: usize, visible: bool },
+    Preset(String),
+    Filter(String),
+}
+
 impl Default for Camera {
     fn default() -> Self {
         Self {
@@ -192,10 +199,25 @@ impl LoadedModel {
     }
 
     fn stats(&self) -> String {
+        let visible_batches = self
+            .model
+            .submeshes
+            .iter()
+            .filter(|submesh| submesh.visible)
+            .count();
+        let visible_triangles: u32 = self
+            .model
+            .submeshes
+            .iter()
+            .filter(|submesh| submesh.visible)
+            .map(|submesh| submesh.triangle_count)
+            .sum();
         format!(
-            "{} vertices  •  {} triangles  •  {} draw batches  •  {} textures",
+            "{} vertices  •  {} / {} triangles  •  {} / {} draw batches  •  {} textures",
             self.model.vertices.len(),
+            visible_triangles,
             self.model.indices.len() / 3,
+            visible_batches,
             self.model.submeshes.len(),
             self.model.textures.len()
         )
@@ -238,20 +260,21 @@ pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
             .into_owned()
             .into(),
     );
-    let (render_tx, render_rx) = mpsc::channel();
-    bind_camera(&window, render_tx);
+    let (command_tx, command_rx) = mpsc::channel();
+    bind_camera(&window, command_tx.clone());
+    bind_batch_panel(&window, command_tx);
     let model_path = path.to_path_buf();
     std::thread::Builder::new()
         .name("geo-viewer-render".into())
-        .spawn(move || render_worker(model_path, weak, render_rx))
+        .spawn(move || render_worker(model_path, weak, command_rx))
         .map_err(|error| format!("Failed to start model renderer: {error}"))?;
     window.run().map_err(|error| error.to_string())
 }
 
-fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<Camera>) {
+fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
     window.on_camera_changed(
         move |yaw, pitch, distance, pan_x, pan_y, width, height, wireframe| {
-            let _ = sender.send(Camera {
+            let _ = sender.send(ViewCommand::Camera(Camera {
                 yaw,
                 pitch,
                 distance,
@@ -260,17 +283,36 @@ fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<Camera>) {
                 width: width.max(1.0) as u32,
                 height: height.max(1.0) as u32,
                 wireframe,
-            });
+            }));
         },
     );
+}
+
+fn bind_batch_panel(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
+    let toggle_sender = sender.clone();
+    window.on_toggle_batch(move |index, visible| {
+        if index >= 0 {
+            let _ = toggle_sender.send(ViewCommand::ToggleBatch {
+                index: index as usize,
+                visible,
+            });
+        }
+    });
+    let preset_sender = sender.clone();
+    window.on_apply_batch_preset(move |preset| {
+        let _ = preset_sender.send(ViewCommand::Preset(preset.to_string()));
+    });
+    window.on_filter_batches(move |text| {
+        let _ = sender.send(ViewCommand::Filter(text.to_string()));
+    });
 }
 
 fn render_worker(
     path: std::path::PathBuf,
     window: slint::Weak<crate::GeoViewerWindow>,
-    receiver: Receiver<Camera>,
+    receiver: Receiver<ViewCommand>,
 ) {
-    let loaded = match LoadedModel::load(&path) {
+    let mut loaded = match LoadedModel::load(&path) {
         Ok(model) => model,
         Err(error) => {
             let _ = slint::invoke_from_event_loop(move || {
@@ -281,10 +323,11 @@ fn render_worker(
             return;
         }
     };
-    let stats = loaded.stats();
     let texture_status = loaded.texture_status.clone();
     let initial_distance = loaded.radius * 2.8;
     let (mut gpu, renderer_status) = create_gpu_renderer(&loaded);
+    let stats = loaded.stats();
+    let entries = batch_entries(&loaded.model, "");
     let initial_window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(window) = initial_window.upgrade() {
@@ -293,6 +336,7 @@ fn render_worker(
             window.set_texture_status(texture_status.into());
             window.set_initial_distance(initial_distance);
             window.set_distance(initial_distance);
+            window.set_batch_items(slint::ModelRc::new(slint::VecModel::from(entries)));
         }
     });
 
@@ -324,13 +368,50 @@ fn render_worker(
             window.set_frame(slint::Image::from_rgba8(buffer));
         }
     });
+    let mut filter = String::new();
     loop {
-        let Ok(next) = receiver.recv() else {
+        let Ok(command) = receiver.recv() else {
             break;
         };
-        camera = next;
-        while let Ok(next) = receiver.try_recv() {
-            camera = next;
+        let mut need_render = false;
+        let mut list_dirty = false;
+        let mut pending = Some(command);
+        while let Some(current) = pending.take() {
+            match current {
+                ViewCommand::Camera(next) => {
+                    camera = next;
+                    need_render = true;
+                }
+                ViewCommand::ToggleBatch { index, visible } => {
+                    set_batch_visibility(&mut loaded, gpu.as_mut(), index, visible);
+                    list_dirty = true;
+                    need_render = true;
+                }
+                ViewCommand::Preset(preset) => {
+                    apply_batch_preset(&mut loaded, gpu.as_mut(), &preset);
+                    list_dirty = true;
+                    need_render = true;
+                }
+                ViewCommand::Filter(text) => {
+                    filter = text;
+                    list_dirty = true;
+                }
+            }
+            pending = receiver.try_recv().ok();
+        }
+        if list_dirty {
+            let entries = batch_entries(&loaded.model, &filter);
+            let stats = loaded.stats();
+            let weak = window.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    window.set_batch_items(slint::ModelRc::new(slint::VecModel::from(entries)));
+                    window.set_stats_text(stats.into());
+                }
+            });
+        }
+        if !need_render {
+            continue;
         }
         let (width, height, pixels) = match render_frame(&loaded, gpu.as_mut(), camera) {
             Ok(frame) => frame,
@@ -356,6 +437,58 @@ fn render_worker(
             }
         });
     }
+}
+
+fn set_batch_visibility(
+    loaded: &mut LoadedModel,
+    gpu: Option<&mut crate::gpu_renderer::GpuRenderer>,
+    index: usize,
+    visible: bool,
+) {
+    if let Some(submesh) = loaded.model.submeshes.get_mut(index) {
+        submesh.visible = visible;
+    }
+    if let Some(gpu) = gpu {
+        gpu.set_batch_visible(index, visible);
+    }
+}
+
+fn apply_batch_preset(
+    loaded: &mut LoadedModel,
+    gpu: Option<&mut crate::gpu_renderer::GpuRenderer>,
+    preset: &str,
+) {
+    for submesh in &mut loaded.model.submeshes {
+        let visible = submesh.preset_visible(preset);
+        submesh.visible = visible;
+    }
+    if let Some(gpu) = gpu {
+        gpu.apply_batch_preset(preset);
+    }
+}
+
+fn batch_entries(model: &GeoModel, filter: &str) -> Vec<crate::BatchEntry> {
+    let needle = filter.trim().to_ascii_lowercase();
+    model
+        .submeshes
+        .iter()
+        .enumerate()
+        .filter(|(_, submesh)| {
+            needle.is_empty()
+                || [&submesh.node_name, &submesh.material_name, &submesh.shader_name]
+                    .iter()
+                    .any(|value| value.to_ascii_lowercase().contains(&needle))
+        })
+        .map(|(index, submesh)| crate::BatchEntry {
+            index: index as i32,
+            node_name: submesh.node_name.as_str().into(),
+            material_name: submesh.material_name.as_str().into(),
+            shader_name: submesh.shader_name.as_str().into(),
+            lod_level: submesh.lod_level as i32,
+            triangle_count: submesh.triangle_count as i32,
+            visible: submesh.visible,
+        })
+        .collect()
 }
 
 fn create_gpu_renderer(loaded: &LoadedModel) -> (Option<crate::gpu_renderer::GpuRenderer>, String) {
@@ -434,13 +567,13 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
         .model
         .submeshes
         .iter()
-        .filter(|submesh| submesh.render_mode != GeoRenderMode::Blended)
+        .filter(|submesh| submesh.visible && submesh.render_mode != GeoRenderMode::Blended)
         .chain(
             model
                 .model
                 .submeshes
                 .iter()
-                .filter(|submesh| submesh.render_mode == GeoRenderMode::Blended),
+                .filter(|submesh| submesh.visible && submesh.render_mode == GeoRenderMode::Blended),
         );
     for submesh in ordered_submeshes {
         let start = submesh.first_index as usize;
@@ -697,7 +830,7 @@ mod tests {
         assert_eq!(loaded.model.textures, [r"Textures\main.TgPcDx"]);
         assert_eq!(
             loaded.stats(),
-            "3 vertices  •  1 triangles  •  1 draw batches  •  1 textures"
+            "3 vertices  •  1 / 1 triangles  •  1 / 1 draw batches  •  1 textures"
         );
     }
 }

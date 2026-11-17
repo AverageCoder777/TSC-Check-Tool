@@ -26,6 +26,8 @@ pub(crate) struct GpuRenderer {
     triangle_indices: wgpu::Buffer,
     wire_indices: wgpu::Buffer,
     submeshes: Vec<GeoSubmesh>,
+    /// Per-batch draw flags, kept separate so toggling never touches GPU buffers.
+    visible: Vec<bool>,
     texture_views: Vec<wgpu::TextureView>,
     sampler: wgpu::Sampler,
 }
@@ -382,9 +384,25 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             triangle_indices,
             wire_indices,
             submeshes: submeshes.to_vec(),
+            visible: submeshes.iter().map(|submesh| submesh.visible).collect(),
             texture_views,
             sampler,
         })
+    }
+
+    pub(crate) fn set_batch_visible(&mut self, batch_idx: usize, visible: bool) {
+        if let Some(slot) = self.visible.get_mut(batch_idx) {
+            *slot = visible;
+        }
+    }
+
+    /// `"lod0"`, `"all"`, `"none"`; unknown presets change nothing.
+    pub(crate) fn apply_batch_preset(&mut self, preset: &str) {
+        self.visible = self
+            .submeshes
+            .iter()
+            .map(|submesh| submesh.preset_visible(preset))
+            .collect();
     }
 
     pub(crate) fn render(
@@ -524,16 +542,15 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 },
                 wgpu::IndexFormat::Uint32,
             );
-            let ordered_submeshes = self
-                .submeshes
-                .iter()
-                .filter(|submesh| submesh.render_mode != GeoRenderMode::Blended)
-                .chain(
-                    self.submeshes
-                        .iter()
-                        .filter(|submesh| submesh.render_mode == GeoRenderMode::Blended),
-                );
-            for submesh in ordered_submeshes {
+            let (opaque, blended): (Vec<usize>, Vec<usize>) =
+                (0..self.submeshes.len()).partition(|&index| {
+                    self.submeshes[index].render_mode != GeoRenderMode::Blended
+                });
+            for index in opaque.into_iter().chain(blended) {
+                if !self.visible.get(index).copied().unwrap_or(true) {
+                    continue;
+                }
+                let submesh = &self.submeshes[index];
                 let pipeline = if camera.wireframe {
                     &self.wire_pipeline
                 } else {

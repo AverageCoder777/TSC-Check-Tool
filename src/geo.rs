@@ -38,7 +38,7 @@ pub struct GeoAssembly {
     pub has_blueprint_attachments: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GeoSubmesh {
     pub first_index: u32,
     pub index_count: u32,
@@ -48,6 +48,31 @@ pub struct GeoSubmesh {
     pub vertex_buffer_index: u32,
     pub base_vertex: i32,
     pub vertex_buffer_offset: i32,
+    /// Draw flag only: buffers stay resident, so toggling never re-uploads geometry.
+    pub visible: bool,
+    pub node_name: String,
+    pub material_name: String,
+    pub shader_name: String,
+    pub lod_level: u8,
+    pub triangle_count: u32,
+}
+
+impl GeoSubmesh {
+    /// Visibility a batch should take for a named preset. Unknown presets are a no-op.
+    pub fn preset_visible(&self, preset: &str) -> bool {
+        match preset {
+            "lod0" => self.lod_level == 0 && !self.is_auxiliary(),
+            "all" => true,
+            "none" => false,
+            _ => self.visible,
+        }
+    }
+
+    fn is_auxiliary(&self) -> bool {
+        is_auxiliary_node(&self.node_name)
+            || is_auxiliary_node(&self.material_name)
+            || is_auxiliary_node(&self.shader_name)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -90,7 +115,7 @@ impl std::fmt::Display for PrimitiveTopology {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct RawSubmesh {
     first_index: u32,
     index_count: u32,
@@ -104,6 +129,30 @@ struct RawSubmesh {
     topology: PrimitiveTopology,
     transform: Mat4,
     excluded: bool,
+    node_name: String,
+    material_name: String,
+    shader_name: String,
+    lod_level: u8,
+}
+
+/// Batch metadata forwarded into `GeoSubmesh` when a draw range is appended.
+#[derive(Clone, Debug)]
+struct BatchInfo {
+    node_name: String,
+    material_name: String,
+    shader_name: String,
+    lod_level: u8,
+}
+
+impl Default for BatchInfo {
+    fn default() -> Self {
+        Self {
+            node_name: "Node #0".into(),
+            material_name: "default".into(),
+            shader_name: String::new(),
+            lod_level: 0,
+        }
+    }
 }
 
 impl GeoModel {
@@ -203,6 +252,7 @@ impl GeoModel {
                             .is_some_and(|end| end <= buffer.stride)
                     })
                     .and_then(|offset| read_vec2(record, offset).ok())
+                    .map(|uv| [uv[0], 1.0 - uv[1]])
                     .unwrap_or([0.0, 0.0]);
                 if position.iter().any(|value| !value.is_finite())
                     || normal.iter().any(|value| !value.is_finite())
@@ -281,6 +331,12 @@ impl GeoModel {
                     .unwrap_or_default();
                 let triangles =
                     convert_to_triangle_list(range, batch.topology, index_buffer.element_type);
+                let info = BatchInfo {
+                    node_name: batch.node_name.clone(),
+                    material_name: batch.material_name.clone(),
+                    shader_name: batch.shader_name.clone(),
+                    lod_level: batch.lod_level,
+                };
                 if batch.transform == Mat4::IDENTITY {
                     append_submesh(
                         &mut indices,
@@ -289,6 +345,7 @@ impl GeoModel {
                         material_index,
                         texture_index,
                         render_mode,
+                        &info,
                         batch.vertex_buffer_index,
                         batch.base_vertex,
                         vertex_buffer_offset,
@@ -305,6 +362,7 @@ impl GeoModel {
                         material_index,
                         texture_index,
                         render_mode,
+                        &info,
                         batch.vertex_buffer_index,
                         batch.base_vertex,
                         vertex_buffer_offset,
@@ -325,6 +383,7 @@ impl GeoModel {
                 0,
                 0,
                 GeoRenderMode::Opaque,
+                &BatchInfo::default(),
                 0,
                 0,
                 0,
@@ -594,7 +653,7 @@ impl GeoAssembly {
                     .collect::<Result<Vec<_>, _>>()?,
             );
             for submesh in &part.model.submeshes {
-                let mut submesh = *submesh;
+                let mut submesh = submesh.clone();
                 submesh.first_index = submesh
                     .first_index
                     .checked_add(index_offset)
@@ -1507,12 +1566,14 @@ struct IndexBuffer {
     element_type: &'static str,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct MaterialBinding {
     material_index: u32,
     texture_index: u32,
     render_mode: GeoRenderMode,
     excluded: bool,
+    material_name: String,
+    shader_name: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1757,9 +1818,9 @@ fn find_vertex_attribute_offsets(
             }
             return;
         }
-        let SerzNode::Element { name, children, .. } = node else {
-            return;
-        };
+    let SerzNode::Element { name, children, .. } = node else {
+        return;
+    };
         let clean_name = name.to_ascii_lowercase();
         if clean_name.contains("elementdecl") {
             let usage = direct_text(children, &["usage"], ids).unwrap_or_default();
@@ -1973,6 +2034,14 @@ fn find_material_bindings(
                 find_text(children, &["shadername", "effectname"], ids).unwrap_or_default();
             let material_name =
                 find_text(children, &["name", "materialname"], ids).unwrap_or_default();
+            let display_material_name = {
+                let trimmed = material_name.trim();
+                if trimmed.is_empty() {
+                    "default".to_owned()
+                } else {
+                    trimmed.to_owned()
+                }
+            };
             let texture_is_shadow = texture_references
                 .iter()
                 .any(|texture| texture.to_ascii_lowercase().contains("shadow"));
@@ -2003,6 +2072,8 @@ fn find_material_bindings(
                         || is_helper_name(material_name)
                         || texture_is_shadow
                         || subtract_alpha,
+                    material_name: display_material_name,
+                    shader_name: shader_name.trim().to_owned(),
                 },
             );
         }
@@ -2087,7 +2158,10 @@ fn find_submeshes(
         }
         return;
     }
-    let SerzNode::Element { name, children, .. } = node else {
+    let SerzNode::Element {
+        name, id, children, ..
+    } = node
+    else {
         return;
     };
     let clean_name = name.replace("::", "-").to_ascii_lowercase();
@@ -2161,6 +2235,18 @@ fn find_submeshes(
     };
     let local_transform = find_local_transform(children);
     let transform = parent_transform * local_transform;
+    let binding = material_reference.and_then(|reference| material_bindings.get(&reference));
+    let batch_node_name = {
+        let label = node_label.trim();
+        if label.is_empty() {
+            format!(
+                "Node #{}",
+                active_transform_id.unwrap_or_else(|| usize::try_from(*id).unwrap_or(0))
+            )
+        } else {
+            label.to_owned()
+        }
+    };
     if clean_name.contains("primlist")
         || clean_name.contains("primitivelist")
         || clean_name.contains("batch")
@@ -2232,6 +2318,14 @@ fn find_submeshes(
                     .map(|id| world_transforms.get(id).copied().unwrap_or(Mat4::IDENTITY))
                     .unwrap_or(transform),
                 excluded,
+                node_name: batch_node_name,
+                material_name: binding
+                    .map(|binding| binding.material_name.clone())
+                    .unwrap_or_else(|| "default".into()),
+                shader_name: binding
+                    .map(|binding| binding.shader_name.clone())
+                    .unwrap_or_default(),
+                lod_level: u8::try_from(lod.unwrap_or(0)).unwrap_or(u8::MAX),
             });
         }
     }
@@ -2270,23 +2364,45 @@ fn find_submeshes(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RawSubmeshKey {
+    first_index: u32,
+    index_count: u32,
+    material_reference: Option<u32>,
+    material_index: Option<u32>,
+    texture_index: Option<u32>,
+    vertex_buffer_index: u32,
+    index_buffer_index: u32,
+    base_vertex: i32,
+    max_local_vertex_ref: Option<u64>,
+    topology: u8,
+    transform: [u32; 16],
+    excluded: bool,
+    lod_level: u8,
+    node_name: String,
+    shader_name: String,
+}
+
 fn deduplicate_submeshes(batches: &mut Vec<RawSubmesh>) {
     let mut seen = HashSet::with_capacity(batches.len());
     batches.retain(|batch| {
-        seen.insert((
-            batch.first_index,
-            batch.index_count,
-            batch.material_reference,
-            batch.material_index,
-            batch.texture_index,
-            batch.vertex_buffer_index,
-            batch.index_buffer_index,
-            batch.base_vertex,
-            batch.max_local_vertex_ref,
-            batch.topology as u8,
-            batch.transform.to_cols_array().map(f32::to_bits),
-            batch.excluded,
-        ))
+        seen.insert(RawSubmeshKey {
+            first_index: batch.first_index,
+            index_count: batch.index_count,
+            material_reference: batch.material_reference,
+            material_index: batch.material_index,
+            texture_index: batch.texture_index,
+            vertex_buffer_index: batch.vertex_buffer_index,
+            index_buffer_index: batch.index_buffer_index,
+            base_vertex: batch.base_vertex,
+            max_local_vertex_ref: batch.max_local_vertex_ref,
+            topology: batch.topology as u8,
+            transform: batch.transform.to_cols_array().map(f32::to_bits),
+            excluded: batch.excluded,
+            lod_level: batch.lod_level,
+            node_name: batch.node_name.clone(),
+            shader_name: batch.shader_name.clone(),
+        })
     });
 }
 
@@ -2444,6 +2560,14 @@ fn is_helper_name(name: &str) -> bool {
     ]
     .iter()
     .any(|marker| lower.contains(marker))
+}
+
+/// Auxiliary nodes (shadows, decals, running numbers) start hidden in the inspector.
+fn is_auxiliary_node(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["schatten", "shadow", "primarydigit", "decal"]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 fn collect_text_values(
@@ -2879,6 +3003,7 @@ fn append_submesh(
     material_index: u32,
     texture_index: u32,
     render_mode: GeoRenderMode,
+    info: &BatchInfo,
     vertex_buffer_index: u32,
     base_vertex: i32,
     vertex_buffer_offset: i32,
@@ -2912,6 +3037,15 @@ fn append_submesh(
         vertex_buffer_index,
         base_vertex,
         vertex_buffer_offset,
+        visible: info.lod_level == 0
+            && !is_auxiliary_node(&info.node_name)
+            && !is_auxiliary_node(&info.material_name)
+            && !is_auxiliary_node(&info.shader_name),
+        node_name: info.node_name.clone(),
+        material_name: info.material_name.clone(),
+        shader_name: info.shader_name.clone(),
+        lod_level: info.lod_level,
+        triangle_count: index_count / 3,
     });
     Ok(())
 }
@@ -2926,6 +3060,7 @@ fn append_transformed_submesh(
     material_index: u32,
     texture_index: u32,
     render_mode: GeoRenderMode,
+    info: &BatchInfo,
     vertex_buffer_index: u32,
     base_vertex: i32,
     vertex_buffer_offset: i32,
@@ -2989,6 +3124,15 @@ fn append_transformed_submesh(
         vertex_buffer_index,
         base_vertex,
         vertex_buffer_offset,
+        visible: info.lod_level == 0
+            && !is_auxiliary_node(&info.node_name)
+            && !is_auxiliary_node(&info.material_name)
+            && !is_auxiliary_node(&info.shader_name),
+        node_name: info.node_name.clone(),
+        material_name: info.material_name.clone(),
+        shader_name: info.shader_name.clone(),
+        lod_level: info.lod_level,
+        triangle_count: index_count / 3,
     });
     Ok(())
 }
@@ -3713,6 +3857,12 @@ mod tests {
                 vertex_buffer_index: 0,
                 base_vertex: 0,
                 vertex_buffer_offset: 0,
+                visible: true,
+                node_name: model.submeshes[0].node_name.clone(),
+                material_name: "default".into(),
+                shader_name: String::new(),
+                lod_level: 0,
+                triangle_count: 2,
             }]
         );
         assert_eq!(
