@@ -1,6 +1,8 @@
 use crate::geo::{GeoSubmesh, GeoVertex};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
+use std::borrow::Cow;
+use std::sync::Arc;
 use std::sync::mpsc;
 use wgpu::util::DeviceExt;
 
@@ -32,7 +34,7 @@ impl GpuRenderer {
         indices: &[u32],
         submeshes: &[GeoSubmesh],
         center: Vec3,
-        textures: &[super::viewer3d::Texture],
+        textures: &[Arc<super::viewer3d::Texture>],
     ) -> Result<Self, String> {
         pollster::block_on(Self::new_async(
             vertices, indices, submeshes, center, textures,
@@ -44,7 +46,7 @@ impl GpuRenderer {
         indices: &[u32],
         submeshes: &[GeoSubmesh],
         center: Vec3,
-        textures: &[super::viewer3d::Texture],
+        textures: &[Arc<super::viewer3d::Texture>],
     ) -> Result<Self, String> {
         if vertices.len() > u32::MAX as usize || indices.len() > (u32::MAX / 2) as usize {
             return Err("mesh exceeds the GPU's indexed draw limits".into());
@@ -66,7 +68,7 @@ impl GpuRenderer {
                 &wgpu::DeviceDescriptor {
                     label: Some("GeoPcDx offscreen renderer"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    required_limits: adapter.limits(),
                 },
                 None,
             )
@@ -124,16 +126,28 @@ impl GpuRenderer {
             {
                 return Err("invalid RGBA texture dimensions or data length".into());
             }
-            if texture_data.width > max_texture_dimension
+            let (width, height, pixels) = if texture_data.width > max_texture_dimension
                 || texture_data.height > max_texture_dimension
             {
-                return Err("texture exceeds the GPU's supported dimensions".into());
-            }
+                let (scaled_width, scaled_height, scaled) = downscale_rgba(
+                    texture_data.width,
+                    texture_data.height,
+                    &texture_data.pixels,
+                    max_texture_dimension,
+                )?;
+                (scaled_width, scaled_height, Cow::Owned(scaled))
+            } else {
+                (
+                    texture_data.width,
+                    texture_data.height,
+                    Cow::Borrowed(texture_data.pixels.as_slice()),
+                )
+            };
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("GeoPcDx albedo"),
                 size: wgpu::Extent3d {
-                    width: texture_data.width,
-                    height: texture_data.height,
+                    width,
+                    height,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -150,15 +164,15 @@ impl GpuRenderer {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &texture_data.pixels,
+                pixels.as_ref(),
                 wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: Some(texture_data.width * 4),
-                    rows_per_image: Some(texture_data.height),
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: Some(height),
                 },
                 wgpu::Extent3d {
-                    width: texture_data.width,
-                    height: texture_data.height,
+                    width,
+                    height,
                     depth_or_array_layers: 1,
                 },
             );
@@ -223,6 +237,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
+    @location(2) world_position: vec3<f32>,
 };
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
@@ -230,16 +245,25 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.position = camera.view_projection * vec4<f32>(input.position, 1.0);
     output.normal = input.normal;
     output.uv = input.uv;
+    output.world_position = input.position;
     return output;
 }
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(albedo, albedo_sampler, input.uv);
-    if color.a < 0.5 {
+    if color.a < 0.05 {
         discard;
     }
-    let n = normalize(input.normal);
-    let light = 0.3 + 0.7 * max(dot(n, normalize(vec3<f32>(-0.4, 0.7, 0.6))), 0.0);
+    var normal = input.normal;
+    if dot(normal, normal) < 1e-10 {
+        normal = cross(dpdx(input.world_position), dpdy(input.world_position));
+        if dot(normal, normal) < 1e-10 {
+            normal = vec3<f32>(0.0, 1.0, 0.0);
+        }
+    }
+    normal = normalize(normal);
+    let light_direction = normalize(vec3<f32>(-0.4, 0.7, 0.6));
+    let light = 0.35 + 0.65 * abs(dot(normal, light_direction));
     return vec4<f32>(color.rgb * light, color.a);
 }
 "#
@@ -457,7 +481,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             );
             for submesh in &self.submeshes {
                 let texture_index =
-                    (submesh.material_index as usize).min(bind_groups.len().saturating_sub(1));
+                    (submesh.texture_index as usize).min(bind_groups.len().saturating_sub(1));
                 pass.set_bind_group(0, &bind_groups[texture_index], &[]);
                 let start = if camera.wireframe {
                     submesh.first_index * 2
@@ -515,5 +539,64 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         drop(mapped);
         output.unmap();
         Ok((width, height, pixels))
+    }
+}
+
+fn downscale_rgba(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    max_dimension: u32,
+) -> Result<(u32, u32, Vec<u8>), String> {
+    if width == 0 || height == 0 || max_dimension == 0 {
+        return Err("invalid RGBA texture dimensions".into());
+    }
+    let expected_bytes = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("texture dimensions overflow")? as usize;
+    if pixels.len() != expected_bytes {
+        return Err("invalid RGBA texture dimensions or data length".into());
+    }
+    let largest_dimension = width.max(height);
+    if largest_dimension <= max_dimension {
+        return Ok((width, height, pixels.to_vec()));
+    }
+    let scale = max_dimension as f64 / largest_dimension as f64;
+    let scaled_width = ((width as f64 * scale).floor() as u32).max(1);
+    let scaled_height = ((height as f64 * scale).floor() as u32).max(1);
+    let scaled_len = scaled_width
+        .checked_mul(scaled_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("scaled texture dimensions overflow")? as usize;
+    let mut scaled = vec![0; scaled_len];
+    for y in 0..scaled_height {
+        let source_y = (y as u64 * height as u64 / scaled_height as u64) as u32;
+        for x in 0..scaled_width {
+            let source_x = (x as u64 * width as u64 / scaled_width as u64) as u32;
+            let source = ((source_y * width + source_x) * 4) as usize;
+            let target = ((y * scaled_width + x) * 4) as usize;
+            scaled[target..target + 4].copy_from_slice(&pixels[source..source + 4]);
+        }
+    }
+    Ok((scaled_width, scaled_height, scaled))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn downscales_rgba_texture_to_maximum_dimension() {
+        let pixels = (0..32).map(|value| value as u8).collect::<Vec<_>>();
+        let (width, height, scaled) = downscale_rgba(4, 2, &pixels, 2).unwrap();
+
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(scaled, [0, 1, 2, 3, 8, 9, 10, 11]);
+    }
+
+    #[test]
+    fn rejects_zero_sized_rgba_texture() {
+        assert!(downscale_rgba(0, 2, &[], 1).is_err());
     }
 }

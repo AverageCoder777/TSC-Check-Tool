@@ -12,6 +12,7 @@ export component GeoViewerWindow inherits Window {
     in-out property <string> status-text: "Loading model...";
     in-out property <string> stats-text: "";
     in-out property <string> texture-status: "";
+    in-out property <bool> textures-expanded: false;
     in-out property <bool> wireframe: false;
     in-out property <float> yaw: 0.7;
     in-out property <float> pitch: 0.25;
@@ -99,26 +100,71 @@ export component GeoViewerWindow inherits Window {
                     accept
                 }
             }
-            Rectangle {
+            if root.status-text != "" : Rectangle {
                 x: 8px;
                 y: 8px;
-                width: parent.width - 16px;
-                height: 58px;
+                width: Math.min(parent.width - 16px, 560px);
+                height: 34px;
                 background: #b8141820;
                 border-radius: 4px;
-                VerticalBox {
-                    padding: 6px;
-                    Text { text: root.status-text; color: #f0f0f0; font-size: 13px; }
-                    Text { text: root.stats-text; color: #c9d1dc; font-size: 12px; }
+                Text {
+                    x: 8px;
+                    y: 0px;
+                    width: parent.width - 16px;
+                    height: parent.height;
+                    text: root.status-text;
+                    color: #f0f0f0;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle {
+                x: 8px;
+                y: parent.height - 34px;
+                width: Math.min(parent.width - 16px, 560px);
+                height: 26px;
+                background: #b8141820;
+                border-radius: 4px;
+                Text {
+                    x: 8px;
+                    y: 0px;
+                    width: parent.width - 16px;
+                    height: parent.height;
+                    text: root.stats-text;
+                    color: #c9d1dc;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    wrap: TextWrap.no-wrap;
+                }
+            }
+            if root.textures-expanded : Rectangle {
+                x: 8px;
+                y: parent.height - self.height - 42px;
+                width: Math.min(parent.width - 16px, 480px);
+                height: Math.min(260px, parent.height - 64px);
+                background: #e8242a33;
+                border-width: 1px;
+                border-color: #586170;
+                border-radius: 4px;
+                clip: true;
+                Text {
+                    x: 8px;
+                    y: 6px;
+                    width: parent.width - 16px;
+                    height: parent.height - 12px;
+                    text: root.texture-status;
+                    color: #e5e5e5;
+                    font-size: 11px;
+                    vertical-alignment: top;
+                    wrap: TextWrap.word-wrap;
                 }
             }
         }
-        Text {
-            text: root.texture-status;
-            color: #c9d1dc;
-            font-size: 12px;
-            wrap: TextWrap.word-wrap;
-            horizontal-stretch: 1;
+        Button {
+            text: root.textures-expanded ? "Hide textures" : "Show textures";
+            clicked => {
+                root.textures-expanded = !root.textures-expanded;
+            }
         }
         Text {
             text: "Left drag: orbit    Right drag: pan    Wheel: zoom";

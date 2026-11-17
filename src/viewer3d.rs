@@ -1,7 +1,11 @@
 use crate::geo::{GeoModel, GeoVertex};
 use glam::{Mat4, Vec2, Vec3, Vec4};
+use rayon::prelude::*;
 use slint::ComponentHandle;
+use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 #[derive(Clone, Copy)]
@@ -66,8 +70,8 @@ impl Texture {
 
 struct LoadedModel {
     model: GeoModel,
-    texture: Texture,
-    textures: Vec<Texture>,
+    texture: Arc<Texture>,
+    textures: Vec<Arc<Texture>>,
     texture_status: String,
     center: Vec3,
     radius: f32,
@@ -80,46 +84,76 @@ impl LoadedModel {
         crate::geo::log_parse_diagnostics(path, &model.diagnostics);
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
-        for vertex in &model.vertices {
+        for &index in &model.indices {
+            let vertex = &model.vertices[index as usize];
             let position = Vec3::from_array(vertex.position);
             min = min.min(position);
             max = max.max(position);
         }
         let center = (min + max) * 0.5;
         let radius = ((max - min) * 0.5).length().max(0.01);
-        let mut texture = Texture::fallback();
+        let fallback = Arc::new(Texture::fallback());
+        let mut texture = fallback.clone();
         let mut textures = Vec::new();
         let mut statuses = Vec::new();
-        for name in &model.textures {
-            let resolved = crate::geo::resolve_texture_data(path, name);
-            let decoded = resolved
-                .as_ref()
-                .and_then(|(_, data)| crate::texture::decode_tgpcdx_to_rgba(data).ok());
-            if let Some((resolved_path, _)) = resolved {
-                let resolved_texture = if let Some((width, height, pixels)) = decoded {
-                    let resolved_texture = Texture {
-                        width,
-                        height,
-                        pixels,
-                    };
-                    statuses.push(format!("Loaded: {name} ({resolved_path})"));
-                    resolved_texture
-                } else {
-                    statuses.push(format!("Missing / invalid: {name}"));
-                    Texture::fallback()
-                };
-                if textures.is_empty() {
-                    texture = resolved_texture.clone();
+        let resolved = model
+            .textures
+            .par_iter()
+            .map(|name| crate::geo::resolve_texture_data(path, name))
+            .collect::<Vec<_>>();
+        let mut unique_resolved = HashMap::<PathBuf, (String, Vec<u8>)>::new();
+        let texture_paths = resolved
+            .into_iter()
+            .map(|resolved| {
+                resolved.map(|(resolved_path, bytes)| {
+                    let key = PathBuf::from(&resolved_path);
+                    unique_resolved
+                        .entry(key.clone())
+                        .or_insert((resolved_path, bytes));
+                    key
+                })
+            })
+            .collect::<Vec<_>>();
+        let decoded = unique_resolved
+            .into_par_iter()
+            .map(|(key, (resolved_path, bytes))| {
+                let texture = crate::texture::decode_tgpcdx_for_viewer(&bytes).map(
+                    |(width, height, pixels)| {
+                        Arc::new(Texture {
+                            width,
+                            height,
+                            pixels,
+                        })
+                    },
+                );
+                (key, (resolved_path, texture))
+            })
+            .collect::<HashMap<_, _>>();
+        for (index, name) in model.textures.iter().enumerate() {
+            let resolved_texture = if let Some(key) = &texture_paths[index] {
+                let (resolved_path, decoded) = &decoded[key];
+                match decoded {
+                    Ok(resolved_texture) => {
+                        statuses.push(format!("Loaded: {name} ({resolved_path})"));
+                        resolved_texture.clone()
+                    }
+                    Err(error) => {
+                        statuses.push(format!("Missing / invalid: {name} ({error})"));
+                        fallback.clone()
+                    }
                 }
-                textures.push(resolved_texture);
             } else {
                 statuses.push(format!("Missing: {name}"));
-                textures.push(Texture::fallback());
+                fallback.clone()
+            };
+            if textures.is_empty() {
+                texture = resolved_texture.clone();
             }
+            textures.push(resolved_texture);
         }
         if statuses.is_empty() {
             statuses.push("No texture references found".into());
-            textures.push(Texture::fallback());
+            textures.push(fallback);
         }
         Ok(Self {
             model,
@@ -205,10 +239,10 @@ fn render_worker(
         loaded.center,
         &loaded.textures,
     ) {
-        Ok(renderer) => (Some(renderer), "Model loaded • offscreen GPU".to_owned()),
+        Ok(renderer) => (Some(renderer), String::new()),
         Err(error) => (
             None,
-            format!("Model loaded • CPU fallback; GPU unavailable: {error}"),
+            format!("GPU unavailable; using CPU fallback: {error}"),
         ),
     };
     let initial_window = window.clone();
@@ -340,27 +374,35 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
             height,
         ));
     }
-    for triangle in model.model.indices.chunks_exact(3) {
-        let a = projected[triangle[0] as usize];
-        let b = projected[triangle[1] as usize];
-        let c = projected[triangle[2] as usize];
-        let (Some(a), Some(b), Some(c)) = (a, b, c) else {
-            continue;
-        };
-        if camera.wireframe {
-            draw_line(&mut pixels, width, height, a.position, b.position);
-            draw_line(&mut pixels, width, height, b.position, c.position);
-            draw_line(&mut pixels, width, height, c.position, a.position);
-        } else {
-            raster_triangle(
-                &mut pixels,
-                &mut depth,
-                width,
-                height,
-                [a, b, c],
-                &model.texture,
-                view,
-            );
+    for submesh in &model.model.submeshes {
+        let start = submesh.first_index as usize;
+        let end = start + submesh.index_count as usize;
+        let texture = model
+            .textures
+            .get(submesh.texture_index as usize)
+            .unwrap_or(&model.texture);
+        for triangle in model.model.indices[start..end].chunks_exact(3) {
+            let a = projected[triangle[0] as usize];
+            let b = projected[triangle[1] as usize];
+            let c = projected[triangle[2] as usize];
+            let (Some(a), Some(b), Some(c)) = (a, b, c) else {
+                continue;
+            };
+            if camera.wireframe {
+                draw_line(&mut pixels, width, height, a.position, b.position);
+                draw_line(&mut pixels, width, height, b.position, c.position);
+                draw_line(&mut pixels, width, height, c.position, a.position);
+            } else {
+                raster_triangle(
+                    &mut pixels,
+                    &mut depth,
+                    width,
+                    height,
+                    [a, b, c],
+                    texture,
+                    view,
+                );
+            }
         }
     }
     (width, height, pixels)
@@ -460,19 +502,20 @@ fn raster_triangle(
             }
             let uv = a.uv * w0 + b.uv * w1 + c.uv * w2;
             let texel = texture.sample(uv.to_array());
-            if texel[3] < 128 {
+            if texel[3] < 13 {
                 continue;
             }
             let normal = (a.normal * w0 + b.normal * w1 + c.normal * w2).normalize_or_zero();
             let normal_view = view.transform_vector3(normal).normalize_or_zero();
-            let diffuse = normal_view
-                .dot(Vec3::new(-0.4, 0.7, 0.6).normalize())
-                .max(0.0);
-            let light = 0.3 + diffuse * 0.7;
+            let diffuse = normal_view.dot(Vec3::new(-0.4, 0.7, 0.6).normalize()).abs();
+            let light = 0.35 + diffuse * 0.65;
+            let alpha = texel[3] as f32 / 255.0;
             let start = offset * 4;
-            pixels[start] = (texel[0] as f32 * light) as u8;
-            pixels[start + 1] = (texel[1] as f32 * light) as u8;
-            pixels[start + 2] = (texel[2] as f32 * light) as u8;
+            for channel in 0..3 {
+                let source = texel[channel] as f32 * light;
+                let destination = pixels[start + channel] as f32;
+                pixels[start + channel] = (source * alpha + destination * (1.0 - alpha)) as u8;
+            }
             pixels[start + 3] = 255;
             depth[offset] = z;
         }

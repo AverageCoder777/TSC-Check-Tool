@@ -5,29 +5,46 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    decode_tgpcdx_with_max_dimension(data, None)
+}
+
+pub fn decode_tgpcdx_for_viewer(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    decode_tgpcdx_with_max_dimension(data, Some(1024))
+}
+
+fn decode_tgpcdx_with_max_dimension(
+    data: &[u8],
+    max_dimension: Option<u32>,
+) -> Result<(u32, u32, Vec<u8>), String> {
     let xml = if data.starts_with(b"SERZ") {
         serz_bytes_to_xml(data)?
     } else {
         String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?
     };
 
-    let image_block = first_image_block(&xml).ok_or("no image block")?;
+    let image_blocks = all_image_blocks(&xml);
+    let image_block = max_dimension
+        .and_then(|max_dimension| {
+            image_blocks.iter().copied().find(|block| {
+                image_dimensions(block).is_some_and(|(width, height)| {
+                    width <= max_dimension && height <= max_dimension
+                })
+            })
+        })
+        .or_else(|| image_blocks.first().copied())
+        .ok_or("no image block")?;
     let format = extract_format(image_block);
-    let width: u32 = extract_tag(image_block, "Width", "sUInt16")
-        .or_else(|| extract_tag(image_block, "Width", "sUInt32"))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let height: u32 = extract_tag(image_block, "Height", "sUInt16")
-        .or_else(|| extract_tag(image_block, "Height", "sUInt32"))
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let (width, height) = image_dimensions(image_block).ok_or("invalid dimensions")?;
     if width == 0 || height == 0 {
         return Err("invalid dimensions".into());
     }
     let blob = extract_blob(image_block).ok_or("no blob")?;
     let bytes = hex_decode(&blob);
 
-    let pixels = (width * height) as usize;
+    let pixels = width
+        .checked_mul(height)
+        .ok_or("texture dimensions overflow")? as usize;
+    let rgba_bytes = pixels.checked_mul(4).ok_or("texture dimensions overflow")?;
     let format_upper = format.to_uppercase();
     let is_bc3 = format_upper.contains("INTERP_ALPHA")
         || format_upper.contains("BC3")
@@ -38,7 +55,7 @@ pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String>
         || format_upper.contains("ARGB")
         || format_upper.contains("UNCOMPRESSED");
 
-    let mut rgba = Vec::with_capacity(pixels * 4);
+    let mut rgba = Vec::with_capacity(rgba_bytes);
 
     if is_uncompressed || (!is_bc3 && !is_bc1 && bytes.len() >= pixels * 4) {
         // Uncompressed 32-bit (RGBA/BGRA)
@@ -82,10 +99,22 @@ pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String>
         }
     }
 
-    if rgba.len() < pixels * 4 {
+    if rgba.len() < rgba_bytes {
         return Err("decoded data too small".into());
     }
     Ok((width, height, rgba))
+}
+
+fn image_dimensions(block: &str) -> Option<(u32, u32)> {
+    let width = extract_tag(block, "Width", "sUInt16")
+        .or_else(|| extract_tag(block, "Width", "sUInt32"))?
+        .parse()
+        .ok()?;
+    let height = extract_tag(block, "Height", "sUInt16")
+        .or_else(|| extract_tag(block, "Height", "sUInt32"))?
+        .parse()
+        .ok()?;
+    Some((width, height))
 }
 
 pub fn rgba_to_slint_image(width: u32, height: u32, rgba: &[u8]) -> slint::Image {
@@ -1240,13 +1269,6 @@ fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
     }
 }
 
-fn first_image_block(xml: &str) -> Option<&str> {
-    let start = xml.find("<cHcImageDx")?;
-    let end_marker = "</cHcImageDx>";
-    let end = xml[start..].find(end_marker)? + start + end_marker.len();
-    Some(&xml[start..end])
-}
-
 fn all_image_blocks(xml: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut search = xml;
@@ -1537,6 +1559,36 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Cursor;
+
+    #[test]
+    fn viewer_decoder_selects_the_first_mipmap_at_or_below_1024() {
+        let pixels = vec![0x7f; 2 * 2 * 4];
+        let hex = pixels
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        let xml = format!(
+            r#"<Root>
+                <cHcImageDx>
+                    <Format d:type="cDeltaString">RGBA</Format>
+                    <Width d:type="sUInt32">2048</Width>
+                    <Height d:type="sUInt32">2048</Height>
+                </cHcImageDx>
+                <cHcImageDx>
+                    <Format d:type="cDeltaString">RGBA</Format>
+                    <Width d:type="sUInt32">2</Width>
+                    <Height d:type="sUInt32">2</Height>
+                    <d:blob d:size="{}">{hex}</d:blob>
+                </cHcImageDx>
+            </Root>"#,
+            hex.len() / 2
+        );
+
+        let (width, height, decoded) = decode_tgpcdx_for_viewer(xml.as_bytes()).unwrap();
+
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(decoded, pixels);
+    }
 
     #[test]
     fn round_trip_tgpcdx_dds() {
