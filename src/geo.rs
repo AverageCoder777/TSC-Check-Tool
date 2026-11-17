@@ -1,7 +1,10 @@
 use crate::serz::{SerzNode, SerzReader};
 use glam::{Mat4, Vec3};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -20,6 +23,7 @@ pub struct GeoModel {
     pub diagnostics: GeoParseDiagnostics,
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 pub struct GeoAssemblyPart {
     pub path: PathBuf,
@@ -28,6 +32,7 @@ pub struct GeoAssemblyPart {
     pub blueprint_attached: bool,
 }
 
+#[cfg(test)]
 pub struct GeoAssembly {
     pub parts: Vec<GeoAssemblyPart>,
     pub has_blueprint_attachments: bool,
@@ -102,6 +107,13 @@ struct RawSubmesh {
 }
 
 impl GeoModel {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+        let model = Self::parse(&bytes)?;
+        log_parse_diagnostics(path, &model.diagnostics);
+        Ok(model)
+    }
+
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         let root = parse_serz_document(data)?;
         let id_map = build_id_map(&root);
@@ -360,11 +372,10 @@ impl GeoModel {
     }
 }
 
+#[cfg(test)]
 impl GeoAssembly {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        let primary_model = Arc::new(GeoModel::parse(&bytes)?);
-        log_parse_diagnostics(path, &primary_model.diagnostics);
+        let primary_model = Arc::new(GeoModel::load(path)?);
         let mut parts = vec![GeoAssemblyPart {
             path: path.to_path_buf(),
             model: primary_model,
@@ -627,6 +638,7 @@ fn parse_serz_document(data: &[u8]) -> Result<SerzNode, String> {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 struct AttachmentBlueprintRef {
     kind: &'static str,
@@ -634,6 +646,7 @@ struct AttachmentBlueprintRef {
     transform: Mat4,
 }
 
+#[cfg(test)]
 fn find_geometry_blueprint(
     path: &Path,
     geometry_stem: &str,
@@ -701,6 +714,7 @@ fn resolve_ref_node<'a>(
     }
 }
 
+#[cfg(test)]
 fn matching_geometry_blueprint(
     node: &SerzNode,
     geometry_stem: &str,
@@ -728,7 +742,9 @@ fn matching_geometry_blueprint(
         .find_map(|child| matching_geometry_blueprint(child, geometry_stem, ids))
 }
 
+#[cfg(test)]
 fn asset_reference_stem(reference: &str) -> String {
+    let reference = strip_texture_slot_prefix(reference);
     Path::new(&reference.replace('\\', "/"))
         .file_stem()
         .unwrap_or_default()
@@ -736,6 +752,7 @@ fn asset_reference_stem(reference: &str) -> String {
         .into_owned()
 }
 
+#[cfg(test)]
 fn find_named_text(
     node: &SerzNode,
     names: &[&str],
@@ -802,6 +819,7 @@ fn find_named_text(
     }
 }
 
+#[cfg(test)]
 fn find_asset_path_text(node: &SerzNode) -> Option<String> {
     match node {
         SerzNode::Property { value, .. } => {
@@ -828,6 +846,7 @@ fn find_asset_path_text(node: &SerzNode) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 fn direct_named_text(
     node: &SerzNode,
     names: &[&str],
@@ -870,6 +889,7 @@ fn direct_named_text(
     })
 }
 
+#[cfg(test)]
 fn collect_blueprint_attachments(
     node: &SerzNode,
     ids: &HashMap<u32, &SerzNode>,
@@ -887,6 +907,7 @@ fn collect_blueprint_attachments(
     );
 }
 
+#[cfg(test)]
 fn collect_blueprint_attachments_inner(
     node: &SerzNode,
     ids: &HashMap<u32, &SerzNode>,
@@ -962,6 +983,7 @@ fn collect_blueprint_attachments_inner(
     }
 }
 
+#[cfg(test)]
 fn attachment_transform(node: &SerzNode, ids: &HashMap<u32, &SerzNode>, is_bogey: bool) -> Mat4 {
     if let Some(values) = find_named_numbers(node, &["matrix"], ids)
         && let Some(matrix) = matrix_from_values(&values)
@@ -991,6 +1013,7 @@ fn attachment_transform(node: &SerzNode, ids: &HashMap<u32, &SerzNode>, is_bogey
     Mat4::IDENTITY
 }
 
+#[cfg(test)]
 fn find_named_number(
     node: &SerzNode,
     names: &[&str],
@@ -999,6 +1022,7 @@ fn find_named_number(
     find_named_text(node, names, ids)?.parse().ok()
 }
 
+#[cfg(test)]
 fn find_named_numbers(
     node: &SerzNode,
     names: &[&str],
@@ -1285,6 +1309,7 @@ fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
     Some(parsed)
 }
 
+#[cfg(test)]
 fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option<PathBuf> {
     let normalized = reference
         .trim()
@@ -1312,6 +1337,21 @@ fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option
     } else {
         vec![relative.with_extension(extension)]
     };
+    let variants = variants
+        .into_iter()
+        .flat_map(|variant| {
+            let reference = variant.to_string_lossy().replace('/', "\\");
+            let stripped = strip_texture_slot_prefix(&reference);
+            if stripped == reference {
+                vec![variant]
+            } else {
+                vec![
+                    variant,
+                    PathBuf::from(stripped.replace('\\', std::path::MAIN_SEPARATOR_STR)),
+                ]
+            }
+        })
+        .collect::<Vec<_>>();
     let mut bases = Vec::new();
     if let Some(parent) = source.parent() {
         bases.extend(parent.ancestors().take(8).map(Path::to_path_buf));
@@ -1327,6 +1367,7 @@ fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option
     None
 }
 
+#[cfg(test)]
 fn load_cached_geometry(
     path: &Path,
     main_path: &Path,
@@ -1359,6 +1400,7 @@ fn load_cached_geometry(
     }
 }
 
+#[cfg(test)]
 fn find_sibling_part_geometries(path: &Path) -> Vec<PathBuf> {
     let Some(parent) = path.parent() else {
         return Vec::new();
@@ -1391,11 +1433,13 @@ fn find_sibling_part_geometries(path: &Path) -> Vec<PathBuf> {
     siblings
 }
 
+#[cfg(test)]
 fn same_path(left: &Path, right: &Path) -> bool {
     left.to_string_lossy()
         .eq_ignore_ascii_case(&right.to_string_lossy())
 }
 
+#[cfg(test)]
 fn model_bounds(model: &GeoModel, transform: Mat4) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -1412,10 +1456,12 @@ fn model_bounds(model: &GeoModel, transform: Mat4) -> (Vec3, Vec3) {
     }
 }
 
+#[cfg(test)]
 fn transform_has_translation(transform: Mat4) -> bool {
     transform.w_axis.truncate().length_squared() > 1e-6
 }
 
+#[cfg(test)]
 pub(crate) fn log_assembly_warning(path: &Path, message: &str) {
     use std::io::Write;
 
@@ -3446,17 +3492,17 @@ mod tests {
         let assets = directory.path().join("Assets");
         let model_dir = assets.join("Provider").join("Product").join("Models");
         let bogey_dir = assets.join("Provider").join("Product").join("Bogies");
-        std::fs::create_dir_all(&model_dir).unwrap();
-        std::fs::create_dir_all(&bogey_dir).unwrap();
         let geometry_path = model_dir.join("Main.GeoPcDx");
         let blueprint_path = model_dir.join("Main.bin");
         let bogey_path = bogey_dir.join("Front.bin");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::create_dir_all(&bogey_dir).unwrap();
         std::fs::write(&geometry_path, b"").unwrap();
         std::fs::write(
             &blueprint_path,
             r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
                 <cWagonBlueprint>
-                    <GeometryID d:type="cDeltaString">Provider\Product\Models\Main.GeoPcDx</GeometryID>
+                    <GeometryID d:type="cDeltaString">Provider\Product\Models\[00]Main.GeoPcDx</GeometryID>
                 </cWagonBlueprint>
             </Root>"#,
         )
@@ -3465,10 +3511,18 @@ mod tests {
 
         let (found_path, _, _) = find_geometry_blueprint(&geometry_path, "main").unwrap();
         let resolved =
-            resolve_asset_path(&found_path, r"Provider\Product\Bogies\Front.xml", "bin").unwrap();
+            resolve_asset_path(&found_path, r"Provider\Product\Bogies\[00]Front.xml", "bin")
+                .unwrap();
+        let resolved_geometry = resolve_asset_path(
+            &found_path,
+            r"Provider\Product\Models\[00]Main.GeoPcDx",
+            "GeoPcDx",
+        )
+        .unwrap();
 
         assert_eq!(found_path, blueprint_path);
         assert_eq!(resolved, bogey_path);
+        assert_eq!(resolved_geometry, geometry_path);
     }
 
     #[test]

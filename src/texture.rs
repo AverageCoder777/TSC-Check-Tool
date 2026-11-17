@@ -21,7 +21,8 @@ fn decode_tgpcdx_with_max_dimension(
         .and_then(|max_dimension| {
             image_blocks
                 .iter()
-                .find(|block| block.width <= max_dimension && block.height <= max_dimension)
+                .filter(|block| block.width <= max_dimension && block.height <= max_dimension)
+                .max_by_key(|block| block.width.max(block.height))
         })
         .or_else(|| image_blocks.first())
         .ok_or("no image block")?;
@@ -40,6 +41,9 @@ fn decode_tgpcdx_with_max_dimension(
     let is_bc3 = format_upper.contains("INTERP_ALPHA")
         || format_upper.contains("BC3")
         || format_upper.contains("DXT5");
+    let is_bc2 = format_upper.contains("EXPL_ALPHA")
+        || format_upper.contains("BC2")
+        || format_upper.contains("DXT3");
     let is_bc1 = format_upper.contains("COMPRESSED") && !is_bc3;
     let is_uncompressed = format_upper.contains("RGBA")
         || format_upper.contains("BGRA")
@@ -51,6 +55,7 @@ fn decode_tgpcdx_with_max_dimension(
     if is_uncompressed || (!is_bc3 && !is_bc1 && bytes.len() >= pixels * 4) {
         // Uncompressed 32-bit (RGBA/BGRA)
         let bgra = format_upper.contains("BGRA");
+        let argb = format_upper.contains("ARGB");
         for i in 0..pixels {
             let off = i * 4;
             if off + 4 > bytes.len() {
@@ -58,6 +63,8 @@ fn decode_tgpcdx_with_max_dimension(
             }
             let (r, g, b, a) = if bgra {
                 (bytes[off + 2], bytes[off + 1], bytes[off], bytes[off + 3])
+            } else if argb {
+                (bytes[off + 1], bytes[off + 2], bytes[off + 3], bytes[off])
             } else {
                 (bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3])
             };
@@ -65,6 +72,16 @@ fn decode_tgpcdx_with_max_dimension(
             rgba.push(g);
             rgba.push(b);
             rgba.push(a);
+        }
+    } else if is_bc2 {
+        let mut image_u32 = vec![0u32; pixels];
+        texture2ddecoder::decode_bc2(bytes, width as usize, height as usize, &mut image_u32)
+            .map_err(|e| e.to_string())?;
+        for px in image_u32 {
+            rgba.push(((px >> 16) & 0xff) as u8);
+            rgba.push(((px >> 8) & 0xff) as u8);
+            rgba.push((px & 0xff) as u8);
+            rgba.push(((px >> 24) & 0xff) as u8);
         }
     } else if is_bc3 || bytes.len() >= pixels {
         // BC3 / DXT5 (16 bytes per 4x4 block)
@@ -1781,7 +1798,7 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn viewer_decoder_selects_the_first_mipmap_at_or_below_1024() {
+    fn viewer_decoder_selects_the_largest_mipmap_at_or_below_1024() {
         let pixels = vec![0x7f; 2 * 2 * 4];
         let hex = pixels
             .iter()

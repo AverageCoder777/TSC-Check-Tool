@@ -1,4 +1,4 @@
-use crate::geo::{GeoAssembly, GeoModel, GeoRenderMode, GeoVertex};
+use crate::geo::{GeoModel, GeoRenderMode, GeoVertex};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slint::ComponentHandle;
@@ -18,7 +18,6 @@ pub(crate) struct Camera {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) wireframe: bool,
-    pub(crate) side_by_side: bool,
 }
 
 impl Default for Camera {
@@ -32,7 +31,6 @@ impl Default for Camera {
             width: 900,
             height: 560,
             wireframe: false,
-            side_by_side: false,
         }
     }
 }
@@ -57,7 +55,7 @@ impl Texture {
 
     fn sample(&self, uv: [f32; 2]) -> [u8; 4] {
         let u = uv[0].rem_euclid(1.0);
-        let v = (1.0 - uv[1]).rem_euclid(1.0);
+        let v = uv[1].rem_euclid(1.0);
         let x = (u * self.width as f32).floor() as u32 % self.width;
         let y = (v * self.height as f32).floor() as u32 % self.height;
         let offset = ((y * self.width + x) * 4) as usize;
@@ -71,7 +69,6 @@ impl Texture {
 }
 
 struct LoadedModel {
-    assembly: GeoAssembly,
     model: GeoModel,
     texture_sources: Vec<(PathBuf, String)>,
     texture: Arc<Texture>,
@@ -79,23 +76,18 @@ struct LoadedModel {
     texture_status: String,
     center: Vec3,
     radius: f32,
-    side_by_side: bool,
     texture_catalog: HashMap<(PathBuf, String), (String, Result<Arc<Texture>, String>)>,
 }
 
 impl LoadedModel {
     fn load(path: &Path) -> Result<Self, String> {
-        let assembly = GeoAssembly::load(path)?;
-        let side_by_side = !assembly.has_blueprint_attachments;
-        let (model, texture_sources) = assembly.compose(side_by_side)?;
-        let mut texture_references = HashMap::new();
-        for part in &assembly.parts {
-            for name in &part.model.textures {
-                texture_references.insert((part.path.clone(), name.clone()), ());
-            }
-        }
-        let texture_references = texture_references.into_keys().collect::<Vec<_>>();
-        let resolved = texture_references
+        let model = GeoModel::load(path)?;
+        let texture_sources = model
+            .textures
+            .iter()
+            .map(|name| (path.to_path_buf(), name.clone()))
+            .collect::<Vec<_>>();
+        let resolved = texture_sources
             .par_iter()
             .map(|(geo_path, name)| crate::geo::resolve_texture_data(geo_path, name))
             .collect::<Vec<_>>();
@@ -127,8 +119,9 @@ impl LoadedModel {
                 (key, (resolved_path, result))
             })
             .collect::<HashMap<_, _>>();
-        let texture_catalog = texture_references
-            .into_iter()
+        let texture_catalog = texture_sources
+            .iter()
+            .cloned()
             .zip(resolved_paths)
             .filter_map(|(reference, resolved_path)| {
                 let path_key = resolved_path?;
@@ -137,7 +130,6 @@ impl LoadedModel {
             })
             .collect();
         let mut loaded = Self {
-            assembly,
             model,
             texture_sources,
             texture: Arc::new(Texture::fallback()),
@@ -145,22 +137,11 @@ impl LoadedModel {
             texture_status: String::new(),
             center: Vec3::ZERO,
             radius: 0.01,
-            side_by_side,
             texture_catalog,
         };
         loaded.update_bounds();
         loaded.update_textures();
         Ok(loaded)
-    }
-
-    fn set_layout(&mut self, side_by_side: bool) -> Result<(), String> {
-        let (model, texture_sources) = self.assembly.compose(side_by_side)?;
-        self.model = model;
-        self.texture_sources = texture_sources;
-        self.side_by_side = side_by_side;
-        self.update_bounds();
-        self.update_textures();
-        Ok(())
     }
 
     fn update_bounds(&mut self) {
@@ -212,12 +193,11 @@ impl LoadedModel {
 
     fn stats(&self) -> String {
         format!(
-            "{} vertices  •  {} triangles  •  {} draw batches  •  {} textures  •  {} assembly parts",
+            "{} vertices  •  {} triangles  •  {} draw batches  •  {} textures",
             self.model.vertices.len(),
             self.model.indices.len() / 3,
             self.model.submeshes.len(),
-            self.model.textures.len(),
-            self.assembly.parts.len().saturating_sub(1)
+            self.model.textures.len()
         )
     }
 }
@@ -270,7 +250,7 @@ pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
 
 fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<Camera>) {
     window.on_camera_changed(
-        move |yaw, pitch, distance, pan_x, pan_y, width, height, wireframe, side_by_side| {
+        move |yaw, pitch, distance, pan_x, pan_y, width, height, wireframe| {
             let _ = sender.send(Camera {
                 yaw,
                 pitch,
@@ -280,7 +260,6 @@ fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<Camera>) {
                 width: width.max(1.0) as u32,
                 height: height.max(1.0) as u32,
                 wireframe,
-                side_by_side,
             });
         },
     );
@@ -291,7 +270,7 @@ fn render_worker(
     window: slint::Weak<crate::GeoViewerWindow>,
     receiver: Receiver<Camera>,
 ) {
-    let mut loaded = match LoadedModel::load(&path) {
+    let loaded = match LoadedModel::load(&path) {
         Ok(model) => model,
         Err(error) => {
             let _ = slint::invoke_from_event_loop(move || {
@@ -306,8 +285,6 @@ fn render_worker(
     let texture_status = loaded.texture_status.clone();
     let initial_distance = loaded.radius * 2.8;
     let (mut gpu, renderer_status) = create_gpu_renderer(&loaded);
-    let sibling_parts_available = loaded.assembly.parts.len() > 1;
-    let side_by_side = loaded.side_by_side;
     let initial_window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(window) = initial_window.upgrade() {
@@ -316,14 +293,11 @@ fn render_worker(
             window.set_texture_status(texture_status.into());
             window.set_initial_distance(initial_distance);
             window.set_distance(initial_distance);
-            window.set_sibling_parts_available(sibling_parts_available);
-            window.set_side_by_side(side_by_side);
         }
     });
 
     let mut camera = Camera {
         distance: initial_distance,
-        side_by_side,
         ..Camera::default()
     };
     let frame = render_frame(&loaded, gpu.as_mut(), camera);
@@ -357,46 +331,6 @@ fn render_worker(
         camera = next;
         while let Ok(next) = receiver.try_recv() {
             camera = next;
-        }
-        if camera.side_by_side != loaded.side_by_side {
-            match loaded.set_layout(camera.side_by_side) {
-                Ok(()) => {
-                    let initial_distance = loaded.radius * 2.8;
-                    camera.distance = initial_distance;
-                    camera.pan_x = 0.0;
-                    camera.pan_y = 0.0;
-                    let (new_gpu, status) = create_gpu_renderer(&loaded);
-                    gpu = new_gpu;
-                    let stats = loaded.stats();
-                    let texture_status = loaded.texture_status.clone();
-                    let side_by_side = loaded.side_by_side;
-                    let weak = window.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(window) = weak.upgrade() {
-                            window.set_status_text(status.into());
-                            window.set_stats_text(stats.into());
-                            window.set_texture_status(texture_status.into());
-                            window.set_initial_distance(initial_distance);
-                            window.set_distance(initial_distance);
-                            window.set_side_by_side(side_by_side);
-                        }
-                    });
-                }
-                Err(error) => {
-                    crate::geo::log_assembly_warning(
-                        &path,
-                        &format!("Unable to switch assembly layout: {error}"),
-                    );
-                    camera.side_by_side = loaded.side_by_side;
-                    let side_by_side = loaded.side_by_side;
-                    let weak = window.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(window) = weak.upgrade() {
-                            window.set_side_by_side(side_by_side);
-                        }
-                    });
-                }
-            }
         }
         let (width, height, pixels) = match render_frame(&loaded, gpu.as_mut(), camera) {
             Ok(frame) => frame,
@@ -684,5 +618,86 @@ fn draw_line(pixels: &mut [u8], width: u32, height: u32, start: Vec3, end: Vec3)
         }
         let offset = ((y as u32 * width + x as u32) * 4) as usize;
         pixels[offset..offset + 4].copy_from_slice(&[105, 190, 245, 255]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_triangle_geometry(path: &Path, texture: &str) {
+        let mut vertex_bytes = Vec::new();
+        for position in [[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+            for value in position
+                .into_iter()
+                .chain([0.0, 0.0, 1.0])
+                .chain([0.0, 0.0])
+            {
+                vertex_bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let vertex_hex = vertex_bytes
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        let index_hex = [0_u16, 1, 2]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        let xml = format!(
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                    <VertexData><blob>{vertex_hex}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcIndexBuffer>
+                    <IndexSize d:type="sUInt32">2</IndexSize>
+                    <IndexData><blob>{index_hex}</blob></IndexData>
+                </cHcIndexBuffer>
+                <TextureByName><e d:type="cDeltaString">{texture}</e></TextureByName>
+            </Root>"#
+        );
+        std::fs::write(path, xml).unwrap();
+    }
+
+    #[test]
+    fn loads_only_the_selected_geopcdx_without_blueprint_children() {
+        let directory = tempfile::tempdir().unwrap();
+        let geometry_path = directory.path().join("Main.GeoPcDx");
+        let child_geometry_path = directory.path().join("Bogie.GeoPcDx");
+        write_triangle_geometry(&geometry_path, r"Textures\main.TgPcDx");
+        write_triangle_geometry(&child_geometry_path, r"Textures\bogie.TgPcDx");
+        std::fs::write(
+            directory.path().join("Main.bin"),
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cWagonBlueprint>
+                    <GeometryID d:type="cDeltaString">Main.GeoPcDx</GeometryID>
+                    <ContainerComponent><Children>
+                        <cEntityContainerBlueprint-sChild>
+                            <BlueprintID d:type="cDeltaString">Bogie.xml</BlueprintID>
+                        </cEntityContainerBlueprint-sChild>
+                    </Children></ContainerComponent>
+                </cWagonBlueprint>
+            </Root>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("Bogie.bin"),
+            r#"<Root><cEngineBlueprint>
+                <GeometryID d:type="cDeltaString">Bogie.GeoPcDx</GeometryID>
+            </cEngineBlueprint></Root>"#,
+        )
+        .unwrap();
+
+        let loaded = LoadedModel::load(&geometry_path).unwrap();
+
+        assert_eq!(loaded.model.vertices.len(), 3);
+        assert_eq!(loaded.model.indices.len(), 3);
+        assert_eq!(loaded.model.textures, [r"Textures\main.TgPcDx"]);
+        assert_eq!(
+            loaded.stats(),
+            "3 vertices  •  1 triangles  •  1 draw batches  •  1 textures"
+        );
     }
 }
