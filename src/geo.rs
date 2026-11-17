@@ -1485,9 +1485,10 @@ fn find_geometry_buffers(
         let clean_name = name.replace("::", "-").to_ascii_lowercase();
         if clean_name.contains("chcvertexbuffer") {
             if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
-                let declared_vertex_count = find_number(children, &["numvertices"], ids)
-                    .and_then(|value| usize::try_from(value).ok());
-                let stride = find_number(children, &["vertexstride", "stride"], ids)
+                let declared_vertex_count =
+                    find_direct_number(children, &["numvertices"], ids)
+                        .and_then(|value| usize::try_from(value).ok());
+                let stride = find_direct_number(children, &["vertexstride", "stride"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or_else(|| {
                         declared_vertex_count
@@ -1496,15 +1497,15 @@ fn find_geometry_buffers(
                     })
                     .unwrap_or(32);
                 let declaration = find_vertex_attribute_offsets(children, ids);
-                let position = find_number(children, &["positionoffset"], ids)
+                let position = find_direct_number(children, &["positionoffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.position)
                     .unwrap_or(0);
-                let normal = find_number(children, &["normaloffset"], ids)
+                let normal = find_direct_number(children, &["normaloffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.normal)
                     .or_else(|| (stride >= 24).then_some(12));
-                let uv = find_number(children, &["texcoord0offset", "uvoffset"], ids)
+                let uv = find_direct_number(children, &["texcoord0offset", "uvoffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.uv)
                     .or_else(|| (stride >= 32).then_some(24));
@@ -1589,10 +1590,10 @@ fn find_vertex_attribute_offsets(
         };
         let clean_name = name.to_ascii_lowercase();
         if clean_name.contains("elementdecl") {
-            let usage = find_text(children, &["usage"], ids).unwrap_or_default();
-            let type_name = find_text(children, &["type"], ids).unwrap_or_default();
-            let stream_index = find_number(children, &["streamindex"], ids).unwrap_or(0);
-            let explicit_offset = find_number(children, &["offset", "byteoffset"], ids)
+            let usage = direct_text(children, &["usage"], ids).unwrap_or_default();
+            let type_name = direct_text(children, &["type"], ids).unwrap_or_default();
+            let stream_index = find_direct_number(children, &["streamindex"], ids).unwrap_or(0);
+            let explicit_offset = find_direct_number(children, &["offset", "byteoffset"], ids)
                 .and_then(|value| usize::try_from(value).ok());
             let offset =
                 explicit_offset.unwrap_or_else(|| *stream_offsets.entry(stream_index).or_default());
@@ -1607,7 +1608,7 @@ fn find_vertex_attribute_offsets(
                 } else if usage_lower.contains("normal") && attributes.normal.is_none() {
                     attributes.normal = Some(offset);
                 } else if usage_lower.contains("texcoord")
-                    && find_number(children, &["usageindex"], ids).unwrap_or(0) == 0
+                    && find_direct_number(children, &["usageindex"], ids).unwrap_or(0) == 0
                     && attributes.uv.is_none()
                 {
                     attributes.uv = Some(offset);
@@ -2587,49 +2588,110 @@ fn find_blob(
     expected: &str,
     ids: &HashMap<u32, &SerzNode>,
 ) -> Option<(Vec<u8>, String)> {
-    fn find(
+    fn find_any_blob(
         node: &SerzNode,
-        expected: &str,
         ids: &HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
-    ) -> Option<(Vec<u8>, String)> {
+    ) -> Option<Vec<u8>> {
         if let SerzNode::Reference { target_id, .. } = node {
             if !reference_stack.insert(*target_id) {
                 return None;
             }
-            let found = ids
-                .get(target_id)
-                .and_then(|target| find(target, expected, ids, reference_stack));
+            let found = ids.get(target_id).and_then(|target| {
+                find_any_blob(target, ids, reference_stack)
+            });
             reference_stack.remove(target_id);
             return found;
         }
         match node {
-            SerzNode::Element { name, children, .. } => {
-                if name.eq_ignore_ascii_case(expected)
-                    && let Some(data) = children.iter().find_map(|node| match node {
-                        SerzNode::Blob { data } => Some(data.clone()),
-                        _ => None,
-                    })
-                {
-                    return Some((data, name.clone()));
-                }
-                children
-                    .iter()
-                    .find_map(|child| find(child, expected, ids, reference_stack))
+            SerzNode::Element { name, .. }
+                if name.to_ascii_lowercase().contains("chcvertexbuffer") =>
+            {
+                None
             }
-            SerzNode::Blob { data } if expected == "vertexdata" || expected == "indexdata" => {
-                Some((data.clone(), String::new()))
+            SerzNode::Element { children, .. } => children
+                .iter()
+                .find_map(|child| find_any_blob(child, ids, reference_stack)),
+            SerzNode::Blob { data } => {
+                Some(data.clone())
             }
             _ => None,
         }
     }
 
-    for child in children {
-        if let Some(found) = find(child, expected, ids, &mut HashSet::new()) {
-            return Some(found);
+    fn find_named_blob(
+        node: &SerzNode,
+        expected: &str,
+        ids: &HashMap<u32, &SerzNode>,
+        reference_stack: &mut HashSet<u32>,
+    ) -> Option<(Vec<u8>, String)> {
+        match node {
+            SerzNode::Reference { name, target_id } => {
+                if !reference_stack.insert(*target_id) {
+                    return None;
+                }
+                let result = ids.get(target_id).and_then(|target| {
+                    if name.eq_ignore_ascii_case(expected) {
+                        find_any_blob(target, ids, reference_stack)
+                            .map(|data| (data, name.clone()))
+                    } else {
+                        find_named_blob(target, expected, ids, reference_stack)
+                    }
+                });
+                reference_stack.remove(target_id);
+                result
+            }
+            SerzNode::Element {
+                name, children, ..
+            } if name.eq_ignore_ascii_case(expected) => children
+                .iter()
+                .find_map(|child| find_any_blob(child, ids, reference_stack))
+                .map(|data| (data, name.clone())),
+            SerzNode::Element { name, .. }
+                if name.to_ascii_lowercase().contains("chcvertexbuffer") =>
+            {
+                None
+            }
+            SerzNode::Element { children, .. } => children
+                .iter()
+                .find_map(|child| find_named_blob(child, expected, ids, reference_stack)),
+            _ => None,
         }
     }
-    None
+
+    for child in children {
+        match child {
+            SerzNode::Element {
+                name, children, ..
+            } if name.eq_ignore_ascii_case(expected) => {
+                if let Some(data) = children
+                    .iter()
+                    .find_map(|node| find_any_blob(node, ids, &mut HashSet::new()))
+                {
+                    return Some((data, name.clone()));
+                }
+            }
+            SerzNode::Reference { name, target_id }
+                if name.eq_ignore_ascii_case(expected) =>
+            {
+                if let Some(data) = ids.get(target_id).and_then(|target| {
+                    find_any_blob(target, ids, &mut HashSet::new())
+                }) {
+                    return Some((data, name.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(data) = children.iter().find_map(|child| match child {
+        SerzNode::Blob { data } => Some(data.clone()),
+        _ => None,
+    }) {
+        return Some((data, String::new()));
+    }
+    children.iter().find_map(|child| {
+        find_named_blob(child, expected, ids, &mut HashSet::new())
+    })
 }
 
 fn find_number(
@@ -2638,6 +2700,14 @@ fn find_number(
     ids: &HashMap<u32, &SerzNode>,
 ) -> Option<u64> {
     find_text(children, expected, ids)?.trim().parse().ok()
+}
+
+fn find_direct_number(
+    children: &[SerzNode],
+    expected: &[&str],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<u64> {
+    direct_text(children, expected, ids)?.trim().parse().ok()
 }
 
 fn find_text<'a>(
@@ -3143,6 +3213,39 @@ mod tests {
         assert_eq!(model.vertices.len(), 3);
         assert_eq!(model.indices, [0, 1, 2]);
         assert_eq!(model.textures, [r"Textures\sample.TgPcDx"]);
+    }
+
+    #[test]
+    fn keeps_vertex_data_and_count_scoped_to_each_vertex_buffer() {
+        let narrow_vertices = [[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+            .into_iter()
+            .flatten()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        let narrow_blob = narrow_vertices
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        let unrelated_blob = "0000000000000000";
+        let second_buffer = format!(
+            r#"
+                <cHcVertexBuffer>
+                    <OtherData>
+                        <NumVertices d:type="sUInt32">5</NumVertices>
+                        <IndexData><blob>{unrelated_blob}</blob></IndexData>
+                    </OtherData>
+                    <NumVertices d:type="sUInt32">3</NumVertices>
+                    <blob>{narrow_blob}</blob>
+                </cHcVertexBuffer>
+            "#
+        );
+        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
+            .replace("</Root>", &format!("{second_buffer}</Root>"));
+
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.vertices.len(), 6);
+        assert_eq!(model.indices, [0, 1, 2]);
     }
 
     #[test]
