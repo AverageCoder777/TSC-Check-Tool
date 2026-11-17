@@ -284,7 +284,11 @@ fn fs_cutout(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 @fragment
 fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
-    return shade(input);
+    let color = shade(input);
+    if color.a < 0.02 {
+        discard;
+    }
+    return color;
 }
 "#
                 .into(),
