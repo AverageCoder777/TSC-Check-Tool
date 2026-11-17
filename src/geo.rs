@@ -141,6 +141,7 @@ impl GeoModel {
             &mut HashSet::new(),
             &mut raw_batches,
         );
+        deduplicate_submeshes(&mut raw_batches);
 
         let mut vertex_data = Vec::new();
         let mut index_data = Vec::new();
@@ -1232,9 +1233,9 @@ fn find_transform_id(children: &[SerzNode], ids: &HashMap<u32, &SerzNode>) -> Op
             {
                 values.extend(parse_i32_values(value));
             }
-            SerzNode::Array { name, values: vals, .. }
-                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
-            {
+            SerzNode::Array {
+                name, values: vals, ..
+            } if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) => {
                 for value in vals {
                     values.extend(parse_i32_values(value));
                 }
@@ -1254,7 +1255,10 @@ fn find_transform_id(children: &[SerzNode], ids: &HashMap<u32, &SerzNode>) -> Op
             _ => {}
         }
     }
-    values.into_iter().find(|&value| value >= 0).map(|value| value as usize)
+    values
+        .into_iter()
+        .find(|&value| value >= 0)
+        .map(|value| value as usize)
 }
 
 fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
@@ -1550,14 +1554,16 @@ fn find_geometry_buffers(
             }
             return;
         }
-        let SerzNode::Element { name, id, children, .. } = node
+        let SerzNode::Element {
+            name, id, children, ..
+        } = node
         else {
             return;
         };
         if *id != 0 && !visited_elements.insert(*id) {
             return;
         }
-    let clean_name = name.replace("::", "-").to_ascii_lowercase();
+        let clean_name = name.replace("::", "-").to_ascii_lowercase();
         if vertex_pass && clean_name.contains("chcvertexbuffer") {
             if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
                 let declared_vertex_count = find_direct_number(children, &["numvertices"], ids)
@@ -1576,13 +1582,13 @@ fn find_geometry_buffers(
                     .map(|count| bytes.len() / count);
                 let stride = find_direct_number(children, &["vertexstride", "stride"], ids)
                     .and_then(|value| usize::try_from(value).ok())
+                    .or(declared_stride)
                     .or_else(|| {
                         (declaration.declaration_stride > 0
                             && bytes.len() % declaration.declaration_stride == 0)
                             .then_some(declaration.declaration_stride)
                     })
                     .or((fvf != 0).then_some(fvf_stride).filter(|value| *value > 0))
-                    .or(declared_stride)
                     .unwrap_or(32);
                 let position = find_direct_number(children, &["positionoffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
@@ -2095,10 +2101,9 @@ fn find_submeshes(
             .ok()
             .or_else(|| trimmed.parse::<u32>().ok().map(|v| v as i32))
             .or_else(|| trimmed.parse::<i64>().ok().map(|v| v as i32))
-    })
-        == Some(0);
-    let has_explicit_transform_id = direct_text(children, &["transformid", "transformids"], ids)
-        .is_some();
+    }) == Some(0);
+    let has_explicit_transform_id =
+        direct_text(children, &["transformid", "transformids"], ids).is_some();
     let inherits_parent_transform = clean_name.contains("geometrynodesamestate")
         && inherited_transform_id.is_some()
         && primary_transform_is_default
@@ -2148,12 +2153,17 @@ fn find_submeshes(
             let texture_index = material_reference
                 .and_then(|reference| material_bindings.get(&reference))
                 .map(|binding| binding.texture_index);
-            let base_vertex = find_number(children, &["vertexindexbase", "vertexindexbases", "basevertex"], ids)
-                .and_then(|value| i32::try_from(value).ok())
-                .unwrap_or(0);
+            let base_vertex = find_number(
+                children,
+                &["vertexindexbase", "vertexindexbases", "basevertex"],
+                ids,
+            )
+            .and_then(|value| i32::try_from(value).ok())
+            .unwrap_or(0);
             let vertex_index_min = find_number(children, &["vertexindexmin"], ids).unwrap_or(0);
             let vertex_index_range = find_number(children, &["vertexindexrange"], ids).unwrap_or(0);
-            let max_local_vertex_ref = i128::from(vertex_index_min) + i128::from(vertex_index_range);
+            let max_local_vertex_ref =
+                i128::from(vertex_index_min) + i128::from(vertex_index_range);
             let max_local_vertex_ref = u64::try_from(max_local_vertex_ref).ok();
             let vertex_buffer_index = find_number(children, &["vertexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
@@ -2212,6 +2222,26 @@ fn find_submeshes(
             output,
         );
     }
+}
+
+fn deduplicate_submeshes(batches: &mut Vec<RawSubmesh>) {
+    let mut seen = HashSet::with_capacity(batches.len());
+    batches.retain(|batch| {
+        seen.insert((
+            batch.first_index,
+            batch.index_count,
+            batch.material_reference,
+            batch.material_index,
+            batch.texture_index,
+            batch.vertex_buffer_index,
+            batch.index_buffer_index,
+            batch.base_vertex,
+            batch.max_local_vertex_ref,
+            batch.topology as u8,
+            batch.transform.to_cols_array().map(f32::to_bits),
+            batch.excluded,
+        ))
+    });
 }
 
 fn direct_text<'a>(
@@ -2524,16 +2554,15 @@ fn find_index_data(
         .filter_map(|batch| batch.max_local_vertex_ref)
         .max()
         .unwrap_or(0);
-    let inferred_u32 = max_index_end > 0
-        && {
-            let exact_u32 = max_index_end.checked_mul(4) == Some(bytes.len() as u64)
-                && max_index_end.checked_mul(2) != Some(bytes.len() as u64);
-            let local_exceeds_u16 = max_local_vertex_ref > u64::from(u16::MAX);
-            let enough_for_u32 = max_index_end
-                .checked_mul(4)
-                .is_some_and(|minimum_bytes| bytes.len() as u64 >= minimum_bytes);
-            exact_u32 || (local_exceeds_u16 && enough_for_u32)
-        };
+    let inferred_u32 = max_index_end > 0 && {
+        let exact_u32 = max_index_end.checked_mul(4) == Some(bytes.len() as u64)
+            && max_index_end.checked_mul(2) != Some(bytes.len() as u64);
+        let local_exceeds_u16 = max_local_vertex_ref > u64::from(u16::MAX);
+        let enough_for_u32 = max_index_end
+            .checked_mul(4)
+            .is_some_and(|minimum_bytes| bytes.len() as u64 >= minimum_bytes);
+        exact_u32 || (local_exceeds_u16 && enough_for_u32)
+    };
     let width = explicit_width.unwrap_or(if inferred_u32 { 4 } else { 2 });
     Some(IndexBuffer {
         indices: decode_indices(&bytes, width).ok()?,
@@ -2868,9 +2897,9 @@ fn find_blob(
             if !reference_stack.insert(*target_id) {
                 return None;
             }
-            let found = ids.get(target_id).and_then(|target| {
-                find_any_blob(target, ids, reference_stack)
-            });
+            let found = ids
+                .get(target_id)
+                .and_then(|target| find_any_blob(target, ids, reference_stack));
             reference_stack.remove(target_id);
             return found;
         }
@@ -2883,9 +2912,7 @@ fn find_blob(
             SerzNode::Element { children, .. } => children
                 .iter()
                 .find_map(|child| find_any_blob(child, ids, reference_stack)),
-            SerzNode::Blob { data } => {
-                Some(data.clone())
-            }
+            SerzNode::Blob { data } => Some(data.clone()),
             _ => None,
         }
     }
@@ -2903,8 +2930,7 @@ fn find_blob(
                 }
                 let result = ids.get(target_id).and_then(|target| {
                     if name.eq_ignore_ascii_case(expected) {
-                        find_any_blob(target, ids, reference_stack)
-                            .map(|data| (data, name.clone()))
+                        find_any_blob(target, ids, reference_stack).map(|data| (data, name.clone()))
                     } else {
                         find_named_blob(target, expected, ids, reference_stack)
                     }
@@ -2912,12 +2938,12 @@ fn find_blob(
                 reference_stack.remove(target_id);
                 result
             }
-            SerzNode::Element {
-                name, children, ..
-            } if name.eq_ignore_ascii_case(expected) => children
-                .iter()
-                .find_map(|child| find_any_blob(child, ids, reference_stack))
-                .map(|data| (data, name.clone())),
+            SerzNode::Element { name, children, .. } if name.eq_ignore_ascii_case(expected) => {
+                children
+                    .iter()
+                    .find_map(|child| find_any_blob(child, ids, reference_stack))
+                    .map(|data| (data, name.clone()))
+            }
             SerzNode::Element { name, .. }
                 if name.to_ascii_lowercase().contains("chcvertexbuffer") =>
             {
@@ -2932,9 +2958,7 @@ fn find_blob(
 
     for child in children {
         match child {
-            SerzNode::Element {
-                name, children, ..
-            } if name.eq_ignore_ascii_case(expected) => {
+            SerzNode::Element { name, children, .. } if name.eq_ignore_ascii_case(expected) => {
                 if let Some(data) = children
                     .iter()
                     .find_map(|node| find_any_blob(node, ids, &mut HashSet::new()))
@@ -2942,12 +2966,11 @@ fn find_blob(
                     return Some((data, name.clone()));
                 }
             }
-            SerzNode::Reference { name, target_id }
-                if name.eq_ignore_ascii_case(expected) =>
-            {
-                if let Some(data) = ids.get(target_id).and_then(|target| {
-                    find_any_blob(target, ids, &mut HashSet::new())
-                }) {
+            SerzNode::Reference { name, target_id } if name.eq_ignore_ascii_case(expected) => {
+                if let Some(data) = ids
+                    .get(target_id)
+                    .and_then(|target| find_any_blob(target, ids, &mut HashSet::new()))
+                {
                     return Some((data, name.clone()));
                 }
             }
@@ -2960,9 +2983,9 @@ fn find_blob(
     }) {
         return Some((data, String::new()));
     }
-    children.iter().find_map(|child| {
-        find_named_blob(child, expected, ids, &mut HashSet::new())
-    })
+    children
+        .iter()
+        .find_map(|child| find_named_blob(child, expected, ids, &mut HashSet::new()))
 }
 
 fn find_number(
@@ -4084,6 +4107,11 @@ mod tests {
                     <SingleChildTransform d:type="bool">1</SingleChildTransform>
                     <Child d:type="ref">7</Child>
                 </cHcSGNodeZSorter>
+                <cHcSGNodeZSorter>
+                    <TransformID d:type="sUInt32">0</TransformID>
+                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
+                    <Child d:type="ref">7</Child>
+                </cHcSGNodeZSorter>
             </Root>
         "#;
         let shared_xml = r#"
@@ -4117,6 +4145,8 @@ mod tests {
             &mut batches,
         );
 
+        assert_eq!(batches.len(), 3);
+        deduplicate_submeshes(&mut batches);
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0].transform, transforms[0]);
         assert_eq!(batches[1].transform, transforms[1]);
@@ -4356,7 +4386,10 @@ mod tests {
             "</cHcVertexBuffer>",
             "<NumVertices d:type=\"sUInt32\">3</NumVertices><cHcVertexTypeFVF><FVF d:type=\"sUInt32\">274</FVF></cHcVertexTypeFVF></cHcVertexBuffer>",
         );
-        let model = match GeoModel::parse(source.as_bytes()) { Ok(m) => m, Err(e) => panic!("parse error: {e}") };
+        let model = match GeoModel::parse(source.as_bytes()) {
+            Ok(m) => m,
+            Err(e) => panic!("parse error: {e}"),
+        };
         assert_eq!(model.diagnostics.vertex_stride, 32);
         assert_eq!(model.diagnostics.declared_vertex_count, 3);
         assert_eq!(model.diagnostics.fvf, 0x112);
@@ -4405,27 +4438,17 @@ mod tests {
     }
 
     #[test]
-    fn inspect_user_supplied_geo_file() {
-        let path = Path::new(
-            r"X:\SteamLibrary\steamapps\common\RailWorks\Assets\3DZUG\3DZ_Arbel_SNCF\RailVehicles\Cargo\Arbel_Wagen1.GeoPcDx",
+    fn declared_vertex_count_resolves_stride_when_fvf_differs() {
+        let vertices = vec![0u8; 52 * 3];
+        let mut source = xml(&vertices, &[0, 0, 1, 0, 2, 0], 32);
+        source = source.replace("<VertexStride d:type=\"sUInt32\">32</VertexStride>", "");
+        source = source.replace(
+            "</cHcVertexBuffer>",
+            "<NumVertices d:type=\"sUInt32\">3</NumVertices><cHcVertexTypeFVF><FVF d:type=\"sUInt32\">274</FVF></cHcVertexTypeFVF></cHcVertexBuffer>",
         );
-        let data = std::fs::read(path).unwrap();
-        let root = parse_serz_document(&data).unwrap();
-        let ids = build_id_map(&root);
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
-        find_geometry_buffers(&root, &ids, &[], &mut vertices, &mut indices);
-        for (index, buffer) in vertices.iter().enumerate() {
-            println!(
-                "buffer[{index}]: bytes={} stride={} count={} declared={} fvf=0x{:X} layout={}",
-                buffer.bytes.len(),
-                buffer.stride,
-                buffer.bytes.len() / buffer.stride.max(1),
-                buffer.declared_vertex_count,
-                buffer.fvf,
-                buffer.layout
-            );
-        }
-        assert!(!vertices.is_empty());
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.diagnostics.vertex_stride, 52);
+        assert_eq!(model.diagnostics.vertex_count, 3);
     }
 }
