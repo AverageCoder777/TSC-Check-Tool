@@ -14,9 +14,30 @@ fn is_tracks_bin(path: &Path) -> bool {
         .is_some_and(|n| n.eq_ignore_ascii_case("Tracks.bin"))
 }
 
+fn uses_structured_serz_xml(path: &Path) -> bool {
+    is_tracks_bin(path)
+        || path.extension().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("GeoPcDx") || extension.eq_ignore_ascii_case("TgPcDx")
+        })
+}
+
 fn compile_xml_for_target(target_bin: &Path, xml: &str) -> Result<Vec<u8>, String> {
     if is_tracks_bin(target_bin) {
         crate::serz::compile_tracks_xml_to_bin(xml)
+    } else if uses_structured_serz_xml(target_bin) {
+        let bytes = crate::serz::compile_tracks_xml_to_bin(xml)?;
+        if target_bin
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("TgPcDx"))
+        {
+            let mut reader = crate::serz::SerzReader::new(&bytes);
+            let root = reader
+                .parse()
+                .map_err(|error| format!("Не удалось проверить сериализованный TgPcDx: {error}"))?;
+            crate::serz::encode_tgpcdx_to_vec(&root, reader.preamble.as_ref())
+        } else {
+            Ok(bytes)
+        }
     } else {
         let (node, preamble) = crate::serz::SerzNode::from_xml_str(xml)?;
         crate::serz::encode_to_vec(&node, preamble.as_ref())
@@ -78,9 +99,9 @@ pub fn open_and_sync_with_vscode(
 
             match compile_xml_for_target(&binary_path, &final_xml) {
                 Ok(bytes) => {
-                    if bytes.len() < 1024 {
+                    if bytes.len() < 10 {
                         let err = format!(
-                            "Ошибка записи: размер файла аномально мал ({} байт).",
+                            "Ошибка записи: бинарный файл слишком короткий ({} байт).",
                             bytes.len()
                         );
                         show_native_error("Ошибка записи", &err);
@@ -155,7 +176,7 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
     };
 
     if regenerate {
-        let xml = if is_tracks_bin(binary_asset_path) {
+        let xml = if uses_structured_serz_xml(binary_asset_path) {
             let raw = fs::read(binary_asset_path).map_err(|e| {
                 format!("Не удалось прочитать {}: {e}", binary_asset_path.display())
             })?;
@@ -355,12 +376,12 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
         }
         match compile_xml_for_target(target, &final_xml) {
             Ok(bytes) => {
-                if bytes.len() < 1024 {
+                if bytes.len() < 10 {
                     show_native_error(
                         "Ошибка записи",
-                        &format!("Размер файла аномально мал ({} байт).", bytes.len()),
+                        &format!("Бинарный файл слишком короткий ({} байт).", bytes.len()),
                     );
-                    return Err("Размер файла аномально мал".to_string());
+                    return Err("Бинарный файл слишком короткий".to_string());
                 }
                 let mut validation_reader = crate::serz::SerzReader::new(&bytes);
                 if let Err(e) = validation_reader.parse() {
@@ -399,5 +420,131 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serz::{SerzNode, SerzPreamble};
+
+    fn texture_node(blob: Vec<u8>) -> SerzNode {
+        SerzNode::Element {
+            name: "cHcTexture".into(),
+            id: 1,
+            version: 1,
+            children: vec![
+                SerzNode::Property {
+                    name: "Name".into(),
+                    type_name: "cDeltaString".into(),
+                    value: "OldTexture".into(),
+                    alt_encoding: None,
+                },
+                SerzNode::Element {
+                    name: "cHcTextureData".into(),
+                    id: 2,
+                    version: 1,
+                    children: vec![SerzNode::Element {
+                        name: "Mip".into(),
+                        id: 3,
+                        version: 1,
+                        children: vec![SerzNode::Element {
+                            name: "cHcImageDx".into(),
+                            id: 4,
+                            version: 1,
+                            children: vec![SerzNode::Blob { data: blob }],
+                        }],
+                    }],
+                },
+            ],
+        }
+    }
+
+    fn find_property<'a>(node: &'a SerzNode, property_name: &str) -> Option<&'a str> {
+        match node {
+            SerzNode::Element { children, .. } => children
+                .iter()
+                .find_map(|child| find_property(child, property_name)),
+            SerzNode::Property { name, value, .. } if name == property_name => Some(value),
+            _ => None,
+        }
+    }
+
+    fn collect_blobs<'a>(node: &'a SerzNode, blobs: &mut Vec<&'a [u8]>) {
+        match node {
+            SerzNode::Element { children, .. } => {
+                for child in children {
+                    collect_blobs(child, blobs);
+                }
+            }
+            SerzNode::Blob { data } => blobs.push(data),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn texture_editor_xml_round_trip_preserves_binary_blob() {
+        let blob = vec![0xFF, 0xAA, 0x80, 0x42, 0x00, 0xFE, 0xFF, 0x01];
+        let preamble = SerzPreamble {
+            flag: 0x01,
+            val: 0x1234_5678,
+        };
+        let original =
+            crate::serz::encode_tgpcdx_to_vec(&texture_node(blob.clone()), Some(&preamble))
+                .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("texture.TgPcDx");
+        let temp_xml = generate_temp_xml_path(&target);
+        fs::write(&target, &original).unwrap();
+
+        let xml = resolve_temp_xml(&target, &temp_xml).unwrap();
+        let edited_xml = xml.replace("OldTexture", "RenamedTexture");
+        assert_ne!(xml, edited_xml);
+        let saved = compile_xml_for_target(&target, &edited_xml).unwrap();
+        let invalid_blob_size = edited_xml.replace(
+            &format!("d:size=\"{}\"", blob.len()),
+            &format!("d:size=\"{}\"", blob.len() + 1),
+        );
+        assert!(compile_xml_for_target(&target, &invalid_blob_size).is_err());
+
+        assert_eq!(&saved[..10], b"SERZ\0\0\x01\0\xFF\x43");
+        let root = crate::serz::validate_tgpcdx_binary(&saved, Some(&[blob.len()])).unwrap();
+        assert_eq!(find_property(&root, "Name"), Some("RenamedTexture"));
+        let mut saved_blobs = Vec::new();
+        collect_blobs(&root, &mut saved_blobs);
+        assert_eq!(saved_blobs, vec![blob.as_slice()]);
+        let parsed_preamble = {
+            let mut reader = crate::serz::SerzReader::new(&saved);
+            reader.parse().unwrap();
+            reader.preamble.unwrap()
+        };
+        assert_eq!(parsed_preamble, preamble);
+    }
+
+    #[test]
+    fn geometry_editor_xml_round_trip_preserves_binary_blob() {
+        let blob = vec![0xFF, 0xAA, 0x80, 0x42, 0x00, 0xFE, 0xFF, 0x01];
+        let preamble = SerzPreamble {
+            flag: 0x01,
+            val: 0x1234_5678,
+        };
+        let original =
+            crate::serz::encode_to_vec(&texture_node(blob.clone()), Some(&preamble)).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("model.GeoPcDx");
+        let temp_xml = generate_temp_xml_path(&target);
+        fs::write(&target, &original).unwrap();
+
+        let xml = resolve_temp_xml(&target, &temp_xml).unwrap();
+        let edited_xml = xml.replace("OldTexture", "RenamedTexture");
+        let saved = compile_xml_for_target(&target, &edited_xml).unwrap();
+
+        let mut reader = crate::serz::SerzReader::new(&saved);
+        let root = reader.parse().unwrap();
+        assert_eq!(find_property(&root, "Name"), Some("RenamedTexture"));
+        let mut saved_blobs = Vec::new();
+        collect_blobs(&root, &mut saved_blobs);
+        assert_eq!(saved_blobs, vec![blob.as_slice()]);
+        assert_eq!(reader.preamble.as_ref(), Some(&preamble));
     }
 }

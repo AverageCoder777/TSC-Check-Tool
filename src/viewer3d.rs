@@ -225,6 +225,32 @@ impl LoadedModel {
 pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
     let window = crate::GeoViewerWindow::new().map_err(|error| error.to_string())?;
     let weak = window.as_weak();
+    let editor_weak = window.as_weak();
+    let editor_path = path.to_path_buf();
+    window.on_open_in_editor(move || {
+        let callback_weak = editor_weak.clone();
+        if let Err(error) =
+            crate::external_editor::open_and_sync_with_vscode(&editor_path, move |result| {
+                let status = match result {
+                    Ok(message) => message,
+                    Err(error) => format!("Ошибка редактора: {error}"),
+                };
+                let viewer = callback_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(viewer) = viewer.upgrade() {
+                        viewer.set_status_text(status.into());
+                    }
+                });
+            })
+        {
+            let viewer = editor_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(viewer) = viewer.upgrade() {
+                    viewer.set_status_text(format!("Не удалось открыть редактор: {error}").into());
+                }
+            });
+        }
+    });
     window.set_model_name(
         path.file_name()
             .unwrap_or_default()

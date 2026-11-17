@@ -11,6 +11,8 @@ pub struct SerzPreamble {
     pub val: u32,
 }
 
+const TGPCDX_SERZ_PREFIX: &[u8; 10] = b"SERZ\0\0\x01\0\xFF\x43";
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerzNode {
     Element {
@@ -1111,6 +1113,59 @@ pub fn encode_to_vec(root: &SerzNode, preamble: Option<&SerzPreamble>) -> Result
     Ok(buffer)
 }
 
+/// Encodes a texture SERZ stream with its required leading directive and
+/// verifies that the serialized blob payloads survive a binary round trip.
+pub fn encode_tgpcdx_to_vec(
+    root: &SerzNode,
+    preamble: Option<&SerzPreamble>,
+) -> Result<Vec<u8>, String> {
+    let default_preamble = SerzPreamble { flag: 0, val: 0 };
+    let bytes = encode_to_vec(root, Some(preamble.unwrap_or(&default_preamble)))?;
+    let decoded = validate_tgpcdx_binary(&bytes, None)?;
+    let mut expected_blobs = Vec::new();
+    let mut actual_blobs = Vec::new();
+    collect_blob_data(root, &mut expected_blobs);
+    collect_blob_data(&decoded, &mut actual_blobs);
+    if expected_blobs != actual_blobs {
+        return Err("SERZ blob payloads changed during serialization".into());
+    }
+    Ok(bytes)
+}
+
+pub fn validate_tgpcdx_binary(
+    bytes: &[u8],
+    expected_blob_lengths: Option<&[usize]>,
+) -> Result<SerzNode, String> {
+    if !bytes.starts_with(TGPCDX_SERZ_PREFIX) {
+        return Err("invalid TgPcDx SERZ prefix".into());
+    }
+    let mut reader = SerzReader::new(bytes);
+    let root = reader
+        .parse()
+        .map_err(|e| format!("SERZ validation: {e}"))?;
+    if let Some(expected_lengths) = expected_blob_lengths {
+        let mut actual_blobs = Vec::new();
+        collect_blob_data(&root, &mut actual_blobs);
+        let actual_lengths: Vec<usize> = actual_blobs.iter().map(|blob| blob.len()).collect();
+        if actual_lengths != expected_lengths {
+            return Err("SERZ blob lengths do not match the mip data".into());
+        }
+    }
+    Ok(root)
+}
+
+fn collect_blob_data<'a>(node: &'a SerzNode, blobs: &mut Vec<&'a [u8]>) {
+    match node {
+        SerzNode::Element { children, .. } => {
+            for child in children {
+                collect_blob_data(child, blobs);
+            }
+        }
+        SerzNode::Blob { data } => blobs.push(data),
+        _ => {}
+    }
+}
+
 impl<W: Write> SerzWriter<W> {
     pub fn new(writer: W) -> Self {
         const EMPTY_TOKEN: Option<SerzTokenKey> = None;
@@ -1393,7 +1448,8 @@ impl<W: Write> SerzWriter<W> {
             }
             SerzNode::Blob { data } => {
                 self.write_token(0x42, "", "")?;
-                let len = data.len() as u32;
+                let len = u32::try_from(data.len())
+                    .map_err(|_| "SERZ blob exceeds the u32 length limit".to_string())?;
                 self.writer
                     .write_all(&len.to_le_bytes())
                     .map_err(|e| e.to_string())?;
@@ -1619,6 +1675,28 @@ pub fn tracks_bin_to_xml(raw_bytes: &[u8]) -> Result<String, String> {
 pub fn compile_tracks_xml_to_bin(xml: &str) -> Result<Vec<u8>, String> {
     use xml::reader::{EventReader, XmlEvent};
 
+    fn decode_blob_hex(text: &str) -> Result<Vec<u8>, String> {
+        let digits = text
+            .chars()
+            .filter(|character| !character.is_ascii_whitespace())
+            .collect::<Vec<_>>();
+        if digits.len() % 2 != 0 {
+            return Err("SERZ blob contains an incomplete hexadecimal byte".into());
+        }
+        digits
+            .chunks_exact(2)
+            .map(|pair| {
+                let high = pair[0]
+                    .to_digit(16)
+                    .ok_or_else(|| "SERZ blob contains invalid hexadecimal data".to_string())?;
+                let low = pair[1]
+                    .to_digit(16)
+                    .ok_or_else(|| "SERZ blob contains invalid hexadecimal data".to_string())?;
+                Ok(((high << 4) | low) as u8)
+            })
+            .collect()
+    }
+
     // 1. Извлекаем serz-meta (преамбулу и разделитель)
     let mut preamble: Option<SerzPreamble> = None;
     let mut use_colon_sep = true; // для Tracks.bin по умолчанию "::"
@@ -1684,6 +1762,7 @@ pub fn compile_tracks_xml_to_bin(xml: &str) -> Result<Vec<u8>, String> {
         let mut alt_encoding: Option<String> = None;
         let mut num_elements: Option<usize> = None;
         let mut element_type: Option<String> = None;
+        let mut blob_size: Option<usize> = None;
 
         for attr in attrs {
             match attr.name.local_name.as_str() {
@@ -1693,8 +1772,36 @@ pub fn compile_tracks_xml_to_bin(xml: &str) -> Result<Vec<u8>, String> {
                 "alt_encoding" => alt_encoding = Some(attr.value),
                 "numElements" => num_elements = attr.value.parse().ok(),
                 "elementType" => element_type = Some(attr.value),
+                "size" => {
+                    blob_size = Some(
+                        attr.value
+                            .parse()
+                            .map_err(|_| format!("Invalid SERZ blob size: {}", attr.value))?,
+                    )
+                }
                 _ => {}
             }
+        }
+
+        if name == "blob" {
+            let mut text = String::new();
+            for event in iter.by_ref() {
+                match event.map_err(|e| e.to_string())? {
+                    XmlEvent::Characters(s) | XmlEvent::Whitespace(s) => text.push_str(&s),
+                    XmlEvent::EndElement { .. } => break,
+                    _ => {}
+                }
+            }
+            let data = decode_blob_hex(&text)?;
+            if let Some(size) = blob_size
+                && data.len() != size
+            {
+                return Err(format!(
+                    "SERZ blob size is {size}, but XML contains {} bytes",
+                    data.len()
+                ));
+            }
+            return Ok(SerzNode::Blob { data });
         }
 
         if name == "nil" {

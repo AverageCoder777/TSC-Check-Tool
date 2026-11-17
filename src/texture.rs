@@ -1,7 +1,7 @@
 //! TgPcDx texture decoding, DDS export/import.
 
-use std::fmt::Write as FmtWrite;
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
@@ -16,30 +16,21 @@ fn decode_tgpcdx_with_max_dimension(
     data: &[u8],
     max_dimension: Option<u32>,
 ) -> Result<(u32, u32, Vec<u8>), String> {
-    let xml = if data.starts_with(b"SERZ") {
-        serz_bytes_to_xml(data)?
-    } else {
-        String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?
-    };
-
-    let image_blocks = all_image_blocks(&xml);
+    let image_blocks = image_mips_from_bytes(data)?;
     let image_block = max_dimension
         .and_then(|max_dimension| {
-            image_blocks.iter().copied().find(|block| {
-                image_dimensions(block).is_some_and(|(width, height)| {
-                    width <= max_dimension && height <= max_dimension
-                })
-            })
+            image_blocks
+                .iter()
+                .find(|block| block.width <= max_dimension && block.height <= max_dimension)
         })
-        .or_else(|| image_blocks.first().copied())
+        .or_else(|| image_blocks.first())
         .ok_or("no image block")?;
-    let format = extract_format(image_block);
-    let (width, height) = image_dimensions(image_block).ok_or("invalid dimensions")?;
+    let format = &image_block.format;
+    let (width, height) = (image_block.width, image_block.height);
     if width == 0 || height == 0 {
         return Err("invalid dimensions".into());
     }
-    let blob = extract_blob(image_block).ok_or("no blob")?;
-    let bytes = hex_decode(&blob);
+    let bytes = &image_block.data;
 
     let pixels = width
         .checked_mul(height)
@@ -78,7 +69,7 @@ fn decode_tgpcdx_with_max_dimension(
     } else if is_bc3 || bytes.len() >= pixels {
         // BC3 / DXT5 (16 bytes per 4x4 block)
         let mut image_u32 = vec![0u32; pixels];
-        texture2ddecoder::decode_bc3(&bytes, width as usize, height as usize, &mut image_u32)
+        texture2ddecoder::decode_bc3(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
         for px in image_u32 {
             rgba.push(((px >> 16) & 0xff) as u8);
@@ -89,7 +80,7 @@ fn decode_tgpcdx_with_max_dimension(
     } else {
         // BC1 / DXT1 (8 bytes per 4x4 block)
         let mut image_u32 = vec![0u32; pixels];
-        texture2ddecoder::decode_bc1(&bytes, width as usize, height as usize, &mut image_u32)
+        texture2ddecoder::decode_bc1(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
         for px in image_u32 {
             rgba.push(((px >> 16) & 0xff) as u8);
@@ -115,6 +106,88 @@ fn image_dimensions(block: &str) -> Option<(u32, u32)> {
         .parse()
         .ok()?;
     Some((width, height))
+}
+
+#[derive(Debug)]
+struct ImageMip {
+    format: String,
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+
+fn image_mips_from_bytes(data: &[u8]) -> Result<Vec<ImageMip>, String> {
+    if data.starts_with(b"SERZ") {
+        let mut reader = crate::serz::SerzReader::new(data);
+        let root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let mut mips = Vec::new();
+        collect_serz_image_mips(&root, &mut mips)?;
+        return Ok(mips);
+    }
+
+    let xml = String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?;
+    all_image_blocks(&xml)
+        .into_iter()
+        .map(|block| {
+            let (width, height) = image_dimensions(block).ok_or("invalid mip dimensions")?;
+            let bytes = extract_blob(block)
+                .map(|blob| hex_decode(&blob))
+                .unwrap_or_default();
+            if !bytes.is_empty() && bytes.len() != extract_blob_size(block) as usize {
+                return Err("XML mip blob size does not match its declared size".into());
+            }
+            Ok(ImageMip {
+                format: extract_format(block),
+                width,
+                height,
+                data: bytes,
+            })
+        })
+        .collect()
+}
+
+fn collect_serz_image_mips(
+    node: &crate::serz::SerzNode,
+    mips: &mut Vec<ImageMip>,
+) -> Result<(), String> {
+    if let crate::serz::SerzNode::Element { name, children, .. } = node {
+        if name == "cHcImageDx" {
+            let mut format = None;
+            let mut width = None;
+            let mut height = None;
+            let mut blob = None;
+            for child in children {
+                match child {
+                    crate::serz::SerzNode::Property {
+                        name,
+                        type_name,
+                        value,
+                        ..
+                    } if name == "Format" && type_name == "cDeltaString" => {
+                        format = Some(value.clone());
+                    }
+                    crate::serz::SerzNode::Property { name, value, .. } if name == "Width" => {
+                        width = value.parse::<u32>().ok();
+                    }
+                    crate::serz::SerzNode::Property { name, value, .. } if name == "Height" => {
+                        height = value.parse::<u32>().ok();
+                    }
+                    crate::serz::SerzNode::Blob { data } => blob = Some(data.clone()),
+                    _ => {}
+                }
+            }
+            mips.push(ImageMip {
+                format: format.ok_or("image has no Format property")?,
+                width: width.ok_or("image has invalid Width property")?,
+                height: height.ok_or("image has invalid Height property")?,
+                data: blob.unwrap_or_default(),
+            });
+        }
+        for child in children {
+            collect_serz_image_mips(child, mips)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn rgba_to_slint_image(width: u32, height: u32, rgba: &[u8]) -> slint::Image {
@@ -327,7 +400,7 @@ pub fn inspect_tgpcdx(data: &[u8]) -> Result<TextureInfo, String> {
 /// Вариант с указанием пути на диске: позволяет сверить имя и проверить .bak.
 pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<TextureInfo, String> {
     let xml = if data.starts_with(b"SERZ") {
-        serz_bytes_to_xml(data)?
+        serz_bytes_to_metadata_xml(data)?
     } else {
         String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?
     };
@@ -392,14 +465,21 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
     }
 
     // Размеры blob-данных.
-    let total_blob_bytes: u64 = blocks
-        .iter()
-        .map(|b| {
-            extract_blob(b)
-                .map(|s| hex_decode(&s).len() as u64)
-                .unwrap_or(0)
-        })
-        .sum();
+    let total_blob_bytes: u64 = if data.starts_with(b"SERZ") {
+        image_mips_from_bytes(data)?
+            .iter()
+            .map(|mip| mip.data.len() as u64)
+            .sum()
+    } else {
+        blocks
+            .iter()
+            .map(|b| {
+                extract_blob(b)
+                    .map(|s| hex_decode(&s).len() as u64)
+                    .unwrap_or(0)
+            })
+            .sum()
+    };
     // Если blob-строки не распознались, используем d:size.
     let total_blob_bytes = if total_blob_bytes == 0 {
         blocks.iter().map(|b| extract_blob_size(b)).sum()
@@ -539,6 +619,9 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     }
 
     let data = std::fs::read(tgpcdx_path).map_err(|e| e.to_string())?;
+    if !data.starts_with(b"SERZ") {
+        return Err("TgPcDx save requires a binary SERZ file".into());
+    }
 
     // Резервная копия <путь>.TgPcDx.bak, если её ещё нет.
     let bak_path = PathBuf::from(format!("{}.bak", tgpcdx_path.display()));
@@ -552,16 +635,9 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
         append_tgpcdx_log(&format!("Создана резервная копия: {}", bak_path.display()));
     }
 
-    // Парсим SERZ с сохранением преамбулы (или XML).
-    let is_serz = data.starts_with(b"SERZ");
-    let (mut root, preamble) = if is_serz {
-        let mut reader = crate::serz::SerzReader::new(&data);
-        let node = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
-        (node, reader.preamble.clone())
-    } else {
-        let text = String::from_utf8(data.clone()).map_err(|e| format!("invalid text: {e}"))?;
-        crate::serz::SerzNode::from_xml_str(&text).map_err(|e| format!("xml parse: {e}"))?
-    };
+    let mut reader = crate::serz::SerzReader::new(&data);
+    let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+    let preamble = reader.preamble.clone();
 
     // Обновляем все cHcTexture/Name.
     let updated = update_internal_name_in_node(&mut root, &normalized);
@@ -569,12 +645,8 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
         return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
     }
 
-    let out_bytes = if is_serz {
-        crate::serz::encode_to_vec(&root, preamble.as_ref())
-            .map_err(|e| format!("serz encode: {e}"))?
-    } else {
-        crate::serz::SerzReader::to_xml(&root, 0, true).into_bytes()
-    };
+    let out_bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())
+        .map_err(|e| format!("serz encode: {e}"))?;
 
     if out_bytes.is_empty() {
         return Err("Пустой результат сериализации".into());
@@ -599,26 +671,19 @@ pub fn update_tgpcdx_internal_name_bytes(data: &[u8], new_name: &str) -> Result<
     }
     let normalized = trimmed.replace('/', "\\");
 
-    let is_serz = data.starts_with(b"SERZ");
-    let (mut root, preamble) = if is_serz {
-        let mut reader = crate::serz::SerzReader::new(data);
-        let node = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
-        (node, reader.preamble.clone())
-    } else {
-        let text = String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?;
-        crate::serz::SerzNode::from_xml_str(&text).map_err(|e| format!("xml parse: {e}"))?
-    };
+    if !data.starts_with(b"SERZ") {
+        return Err("TgPcDx save requires a binary SERZ file".into());
+    }
+    let mut reader = crate::serz::SerzReader::new(data);
+    let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+    let preamble = reader.preamble.clone();
 
     if !update_internal_name_in_node(&mut root, &normalized) {
         return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
     }
 
-    let out_bytes = if is_serz {
-        crate::serz::encode_to_vec(&root, preamble.as_ref())
-            .map_err(|e| format!("serz encode: {e}"))?
-    } else {
-        crate::serz::SerzReader::to_xml(&root, 0, true).into_bytes()
-    };
+    let out_bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())
+        .map_err(|e| format!("serz encode: {e}"))?;
     if out_bytes.is_empty() {
         return Err("Пустой результат сериализации".into());
     }
@@ -839,13 +904,16 @@ pub struct ImportReport {
 // ---------- import DDS -> TgPcDx ----------
 
 pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<ImportReport, String> {
-    let file = fs::File::open(input).map_err(|e| e.to_string())?;
-    let dds = ddsfile::Dds::read(file).map_err(|e| e.to_string())?;
+    let dds_bytes = fs::read(input).map_err(|e| e.to_string())?;
+    let dds = ddsfile::Dds::read(Cursor::new(&dds_bytes)).map_err(|e| e.to_string())?;
 
     let width = dds.get_width();
     let height = dds.get_height();
     if width == 0 || height == 0 {
         return Err("некорректные размеры DDS".into());
+    }
+    if width > u16::MAX as u32 || height > u16::MAX as u32 {
+        return Err("Размеры DDS превышают диапазон TgPcDx sUInt16".into());
     }
     // 1. Проверка степеней двойки.
     if !width.is_power_of_two() || !height.is_power_of_two() {
@@ -858,32 +926,22 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     let all = dds.get_data(0).map_err(|e| e.to_string())?;
     let declared = dds.get_num_mipmap_levels();
 
-    // Целевой .TgPcDx — источник ожидаемого формата и длины цепочки мипмапов.
-    let target_bytes = fs::read(output).ok();
-    let expected_meta = target_bytes.as_deref().and_then(|b| inspect_tgpcdx(b).ok());
-
-    // 2. Проверка соответствия формата сжатия оригиналу.
-    if let Some(meta) = &expected_meta {
-        let expected_name = tgpcdx_format_to_dds_name(&meta.format);
-        let actual_name = compression.as_dds_name();
-        if let Some(expected) = expected_name
-            && expected != actual_name
-        {
-            return Err(format!(
-                "Ожидался формат {expected}, но выбранный DDS имеет формат {actual_name}"
-            ));
-        }
+    // Целевой .TgPcDx — источник метаданных и структуры mip-цепочки.
+    let target_bytes = match fs::read(output) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.to_string()),
+    };
+    if target_bytes
+        .as_deref()
+        .is_some_and(|bytes| !bytes.starts_with(b"SERZ"))
+    {
+        return Err("TgPcDx import requires a binary SERZ target".into());
     }
 
-    // 3. Математическая проверка цепочки мипмапов.
-    let chain = validate_dds_mip_chain(
-        width,
-        height,
-        compression,
-        declared,
-        all.len(),
-        expected_meta.as_ref().map(|m| m.mip_count),
-    )?;
+    // Validate the DDS chain independently of the old texture's mip count:
+    // the import replaces the complete mip layout and its metadata.
+    let chain = validate_dds_mip_chain(width, height, compression, declared, all.len(), None)?;
 
     let report = ImportReport {
         width,
@@ -904,84 +962,72 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
         let ph = format.get_pitch_height();
         let row_h = mh.div_ceil(ph);
         let size = (pitch * row_h) as usize;
-        let end = (off + size).min(all.len());
+        let end = off.checked_add(size).ok_or("mip data size overflow")?;
+        if end > all.len() {
+            return Err("DDS mip data is shorter than its declared mip chain".into());
+        }
         mips.push((mw, mh, all[off..end].to_vec()));
         off = end;
         mw = (mw / 2).max(1);
         mh = (mh / 2).max(1);
     }
+    if off != all.len() {
+        return Err(format!(
+            "DDS mip data size mismatch: consumed {off} bytes, found {}",
+            all.len()
+        ));
+    }
 
     if let Some(target_bytes) = target_bytes {
-        if let Some(meta) = &expected_meta
-            && meta.width == width
-            && meta.height == height
+        let existing_images = image_mips_from_bytes(&target_bytes)?;
+        if existing_images
+            .first()
+            .is_some_and(|image| image.width == width && image.height == height)
         {
-            let packed_mips: Vec<(u32, u32, Vec<u8>)> = if meta.mip_count == 1 {
+            let packed_mips: Vec<(u32, u32, Vec<u8>)> = if existing_images.len() == 1 {
                 vec![(width, height, all.to_vec())]
             } else {
                 mips.clone()
             };
+            let expected_lengths: Vec<usize> = packed_mips
+                .iter()
+                .map(|(_, _, bytes)| bytes.len())
+                .collect();
 
-            if let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &packed_mips) {
+            let existing_layout_matches = existing_images.len() == packed_mips.len()
+                && existing_images.iter().zip(&packed_mips).all(
+                    |(existing, (width, height, _))| {
+                        existing.width == *width
+                            && existing.height == *height
+                            && existing.format == fmt_str
+                    },
+                );
+            if existing_layout_matches
+                && let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &packed_mips)
+            {
+                crate::serz::validate_tgpcdx_binary(&patched, Some(&expected_lengths))?;
+                validate_imported_tgpcdx(&patched, width, height, &fmt_str, &packed_mips)?;
                 return write_output_bytes(output, &patched).map(|()| report);
             }
         }
-        // Fallback на полную пересборку только если изменилось разрешение (upscale/downscale)
+        // Rebuild mip nodes whenever their layout or format does not match the DDS.
         let mut reader = crate::serz::SerzReader::new(&target_bytes);
-        if let Ok(mut root) = reader.parse() {
-            let preamble = reader.preamble.clone();
-            if modify_tgpcdx_tree(&mut root, width, height, &fmt_str, &mips).is_ok() {
-                let bytes = crate::serz::encode_to_vec(&root, preamble.as_ref())?;
-                if !bytes.is_empty() {
-                    return write_output_bytes(output, &bytes).map(|()| report);
-                }
-            }
-        }
+        let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let preamble = reader.preamble.clone();
+        modify_tgpcdx_tree(&mut root, width, height, &fmt_str, &mips)?;
+        let bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())?;
+        let expected_lengths: Vec<usize> = mips.iter().map(|(_, _, bytes)| bytes.len()).collect();
+        crate::serz::validate_tgpcdx_binary(&bytes, Some(&expected_lengths))?;
+        validate_imported_tgpcdx(&bytes, width, height, &fmt_str, &mips)?;
+        return write_output_bytes(output, &bytes).map(|()| report);
     }
 
-    // Fallback: build from scratch (used when no target file exists).
-    let mut s = String::with_capacity(all.len() * 3 + 4096);
-    s.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
-    s.push_str("<cHcTextureGroup xmlns:d=\"http://www.kuju.com/TnT/2003/Delta\" d:version=\"1.0\" d:id=\"1\">\n");
-    s.push_str("\t<Texture>\n");
-    s.push_str("\t\t<cHcTexture d:id=\"2\">\n");
-    let _ = writeln!(s, "\t\t\t<Width d:type=\"sUInt32\">{width}</Width>");
-    let _ = writeln!(s, "\t\t\t<Height d:type=\"sUInt32\">{height}</Height>");
-    s.push_str("\t\t\t<Name d:type=\"cDeltaString\">texture</Name>\n");
-    s.push_str("\t\t\t<Data>\n");
-    s.push_str("\t\t\t\t<cHcTextureData d:id=\"3\">\n");
-    s.push_str("\t\t\t\t\t<Mip>\n");
-
-    for (w, h, bytes) in &mips {
-        s.push_str("\t\t\t\t\t\t<cHcImageDx d:id=\"4\">\n");
-        let _ = writeln!(
-            s,
-            "\t\t\t\t\t\t\t<Format d:type=\"cDeltaString\">{fmt_str}</Format>"
-        );
-        s.push_str("\t\t\t\t\t\t\t<IsSwizzled d:type=\"bool\">0</IsSwizzled>\n");
-        let _ = writeln!(s, "\t\t\t\t\t\t\t<Width d:type=\"sUInt16\">{w}</Width>");
-        let _ = writeln!(s, "\t\t\t\t\t\t\t<Height d:type=\"sUInt16\">{h}</Height>");
-        let _ = write!(s, "\t\t\t\t\t\t\t<d:blob d:size=\"{}\">", bytes.len());
-
-        for (i, byte) in bytes.iter().enumerate() {
-            let _ = write!(s, "{:02X}", byte);
-            if (i + 1) % 8 == 0 && i + 1 < bytes.len() {
-                s.push(' ');
-            }
-        }
-        s.push_str("</d:blob>\n");
-        s.push_str("\t\t\t\t\t\t</cHcImageDx>\n");
-    }
-
-    s.push_str("\t\t\t\t\t</Mip>\n");
-    s.push_str("\t\t\t\t</cHcTextureData>\n");
-    s.push_str("\t\t\t</Data>\n");
-    s.push_str("\t\t</cHcTexture>\n");
-    s.push_str("\t</Texture>\n");
-    s.push_str("</cHcTextureGroup>\n");
-
-    let (node, preamble) = crate::serz::SerzNode::from_xml_str(&s)?;
-    let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref())?;
+    // Build the AST directly when creating a new texture.
+    let node = new_tgpcdx_tree(width, height, &fmt_str, &mips);
+    let bytes = crate::serz::encode_tgpcdx_to_vec(&node, None)?;
+    let expected_lengths: Vec<usize> = mips.iter().map(|(_, _, bytes)| bytes.len()).collect();
+    crate::serz::validate_tgpcdx_binary(&bytes, Some(&expected_lengths))?;
+    validate_imported_tgpcdx(&bytes, width, height, &fmt_str, &mips)?;
     if bytes.is_empty() {
         return Err("empty output".into());
     }
@@ -1002,40 +1048,24 @@ pub fn export_tgpcdx_to_dds(input: &Path, output: &Path) -> Result<(), String> {
 }
 
 pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), String> {
-    let xml = if data.starts_with(b"SERZ") {
-        serz_bytes_to_xml(data)?
-    } else {
-        String::from_utf8(data.to_vec()).map_err(|e| e.to_string())?
-    };
-
-    let blocks = all_image_blocks(&xml);
-    if blocks.is_empty() {
+    let image_mips = image_mips_from_bytes(data)?;
+    if image_mips.is_empty() {
         return Err("no image blocks".into());
     }
+    let fmt_str = image_mips[0].format.clone();
 
     // Собираем мипмапы с размерами.
-    let mut mips: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(blocks.len());
-    for block in &blocks {
-        let w: u32 = extract_tag(block, "Width", "sUInt16")
-            .or_else(|| extract_tag(block, "Width", "sUInt32"))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let h: u32 = extract_tag(block, "Height", "sUInt16")
-            .or_else(|| extract_tag(block, "Height", "sUInt32"))
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        if w == 0 || h == 0 {
+    let mut mips: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(image_mips.len());
+    for mip in image_mips {
+        if mip.width == 0 || mip.height == 0 {
             return Err("invalid mip dimensions".into());
         }
-        let blob = extract_blob(block).ok_or("no blob")?;
-        let bytes = hex_decode(&blob);
-        if bytes.is_empty() {
+        if mip.data.is_empty() {
             return Err("empty mip blob".into());
         }
-        mips.push((w, h, bytes));
+        mips.push((mip.width, mip.height, mip.data));
     }
 
-    let fmt_str = extract_format(blocks[0]);
     let d3d_fmt = tgpcdx_format_to_d3d(&fmt_str);
 
     // Сортируем от самого крупного уровня к самому мелкому (стандарт DirectX).
@@ -1089,6 +1119,9 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
 }
 
 fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
+    if bytes.starts_with(b"SERZ") {
+        crate::serz::validate_tgpcdx_binary(bytes, None)?;
+    }
     let tmp = output.with_extension("tmp");
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
     if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
@@ -1135,6 +1168,30 @@ fn set_property_value(elem: &mut crate::serz::SerzNode, name: &str, value: &str)
     false
 }
 
+fn set_or_insert_property(
+    elem: &mut crate::serz::SerzNode,
+    name: &str,
+    type_name: &str,
+    value: &str,
+) -> Result<(), String> {
+    let crate::serz::SerzNode::Element { children, .. } = elem else {
+        return Err(format!("cannot set {name} on a non-element node"));
+    };
+    if let Some(crate::serz::SerzNode::Property { value: current, .. }) = children.iter_mut().find(
+        |child| matches!(child, crate::serz::SerzNode::Property { name: prop, .. } if prop == name),
+    ) {
+        *current = value.to_string();
+    } else {
+        children.push(crate::serz::SerzNode::Property {
+            name: name.to_string(),
+            type_name: type_name.to_string(),
+            value: value.to_string(),
+            alt_encoding: None,
+        });
+    }
+    Ok(())
+}
+
 fn set_blob_data(elem: &mut crate::serz::SerzNode, data: &[u8]) {
     if let crate::serz::SerzNode::Element { children, .. } = elem {
         for child in children.iter_mut() {
@@ -1177,8 +1234,8 @@ fn modify_tgpcdx_tree(
 ) -> Result<(), String> {
     {
         let tex = find_element_mut(root, "cHcTexture").ok_or("no texture node")?;
-        set_property_value(tex, "Width", &width.to_string());
-        set_property_value(tex, "Height", &height.to_string());
+        set_or_insert_property(tex, "Width", "sUInt32", &width.to_string())?;
+        set_or_insert_property(tex, "Height", "sUInt32", &height.to_string())?;
     }
 
     let templates: Vec<crate::serz::SerzNode> = find_all_elements(root, "cHcImageDx")
@@ -1233,9 +1290,9 @@ fn modify_tgpcdx_tree(
                 ],
             }
         };
-        set_property_value(&mut img, "Format", fmt_str);
-        set_property_value(&mut img, "Width", &w.to_string());
-        set_property_value(&mut img, "Height", &h.to_string());
+        set_or_insert_property(&mut img, "Format", "cDeltaString", fmt_str)?;
+        set_or_insert_property(&mut img, "Width", "sUInt16", &w.to_string())?;
+        set_or_insert_property(&mut img, "Height", "sUInt16", &h.to_string())?;
         set_blob_data(&mut img, bytes);
         if let crate::serz::SerzNode::Element { name, .. } = &mut img {
             *name = "cHcImageDx".to_string();
@@ -1248,6 +1305,166 @@ fn modify_tgpcdx_tree(
     }
     Ok(())
 }
+
+fn new_tgpcdx_tree(
+    width: u32,
+    height: u32,
+    fmt_str: &str,
+    mips: &[(u32, u32, Vec<u8>)],
+) -> crate::serz::SerzNode {
+    use crate::serz::SerzNode::{Blob, Element, Property};
+
+    let image_nodes = mips
+        .iter()
+        .map(|(mip_width, mip_height, data)| Element {
+            name: "cHcImageDx".into(),
+            id: 4,
+            version: 1,
+            children: vec![
+                Property {
+                    name: "Format".into(),
+                    type_name: "cDeltaString".into(),
+                    value: fmt_str.into(),
+                    alt_encoding: None,
+                },
+                Property {
+                    name: "IsSwizzled".into(),
+                    type_name: "bool".into(),
+                    value: "0".into(),
+                    alt_encoding: None,
+                },
+                Property {
+                    name: "Width".into(),
+                    type_name: "sUInt16".into(),
+                    value: mip_width.to_string(),
+                    alt_encoding: None,
+                },
+                Property {
+                    name: "Height".into(),
+                    type_name: "sUInt16".into(),
+                    value: mip_height.to_string(),
+                    alt_encoding: None,
+                },
+                Blob { data: data.clone() },
+            ],
+        })
+        .collect();
+
+    Element {
+        name: "cHcTextureGroup".into(),
+        id: 1,
+        version: 1,
+        children: vec![Element {
+            name: "Texture".into(),
+            id: 0,
+            version: 1,
+            children: vec![Element {
+                name: "cHcTexture".into(),
+                id: 2,
+                version: 1,
+                children: vec![
+                    Property {
+                        name: "Width".into(),
+                        type_name: "sUInt32".into(),
+                        value: width.to_string(),
+                        alt_encoding: None,
+                    },
+                    Property {
+                        name: "Height".into(),
+                        type_name: "sUInt32".into(),
+                        value: height.to_string(),
+                        alt_encoding: None,
+                    },
+                    Property {
+                        name: "Name".into(),
+                        type_name: "cDeltaString".into(),
+                        value: "texture".into(),
+                        alt_encoding: None,
+                    },
+                    Element {
+                        name: "Data".into(),
+                        id: 0,
+                        version: 1,
+                        children: vec![Element {
+                            name: "cHcTextureData".into(),
+                            id: 3,
+                            version: 1,
+                            children: vec![Element {
+                                name: "Mip".into(),
+                                id: 0,
+                                version: 1,
+                                children: image_nodes,
+                            }],
+                        }],
+                    },
+                ],
+            }],
+        }],
+    }
+}
+
+fn find_texture_dimensions(node: &crate::serz::SerzNode) -> Option<(u32, u32)> {
+    if let crate::serz::SerzNode::Element { name, children, .. } = node {
+        if name == "cHcTexture" {
+            let mut width = None;
+            let mut height = None;
+            for child in children {
+                if let crate::serz::SerzNode::Property {
+                    name: prop_name,
+                    value,
+                    ..
+                } = child
+                {
+                    match prop_name.as_str() {
+                        "Width" => width = value.parse().ok(),
+                        "Height" => height = value.parse().ok(),
+                        _ => {}
+                    }
+                }
+            }
+            return Some((width?, height?));
+        }
+        for child in children {
+            if let Some(dimensions) = find_texture_dimensions(child) {
+                return Some(dimensions);
+            }
+        }
+    }
+    None
+}
+
+fn validate_imported_tgpcdx(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    format: &str,
+    expected_mips: &[(u32, u32, Vec<u8>)],
+) -> Result<(), String> {
+    let mut reader = crate::serz::SerzReader::new(bytes);
+    let root = reader
+        .parse()
+        .map_err(|e| format!("SERZ validation: {e}"))?;
+    if find_texture_dimensions(&root) != Some((width, height)) {
+        return Err("serialized TgPcDx dimensions do not match the DDS".into());
+    }
+    let actual_mips = image_mips_from_bytes(bytes)?;
+    if actual_mips.len() != expected_mips.len() {
+        return Err("serialized TgPcDx mip count does not match the DDS".into());
+    }
+    for (actual, (expected_width, expected_height, expected_data)) in
+        actual_mips.iter().zip(expected_mips)
+    {
+        if actual.width != *expected_width
+            || actual.height != *expected_height
+            || actual.format != format
+            || actual.data != *expected_data
+        {
+            return Err("serialized TgPcDx mip metadata or Blob does not match the DDS".into());
+        }
+    }
+    Ok(())
+}
+
 fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
     if data.starts_with(b"SERZ") {
         let mut reader = crate::serz::SerzReader::new(data);
@@ -1256,6 +1473,26 @@ fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
     } else {
         String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))
     }
+}
+
+fn serz_bytes_to_metadata_xml(data: &[u8]) -> Result<String, String> {
+    let mut reader = crate::serz::SerzReader::new(data);
+    let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+
+    fn clear_blobs(node: &mut crate::serz::SerzNode) {
+        if let crate::serz::SerzNode::Element { children, .. } = node {
+            for child in children {
+                if let crate::serz::SerzNode::Blob { data } = child {
+                    data.clear();
+                } else {
+                    clear_blobs(child);
+                }
+            }
+        }
+    }
+
+    clear_blobs(&mut root);
+    Ok(crate::serz::SerzReader::to_xml(&root, 0, true))
 }
 
 fn all_image_blocks(xml: &str) -> Vec<&str> {
@@ -1598,6 +1835,8 @@ mod tests {
         let tg_path = dir.path().join("src.TgPcDx");
         convert_dds_to_tgpcdx(&dds_path, &tg_path).unwrap();
         assert!(tg_path.is_file());
+        let serialized = fs::read(&tg_path).unwrap();
+        assert_eq!(&serialized[..10], b"SERZ\0\0\x01\0\xFF\x43");
 
         // Preserve a custom Name in the target before re-importing.
         let data = fs::read(&tg_path).unwrap();
@@ -1641,6 +1880,73 @@ mod tests {
             .map(|b| extract_tag(b, "Width", "sUInt16").unwrap().parse().unwrap())
             .collect();
         assert_eq!(ws, vec![8, 4, 2]);
+    }
+
+    #[test]
+    fn dds_button_import_rebuilds_binary_tgpcdx_and_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_path = dir.path().join("texture.TgPcDx");
+        let original_dds_path = dir.path().join("original.dds");
+        let mut original_dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
+            height: 8,
+            width: 8,
+            depth: None,
+            format: ddsfile::D3DFormat::DXT1,
+            mipmap_levels: Some(4),
+            caps2: None,
+        })
+        .unwrap();
+        for (index, byte) in original_dds.data.iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(11).wrapping_add(3);
+        }
+        let mut original_file = fs::File::create(&original_dds_path).unwrap();
+        original_dds.write(&mut original_file).unwrap();
+        convert_dds_to_tgpcdx(&original_dds_path, &target_path).unwrap();
+
+        let input_dds_path = dir.path().join("replacement.dds");
+        let mut input_dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
+            height: 16,
+            width: 16,
+            depth: None,
+            format: ddsfile::D3DFormat::DXT5,
+            mipmap_levels: Some(3),
+            caps2: None,
+        })
+        .unwrap();
+        for (index, byte) in input_dds.data.iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(29).wrapping_add(0xA7);
+        }
+        let expected_data = input_dds.data.clone();
+        let mut input_file = fs::File::create(&input_dds_path).unwrap();
+        input_dds.write(&mut input_file).unwrap();
+        let dds_file_bytes = fs::read(&input_dds_path).unwrap();
+        assert_eq!(&dds_file_bytes[..4], b"DDS ");
+        assert_eq!(&dds_file_bytes[128..], expected_data);
+
+        // This is the import function called by TextureController's DDS button.
+        let report = convert_dds_to_tgpcdx_report(&input_dds_path, &target_path).unwrap();
+        let imported = fs::read(&target_path).unwrap();
+        assert_eq!(&imported[..10], b"SERZ\0\0\x01\0\xFF\x43");
+
+        let imported_mips = image_mips_from_bytes(&imported).unwrap();
+        assert_eq!(
+            imported_mips
+                .iter()
+                .map(|mip| (mip.width, mip.height))
+                .collect::<Vec<_>>(),
+            vec![(16, 16), (8, 8), (4, 4)]
+        );
+        let imported_data: Vec<u8> = imported_mips
+            .iter()
+            .flat_map(|mip| mip.data.iter().copied())
+            .collect();
+        assert_eq!(imported_data, expected_data);
+        assert_eq!(report.total_bytes, expected_data.len());
+        assert_eq!(imported_data.len(), report.total_bytes);
+
+        let (width, height, rgba) = decode_tgpcdx_to_rgba(&imported).unwrap();
+        assert_eq!((width, height), (16, 16));
+        assert_eq!(rgba.len(), 16 * 16 * 4);
     }
 
     #[test]
@@ -1818,6 +2124,12 @@ mod tests {
         let tg_path = dir.path().join("src.TgPcDx");
         convert_dds_to_tgpcdx(&dds_path, &tg_path).unwrap();
         let orig = fs::read(&tg_path).unwrap();
+        let original_blob: Vec<u8> = image_mips_from_bytes(&orig)
+            .unwrap()
+            .into_iter()
+            .flat_map(|mip| mip.data)
+            .collect();
+        assert_eq!(original_blob, dds.data);
 
         // Modify only the first mip in an exported DDS, then reimport.
         let out_dds = dir.path().join("out.dds");
@@ -1832,6 +2144,13 @@ mod tests {
         fs::copy(&tg_path, &tg2_path).unwrap();
         convert_dds_to_tgpcdx(&out_dds, &tg2_path).unwrap();
         let new = fs::read(&tg2_path).unwrap();
+        let imported_blob: Vec<u8> = image_mips_from_bytes(&new)
+            .unwrap()
+            .into_iter()
+            .flat_map(|mip| mip.data)
+            .collect();
+        let imported_dds = ddsfile::Dds::read(Cursor::new(&dds2)).unwrap();
+        assert_eq!(imported_blob, imported_dds.get_data(0).unwrap());
 
         assert_eq!(new.len(), orig.len());
 
@@ -1879,13 +2198,13 @@ mod tests {
         let orig_blob = first_blob(&orig_bytes);
 
         // Длиннее.
-        update_tgpcdx_internal_name(&tg_path, "Provider\\Product\\Folder\\LongerTextureName")
+        update_tgpcdx_internal_name(&tg_path, "Провайдер\\Продукт\\Folder\\LongerTextureName")
             .unwrap();
         let long_bytes = fs::read(&tg_path).unwrap();
         let long_info = inspect_tgpcdx_with_path(&long_bytes, Some(&tg_path)).unwrap();
         assert_eq!(
             long_info.name,
-            "Provider\\Product\\Folder\\LongerTextureName"
+            "Провайдер\\Продукт\\Folder\\LongerTextureName"
         );
         assert_eq!(long_info.width, orig_info.width);
         assert_eq!(long_info.height, orig_info.height);
@@ -1908,10 +2227,110 @@ mod tests {
     }
 
     #[test]
+    fn save_button_preserves_binary_blob_and_serz_markers() {
+        fn collect_blobs(node: &crate::serz::SerzNode, blobs: &mut Vec<Vec<u8>>) {
+            match node {
+                crate::serz::SerzNode::Element { children, .. } => {
+                    for child in children {
+                        collect_blobs(child, blobs);
+                    }
+                }
+                crate::serz::SerzNode::Blob { data } => blobs.push(data.clone()),
+                _ => {}
+            }
+        }
+
+        fn markers(bytes: &[u8]) -> Vec<[u8; 2]> {
+            bytes
+                .windows(2)
+                .filter(|pair| {
+                    pair[0] == 0xFF && matches!(pair[1], 0x42 | 0x43 | 0x50 | 0x56 | 0x70)
+                })
+                .map(|pair| [pair[0], pair[1]])
+                .collect()
+        }
+
+        let blob = vec![0x00, 0xFF, 0xAA, 0x80, 0x12, 0xFF, 0xAB, 0x42];
+        let root = crate::serz::SerzNode::Element {
+            name: "cHcTextureGroup".into(),
+            id: 1,
+            version: 1,
+            children: vec![crate::serz::SerzNode::Element {
+                name: "cHcTexture".into(),
+                id: 2,
+                version: 1,
+                children: vec![
+                    crate::serz::SerzNode::Property {
+                        name: "Name".into(),
+                        type_name: "cDeltaString".into(),
+                        value: "Provider\\Product\\Original".into(),
+                        alt_encoding: None,
+                    },
+                    crate::serz::SerzNode::Element {
+                        name: "cHcImageDx".into(),
+                        id: 3,
+                        version: 1,
+                        children: vec![
+                            crate::serz::SerzNode::Property {
+                                name: "Format".into(),
+                                type_name: "cDeltaString".into(),
+                                value: "HC_IMAGE_FORMAT_COMPRESSED".into(),
+                                alt_encoding: None,
+                            },
+                            crate::serz::SerzNode::Property {
+                                name: "Width".into(),
+                                type_name: "sUInt16".into(),
+                                value: "4".into(),
+                                alt_encoding: None,
+                            },
+                            crate::serz::SerzNode::Property {
+                                name: "Height".into(),
+                                type_name: "sUInt16".into(),
+                                value: "4".into(),
+                                alt_encoding: None,
+                            },
+                            crate::serz::SerzNode::Blob { data: blob.clone() },
+                        ],
+                    },
+                ],
+            }],
+        };
+        let preamble = crate::serz::SerzPreamble { flag: 0, val: 0 };
+        let original = crate::serz::encode_tgpcdx_to_vec(&root, Some(&preamble)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("texture.TgPcDx");
+        fs::write(&path, &original).unwrap();
+
+        // This is the same save function invoked by TextureController's button callback.
+        update_tgpcdx_internal_name(&path, "Provider\\Product\\Renamed").unwrap();
+
+        let saved = fs::read(&path).unwrap();
+        assert_eq!(&saved[..10], b"SERZ\0\0\x01\0\xFF\x43");
+        assert_eq!(markers(&saved), markers(&original));
+
+        let mut reader = crate::serz::SerzReader::new(&saved);
+        let saved_tree = reader.parse().unwrap();
+        let mut saved_blobs = Vec::new();
+        collect_blobs(&saved_tree, &mut saved_blobs);
+        assert_eq!(saved_blobs, vec![blob]);
+    }
+
+    #[test]
     fn update_tgpcdx_internal_name_rejects_empty() {
         let dir = tempfile::tempdir().unwrap();
         let tg_path = dir.path().join("x.TgPcDx");
         std::fs::write(&tg_path, b"").unwrap();
         assert!(update_tgpcdx_internal_name(&tg_path, "   ").is_err());
+    }
+
+    #[test]
+    fn update_tgpcdx_internal_name_rejects_xml_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let tg_path = dir.path().join("x.TgPcDx");
+        let xml = b"<cHcTexture><Name d:type=\"cDeltaString\">Old</Name></cHcTexture>";
+        std::fs::write(&tg_path, xml).unwrap();
+
+        assert!(update_tgpcdx_internal_name(&tg_path, "New").is_err());
+        assert_eq!(std::fs::read(&tg_path).unwrap(), xml);
     }
 }

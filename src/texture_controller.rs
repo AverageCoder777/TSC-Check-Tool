@@ -121,6 +121,119 @@ impl TextureController {
     }
 
     pub fn bind_buttons(&self) {
+        let editor_weak = self.weak.clone();
+        let editor_state = self.tex_state.clone();
+        let editor_ui_weak = crate::UI_WEAK.get().cloned();
+        self.window.on_open_in_editor(move || {
+            let path = editor_state
+                .lock()
+                .ok()
+                .and_then(|state| state.as_ref().map(|(_, _, _, path)| path.clone()));
+            let Some(path) = path else {
+                let message = "Нет загруженной текстуры для открытия в редакторе".to_string();
+                notify(
+                    &editor_weak,
+                    &editor_ui_weak,
+                    &message,
+                    crate::app::LogLevel::Warning,
+                );
+                return;
+            };
+            let callback_path = path.clone();
+            let callback_viewer = editor_weak.clone();
+            let callback_ui = editor_ui_weak.clone();
+            let callback_state = editor_state.clone();
+            if let Err(error) =
+                crate::external_editor::open_and_sync_with_vscode(&path, move |result| match result
+                {
+                    Ok(message) => {
+                        let refreshed = std::fs::read(&callback_path)
+                            .map_err(|error| error.to_string())
+                            .and_then(|data| {
+                                crate::texture::decode_tgpcdx_to_rgba(&data)
+                                    .map(|preview| (data, preview))
+                            });
+                        match refreshed {
+                            Ok((data, (width, height, rgba))) => {
+                                if let Ok(mut state) = callback_state.lock() {
+                                    *state =
+                                        Some((width, height, rgba.clone(), callback_path.clone()));
+                                }
+                                let info = build_texture_info_text(
+                                    &callback_path,
+                                    &data,
+                                    width,
+                                    height,
+                                    false,
+                                );
+                                let name = crate::texture::inspect_tgpcdx_with_path(
+                                    &data,
+                                    Some(&callback_path),
+                                )
+                                .map(|info| info.name)
+                                .unwrap_or_default();
+                                notify(
+                                    &callback_viewer,
+                                    &callback_ui,
+                                    &message,
+                                    crate::app::LogLevel::Info,
+                                );
+                                let viewer = callback_viewer.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(viewer) = viewer.upgrade() {
+                                        viewer.set_texture_image(
+                                            crate::texture::rgba_to_slint_image(
+                                                width, height, &rgba,
+                                            ),
+                                        );
+                                        viewer.set_texture_orig_width(width as i32);
+                                        viewer.set_texture_orig_height(height as i32);
+                                        viewer.set_zoom_factor(if width > 640 || height > 480 {
+                                            (640.0 / width as f32).min(480.0 / height as f32)
+                                        } else {
+                                            1.0
+                                        });
+                                        viewer.set_pan_x(0.0);
+                                        viewer.set_pan_y(0.0);
+                                        viewer.set_show_alpha(false);
+                                        viewer.set_info_text(info.into());
+                                        viewer.set_texture_name(name.into());
+                                    }
+                                });
+                            }
+                            Err(error) => {
+                                let message =
+                                    format!("Файл изменён, но превью не удалось обновить: {error}");
+                                notify(
+                                    &callback_viewer,
+                                    &callback_ui,
+                                    &message,
+                                    crate::app::LogLevel::Error,
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let message = format!("Ошибка редактора: {error}");
+                        notify(
+                            &callback_viewer,
+                            &callback_ui,
+                            &message,
+                            crate::app::LogLevel::Error,
+                        );
+                    }
+                })
+            {
+                let message = format!("Не удалось открыть файл в редакторе: {error}");
+                notify(
+                    &editor_weak,
+                    &editor_ui_weak,
+                    &message,
+                    crate::app::LogLevel::Error,
+                );
+            }
+        });
+
         // Переключение альфа-канала
         let viewer_weak_toggle = self.weak.clone();
         let tex_state_for_toggle = self.tex_state.clone();
@@ -225,6 +338,7 @@ impl TextureController {
                     path.display()
                 );
                 notify(&viewer_weak_replace, &ui_weak_replace, &msg, crate::app::LogLevel::Warning);
+                return;
             }
 
             let input = rfd::FileDialog::new()

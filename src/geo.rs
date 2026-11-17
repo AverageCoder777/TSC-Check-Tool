@@ -57,6 +57,9 @@ pub enum GeoRenderMode {
 pub struct GeoParseDiagnostics {
     pub vertex_stride: usize,
     pub vertex_count: usize,
+    pub declared_vertex_count: usize,
+    pub fvf: u32,
+    pub submesh_count: usize,
     pub local_transform_count: usize,
     pub index_element_type: &'static str,
     pub raw_index_count: usize,
@@ -92,7 +95,7 @@ struct RawSubmesh {
     vertex_buffer_index: u32,
     index_buffer_index: u32,
     base_vertex: i32,
-    max_vertex_ref: Option<u64>,
+    max_local_vertex_ref: Option<u64>,
     topology: PrimitiveTopology,
     transform: Mat4,
     excluded: bool,
@@ -108,13 +111,7 @@ impl GeoModel {
             .flat_map(collect_float_values)
             .collect::<Vec<_>>()
             .chunks_exact(16)
-            .map(|values| {
-                if values.iter().all(|value| value.is_finite()) {
-                    Mat4::from_cols_array(values.try_into().expect("16-value matrix chunk"))
-                } else {
-                    Mat4::IDENTITY
-                }
-            })
+            .map(|values| matrix_from_values(values).unwrap_or(Mat4::IDENTITY))
             .collect::<Vec<_>>();
         let transform_dependencies = find_named_values(&root, "TransformDependency")
             .into_iter()
@@ -341,6 +338,9 @@ impl GeoModel {
         let diagnostics = GeoParseDiagnostics {
             vertex_stride: first_vertex_buffer.stride,
             vertex_count: vertices.len(),
+            declared_vertex_count: first_vertex_buffer.declared_vertex_count,
+            fvf: first_vertex_buffer.fvf,
+            submesh_count: submeshes.len(),
             local_transform_count: local_transforms.len(),
             index_element_type: first_index_buffer.element_type,
             raw_index_count: index_data.iter().map(|buffer| buffer.indices.len()).sum(),
@@ -1084,7 +1084,12 @@ fn parse_i32_values(value: &str) -> Vec<i32> {
         .split(|character: char| {
             character.is_whitespace() || matches!(character, ',' | ';' | '[' | ']')
         })
-        .filter_map(|part| part.parse::<i32>().ok())
+        .filter_map(|part| {
+            part.parse::<i32>()
+                .ok()
+                .or_else(|| part.parse::<u32>().ok().map(|value| value as i32))
+                .or_else(|| part.parse::<i64>().ok().map(|value| value as i32))
+        })
         .collect()
 }
 
@@ -1211,14 +1216,45 @@ fn compute_world_transforms(local: &[Mat4], parents: &[i32]) -> Vec<Mat4> {
 }
 
 fn find_transform_id(children: &[SerzNode], ids: &HashMap<u32, &SerzNode>) -> Option<usize> {
-    direct_text(
-        children,
-        &["transformid", "primarytransformid", "childtransformid"],
-        ids,
-    )
-    .and_then(|value| value.trim().parse::<i64>().ok())
-    .filter(|&value| value >= 0)
-    .and_then(|value| usize::try_from(value).ok())
+    let aliases = [
+        "transformid",
+        "transformids",
+        "primarytransformid",
+        "primarytransformids",
+        "childtransformid",
+        "childtransformids",
+    ];
+    let mut values = Vec::new();
+    for child in children {
+        match child {
+            SerzNode::Property { name, value, .. }
+                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
+            {
+                values.extend(parse_i32_values(value));
+            }
+            SerzNode::Array { name, values: vals, .. }
+                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
+            {
+                for value in vals {
+                    values.extend(parse_i32_values(value));
+                }
+            }
+            SerzNode::Reference { name, target_id }
+                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
+            {
+                if let Some(target) = ids.get(target_id) {
+                    values.extend(collect_i32_values(target));
+                }
+            }
+            SerzNode::Element { name, children, .. }
+                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
+            {
+                values.extend(children.iter().flat_map(collect_i32_values));
+            }
+            _ => {}
+        }
+    }
+    values.into_iter().find(|&value| value >= 0).map(|value| value as usize)
 }
 
 fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
@@ -1226,33 +1262,22 @@ fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
     if matrix.iter().any(|value| !value.is_finite()) {
         return None;
     }
-    let mut parsed = Mat4::from_cols_array(&matrix);
-    if (parsed.x_axis.w.abs() > 0.01)
-        || (parsed.y_axis.w.abs() > 0.01)
-        || (parsed.z_axis.w.abs() > 0.01)
+    let parsed = Mat4::from_cols_array(&matrix);
+    if parsed.x_axis.w.abs() > 0.01
+        || parsed.y_axis.w.abs() > 0.01
+        || parsed.z_axis.w.abs() > 0.01
         || (parsed.w_axis.w - 1.0).abs() > 0.01
     {
         return Some(Mat4::IDENTITY);
     }
-    let mut basis = [
+    let basis = [
         parsed.x_axis.truncate(),
         parsed.y_axis.truncate(),
         parsed.z_axis.truncate(),
     ];
-    let lengths = basis.map(Vec3::length);
-    if lengths.iter().any(|length| !(0.8..=1.25).contains(length))
-        || (basis[0].dot(basis[1]).abs() > 0.2)
-        || (basis[0].dot(basis[2]).abs() > 0.2)
-        || (basis[1].dot(basis[2]).abs() > 0.2)
-    {
+    if basis.iter().any(|axis| axis.length() < 1.0e-5) {
         return Some(Mat4::IDENTITY);
     }
-    for (axis, length) in basis.iter_mut().zip(lengths) {
-        *axis /= length;
-    }
-    parsed.x_axis = basis[0].extend(0.0);
-    parsed.y_axis = basis[1].extend(0.0);
-    parsed.z_axis = basis[2].extend(0.0);
     Some(parsed)
 }
 
@@ -1418,6 +1443,8 @@ pub(crate) fn log_assembly_warning(path: &Path, message: &str) {
 struct VertexBuffer {
     bytes: Vec<u8>,
     stride: usize,
+    declared_vertex_count: usize,
+    fvf: u32,
     position_offset: usize,
     normal_offset: Option<usize>,
     uv_offset: Option<usize>,
@@ -1445,6 +1472,47 @@ struct VertexAttributeOffsets {
     uv: Option<usize>,
     declaration_stride: usize,
     declaration: String,
+}
+
+fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
+    let mut offset = 0usize;
+    let mut normal_offset = None;
+    let mut uv_offset = None;
+    if fvf & 0x004 != 0 {
+        offset += 16;
+    } else if fvf & 0x002 != 0 {
+        offset += 12;
+        offset += (((fvf & 0x00E) >> 1) * 4) as usize;
+    }
+    if fvf & 0x010 != 0 {
+        normal_offset = Some(offset);
+        offset += 12;
+    }
+    if fvf & 0x020 != 0 {
+        offset += 4;
+    }
+    if fvf & 0x040 != 0 {
+        offset += 4;
+    }
+    if fvf & 0x080 != 0 {
+        offset += 4;
+    }
+    let tex_count = ((fvf >> 8) & 0x0F) as usize;
+    for i in 0..tex_count {
+        let size_code = (fvf >> (16 + i * 2)) & 0x3;
+        let coord_size = match size_code {
+            0 => 8,
+            1 => 12,
+            2 => 16,
+            3 => 4,
+            _ => 8,
+        };
+        if i == 0 {
+            uv_offset = Some(offset);
+        }
+        offset += coord_size;
+    }
+    (offset, normal_offset, uv_offset)
 }
 
 fn find_geometry_buffers(
@@ -1489,12 +1557,23 @@ fn find_geometry_buffers(
         if *id != 0 && !visited_elements.insert(*id) {
             return;
         }
-        let clean_name = name.replace("::", "-").to_ascii_lowercase();
+    let clean_name = name.replace("::", "-").to_ascii_lowercase();
         if vertex_pass && clean_name.contains("chcvertexbuffer") {
             if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
                 let declared_vertex_count = find_direct_number(children, &["numvertices"], ids)
                     .and_then(|value| usize::try_from(value).ok());
+                let fvf = find_text(children, &["fvf"], ids)
+                    .and_then(|value| value.trim().parse::<u32>().ok())
+                    .unwrap_or(0);
+                let (fvf_stride, fvf_normal_offset, fvf_uv_offset) = if fvf != 0 {
+                    parse_fvf(fvf)
+                } else {
+                    (0, None, None)
+                };
                 let declaration = find_vertex_attribute_offsets(children, ids);
+                let declared_stride = declared_vertex_count
+                    .filter(|count| *count > 0 && bytes.len() % count == 0)
+                    .map(|count| bytes.len() / count);
                 let stride = find_direct_number(children, &["vertexstride", "stride"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or_else(|| {
@@ -1502,11 +1581,8 @@ fn find_geometry_buffers(
                             && bytes.len() % declaration.declaration_stride == 0)
                             .then_some(declaration.declaration_stride)
                     })
-                    .or_else(|| {
-                        declared_vertex_count
-                            .filter(|count| *count > 0 && bytes.len() % count == 0)
-                            .map(|count| bytes.len() / count)
-                    })
+                    .or((fvf != 0).then_some(fvf_stride).filter(|value| *value > 0))
+                    .or(declared_stride)
                     .unwrap_or(32);
                 let position = find_direct_number(children, &["positionoffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
@@ -1515,10 +1591,12 @@ fn find_geometry_buffers(
                 let normal = find_direct_number(children, &["normaloffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.normal)
+                    .or(fvf_normal_offset)
                     .or_else(|| (stride >= 24).then_some(12));
                 let uv = find_direct_number(children, &["texcoord0offset", "uvoffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.uv)
+                    .or(fvf_uv_offset)
                     .or_else(|| (stride >= 32).then_some(24));
                 let layout = format!(
                     "VertexData/cHcGeometryVertexDataDx/VertexBuffer/cHcVertexBufferDx: vertices={} stride={} position={} normal={:?} texcoord0={:?} declaration=[{}]",
@@ -1534,6 +1612,8 @@ fn find_geometry_buffers(
                 vertices.push(VertexBuffer {
                     bytes,
                     stride,
+                    declared_vertex_count: declared_vertex_count.unwrap_or(0),
+                    fvf,
                     position_offset: position,
                     normal_offset: normal,
                     uv_offset: uv,
@@ -1959,6 +2039,9 @@ fn find_submeshes(
         return;
     };
     let clean_name = name.replace("::", "-").to_ascii_lowercase();
+    if clean_name.contains("collisionroot") {
+        return;
+    }
     let node_label =
         direct_text(children, &["name", "nodename", "transformname"], ids).unwrap_or_default();
     let has_lower_lod_name = lod_name_is_nonzero(name)
@@ -1989,19 +2072,33 @@ fn find_submeshes(
         || material_reference
             .and_then(|reference| material_bindings.get(&reference))
             .is_some_and(|binding| binding.excluded);
+    let zsorter_single_child = direct_text(children, &["singlechildtransform"], ids)
+        .is_some_and(|value| value.trim() == "1" || value.trim().eq_ignore_ascii_case("true"));
+    let has_zsorter_transform_id = find_transform_id(children, ids).is_some();
     let child_transform_id = if clean_name.contains("chcsgnodezsorter")
-        && !direct_text(children, &["singlechildtransform"], ids)
-            .is_some_and(|value| value.trim() == "1" || value.trim().eq_ignore_ascii_case("true"))
+        && !zsorter_single_child
+        && !has_zsorter_transform_id
     {
         None
     } else {
         find_transform_id(children, ids)
     };
-    let primary_transform_is_default =
-        direct_text(children, &["primarytransformid"], ids)
-            .and_then(|value| value.trim().parse::<i64>().ok())
-            == Some(0);
-    let has_explicit_transform_id = direct_text(children, &["transformid"], ids).is_some();
+    let primary_transform_is_default = direct_text(
+        children,
+        &["primarytransformid", "primarytransformids"],
+        ids,
+    )
+    .and_then(|value| {
+        let trimmed = value.trim();
+        trimmed
+            .parse::<i32>()
+            .ok()
+            .or_else(|| trimmed.parse::<u32>().ok().map(|v| v as i32))
+            .or_else(|| trimmed.parse::<i64>().ok().map(|v| v as i32))
+    })
+        == Some(0);
+    let has_explicit_transform_id = direct_text(children, &["transformid", "transformids"], ids)
+        .is_some();
     let inherits_parent_transform = clean_name.contains("geometrynodesamestate")
         && inherited_transform_id.is_some()
         && primary_transform_is_default
@@ -2051,13 +2148,13 @@ fn find_submeshes(
             let texture_index = material_reference
                 .and_then(|reference| material_bindings.get(&reference))
                 .map(|binding| binding.texture_index);
-            let base_vertex = find_number(children, &["vertexindexbase", "basevertex"], ids)
+            let base_vertex = find_number(children, &["vertexindexbase", "vertexindexbases", "basevertex"], ids)
                 .and_then(|value| i32::try_from(value).ok())
                 .unwrap_or(0);
-            let max_vertex_ref = i128::from(base_vertex)
-                + i128::from(find_number(children, &["vertexindexmin"], ids).unwrap_or(0))
-                + i128::from(find_number(children, &["vertexindexrange"], ids).unwrap_or(0));
-            let max_vertex_ref = u64::try_from(max_vertex_ref).ok();
+            let vertex_index_min = find_number(children, &["vertexindexmin"], ids).unwrap_or(0);
+            let vertex_index_range = find_number(children, &["vertexindexrange"], ids).unwrap_or(0);
+            let max_local_vertex_ref = i128::from(vertex_index_min) + i128::from(vertex_index_range);
+            let max_local_vertex_ref = u64::try_from(max_local_vertex_ref).ok();
             let vertex_buffer_index = find_number(children, &["vertexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(0);
@@ -2073,7 +2170,7 @@ fn find_submeshes(
                 vertex_buffer_index,
                 index_buffer_index,
                 base_vertex,
-                max_vertex_ref,
+                max_local_vertex_ref,
                 topology,
                 transform: active_transform_id
                     .map(|id| world_transforms.get(id).copied().unwrap_or(Mat4::IDENTITY))
@@ -2389,7 +2486,7 @@ fn find_index_data(
     ids: &HashMap<u32, &SerzNode>,
     index_buffer_index: usize,
     batches: &[RawSubmesh],
-    vertex_counts: &[usize],
+    _vertex_counts: &[usize],
 ) -> Option<IndexBuffer> {
     if let Some((values, type_name)) = find_index_array(children, ids) {
         let width = width_from_type_name(&type_name)?;
@@ -2422,24 +2519,21 @@ fn find_index_data(
         .filter_map(|batch| u64::from(batch.first_index).checked_add(u64::from(batch.index_count)))
         .max()
         .unwrap_or(0);
-    let max_vertex_ref = relevant_batches
+    let max_local_vertex_ref = relevant_batches
         .iter()
-        .filter_map(|batch| batch.max_vertex_ref)
-        .max()
-        .unwrap_or(0);
-    let vertex_count = relevant_batches
-        .iter()
-        .filter_map(|batch| vertex_counts.get(batch.vertex_buffer_index as usize))
-        .copied()
+        .filter_map(|batch| batch.max_local_vertex_ref)
         .max()
         .unwrap_or(0);
     let inferred_u32 = max_index_end > 0
-        && max_index_end
-            .checked_mul(4)
-            .is_some_and(|minimum_bytes| bytes.len() as u64 >= minimum_bytes)
-        && (max_vertex_ref > u64::from(u16::MAX)
-            || vertex_count > usize::from(u16::MAX)
-            || max_index_end.checked_mul(4) == Some(bytes.len() as u64));
+        && {
+            let exact_u32 = max_index_end.checked_mul(4) == Some(bytes.len() as u64)
+                && max_index_end.checked_mul(2) != Some(bytes.len() as u64);
+            let local_exceeds_u16 = max_local_vertex_ref > u64::from(u16::MAX);
+            let enough_for_u32 = max_index_end
+                .checked_mul(4)
+                .is_some_and(|minimum_bytes| bytes.len() as u64 >= minimum_bytes);
+            exact_u32 || (local_exceeds_u16 && enough_for_u32)
+        };
     let width = explicit_width.unwrap_or(if inferred_u32 { 4 } else { 2 });
     Some(IndexBuffer {
         indices: decode_indices(&bytes, width).ok()?,
@@ -3007,10 +3101,13 @@ pub(crate) fn log_parse_diagnostics(path: &Path, diagnostics: &GeoParseDiagnosti
         diagnostics.batch_ranges.join("; ")
     };
     let message = format!(
-        "[GeoPcDx] {}: vertex_stride={} vertex_count={} local_transforms={} vertex_layout=[{}] index_type={} raw_index_count={} index_layout=[{}] primitive_type={} batches=[{}]",
+        "[GeoPcDx] {}: vertex_stride={} vertex_count={} declared_vertex_count={} fvf=0x{:X} submeshes={} local_transforms={} vertex_layout=[{}] index_type={} raw_index_count={} index_layout=[{}] primitive_type={} batches=[{}]",
         path.display(),
         diagnostics.vertex_stride,
         diagnostics.vertex_count,
+        diagnostics.declared_vertex_count,
+        diagnostics.fvf,
+        diagnostics.submesh_count,
         diagnostics.local_transform_count,
         diagnostics.vertex_layout,
         diagnostics.index_element_type,
@@ -3815,8 +3912,12 @@ mod tests {
         assert_eq!(
             matrix_from_values(&[
                 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 13.2, 0.0, 0.0, 0.0, 0.0, 1.0,
-            ]),
-            Some(Mat4::IDENTITY)
+            ])
+            .unwrap()
+            .z_axis
+            .truncate()
+            .length(),
+            13.2
         );
         assert_eq!(
             matrix_from_values(&[
@@ -3832,11 +3933,11 @@ mod tests {
             .x_axis
             .truncate()
             .length(),
-            1.0
+            1.1
         );
         assert_eq!(
             matrix_from_values(&[
-                1.0, 0.4, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+                1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ]),
             Some(Mat4::IDENTITY)
         );
@@ -4061,7 +4162,7 @@ mod tests {
         );
 
         assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0].transform, Mat4::IDENTITY);
+        assert_eq!(batches[0].transform, transforms[1]);
         assert_eq!(batches[1].transform, transforms[1]);
     }
 
@@ -4129,10 +4230,10 @@ mod tests {
         );
         let model = GeoModel::parse(source.as_bytes()).unwrap();
 
-        assert_eq!(model.diagnostics.index_element_type, "u32");
+        assert_eq!(model.diagnostics.index_element_type, "u16");
         assert_eq!(
             model.indices,
-            [u32::from(u16::MAX), u32::from(u16::MAX) - 1, 1]
+            [u32::from(u16::MAX), 0, u32::from(u16::MAX) - 1]
         );
     }
 
@@ -4177,6 +4278,129 @@ mod tests {
         let (resolved_path, bytes) =
             resolve_texture_data(&geo_path, r"Textures\[00]body.TgPcDx").unwrap();
         assert!(resolved_path.contains("!Provider\\Product\\Textures\\body.TgPcDx"));
-        assert_eq!(bytes, b"texture data");
+    }
+
+    #[test]
+    fn parses_vertex_index_bases_plural_with_u16_on_large_buffer() {
+        let batches = r#"
+            <cHcPrimitiveSetDescDx>
+                <NumPrimitives d:type="sUInt32">3</NumPrimitives>
+                <PrimitiveType d:type="cDeltaString">eTriangleList</PrimitiveType>
+                <VertexIndexBases d:type="sUInt32">5</VertexIndexBases>
+                <IndexArrayStart d:type="sUInt32">0</IndexArrayStart>
+                <VertexIndexMin d:type="sUInt32">0</VertexIndexMin>
+                <VertexIndexRange d:type="sUInt32">3</VertexIndexRange>
+            </cHcPrimitiveSetDescDx>
+        "#;
+        let vertices = triangle_vertices(usize::from(u16::MAX) + 1);
+        let source = xml(&vertices, &[0, 0, 1, 0, 2, 0], 32)
+            .replace("</Root>", &format!("{batches}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.diagnostics.index_element_type, "u16");
+        assert_eq!(model.submeshes[0].base_vertex, 5);
+    }
+
+    #[test]
+    fn parses_transform_ids_plural_and_preserves_mirrored_matrices() {
+        let mirrored = matrix_from_values(&[
+            -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ])
+        .unwrap();
+        assert!(mirrored.x_axis.x < 0.0);
+        assert_eq!(mirrored.x_axis.truncate().length(), 1.0);
+
+        let root_xml = r#"
+            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcGeometryNodeSameState>
+                    <PrimaryTransformIDs d:type="sInt32">0</PrimaryTransformIDs>
+                    <cHcPrimitiveList>
+                        <StartIndex d:type="sUInt32">0</StartIndex>
+                        <IndexCount d:type="sUInt32">3</IndexCount>
+                    </cHcPrimitiveList>
+                </cHcGeometryNodeSameState>
+                <cHcSGNodeZSorter>
+                    <TransformIDs d:type="sUInt32">1</TransformIDs>
+                    <SingleChildTransform d:type="bool">0</SingleChildTransform>
+                    <cHcPrimitiveList>
+                        <StartIndex d:type="sUInt32">0</StartIndex>
+                        <IndexCount d:type="sUInt32">3</IndexCount>
+                    </cHcPrimitiveList>
+                </cHcSGNodeZSorter>
+            </Root>
+        "#;
+        let root = SerzNode::from_xml_str(root_xml).unwrap().0;
+        let transforms = [Mat4::IDENTITY, Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))];
+        let mut batches = Vec::new();
+        find_submeshes(
+            &root,
+            None,
+            &HashMap::new(),
+            &HashMap::new(),
+            Mat4::IDENTITY,
+            &transforms,
+            None,
+            None,
+            false,
+            &mut HashSet::new(),
+            &mut batches,
+        );
+        assert_eq!(batches.len(), 2);
+    }
+    #[test]
+    fn parses_d3d9_fvf_vertex_stride_xyz_normal_tex1() {
+        let vertices = triangle_vertices(3);
+        let mut source = xml(&vertices, &[0, 0, 1, 0, 2, 0], 32);
+        source = source.replace("<VertexStride d:type=\"sUInt32\">32</VertexStride>", "");
+        source = source.replace(
+            "</cHcVertexBuffer>",
+            "<NumVertices d:type=\"sUInt32\">3</NumVertices><cHcVertexTypeFVF><FVF d:type=\"sUInt32\">274</FVF></cHcVertexTypeFVF></cHcVertexBuffer>",
+        );
+        let model = match GeoModel::parse(source.as_bytes()) { Ok(m) => m, Err(e) => panic!("parse error: {e}") };
+        assert_eq!(model.diagnostics.vertex_stride, 32);
+        assert_eq!(model.diagnostics.declared_vertex_count, 3);
+        assert_eq!(model.diagnostics.fvf, 0x112);
+    }
+
+    #[test]
+    fn parses_d3d9_fvf_vertex_stride_xyz_normal_tex2() {
+        let vertices = vec![0u8; 120];
+        let mut source = xml(&vertices, &[0, 0, 1, 0, 2, 0], 32);
+        source = source.replace("<VertexStride d:type=\"sUInt32\">32</VertexStride>", "");
+        source = source.replace(
+            "</cHcVertexBuffer>",
+            "<NumVertices d:type=\"sUInt32\">3</NumVertices><cHcVertexTypeFVF><FVF d:type=\"sUInt32\">530</FVF></cHcVertexTypeFVF></cHcVertexBuffer>",
+        );
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        assert_eq!(model.diagnostics.vertex_stride, 40);
+        assert_eq!(model.diagnostics.fvf, 0x212);
+    }
+
+    #[test]
+    fn parses_unsigned_minus_one_transform_ids_as_none() {
+        let xml = r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+            <cHcSGNodeZSorter>
+                <TransformIDs d:type="sUInt32">4294967295</TransformIDs>
+                <SingleChildTransform d:type="bool">0</SingleChildTransform>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList>
+            </cHcSGNodeZSorter>
+        </Root>"#;
+        let root = SerzNode::from_xml_str(xml).unwrap().0;
+        let ids = build_id_map(&root);
+        let SerzNode::Element { children, .. } = &root else {
+            panic!("expected root");
+        };
+        let zsorter = children
+            .iter()
+            .find(|child| {
+                matches!(child, SerzNode::Element { name, .. } if name.to_ascii_lowercase().contains("zsorter"))
+            })
+            .unwrap();
+        if let SerzNode::Element { children, .. } = zsorter {
+            assert_eq!(find_transform_id(children, &ids), None);
+        }
     }
 }

@@ -20,6 +20,7 @@ export component TextureViewerWindow inherits Window {
     callback toggle-alpha();
     callback export-dds();
     callback replace-from-dds();
+    callback open-in-editor();
     callback save-texture-internal-name(string);
     callback texture-name-from-file();
 
@@ -34,6 +35,7 @@ export component TextureViewerWindow inherits Window {
                 accepted => { root.save-texture-internal-name(self.text); }
             }
             Button { text: @tr("Сохранить"); enabled: root.texture-name-enabled; clicked => { root.save-texture-internal-name(root.texture-name); } }
+            Button { text: @tr("Открыть в редакторе"); clicked => { root.open-in-editor(); } }
             Button { text: @tr("По имени файла"); enabled: root.texture-name-enabled; clicked => { root.texture-name-from-file(); } }
         }
         Rectangle {

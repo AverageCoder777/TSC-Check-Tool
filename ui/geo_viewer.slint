@@ -24,12 +24,17 @@ export component GeoViewerWindow inherits Window {
     in-out property <float> pan-y: 0.0;
 
     callback camera-changed(float, float, float, float, float, float, float, bool, bool);
+    callback open-in-editor();
     VerticalBox {
         spacing: 6px;
         padding: 8px;
         HorizontalBox {
             spacing: 8px;
             Text { text: root.model-name; color: #e5e5e5; vertical-alignment: center; horizontal-stretch: 1; }
+            Button {
+                text: @tr("Открыть в редакторе");
+                clicked => { root.open-in-editor(); }
+            }
             Button {
                 text: root.wireframe ? "Solid" : "Wireframe";
                 clicked => {
