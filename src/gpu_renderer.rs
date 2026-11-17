@@ -299,8 +299,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                              topology: wgpu::PrimitiveTopology,
                              fragment_entry_point: &'static str,
                              blend: Option<wgpu::BlendState>,
-                             depth_write_enabled: bool,
-                             cull_mode: Option<wgpu::Face>| {
+                             depth_write_enabled: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -320,7 +319,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
-                    cull_mode,
+                    cull_mode: None,
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
@@ -340,7 +339,6 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_opaque",
             Some(wgpu::BlendState::REPLACE),
             true,
-            Some(wgpu::Face::Back),
         );
         let cutout_pipeline = make_pipeline(
             "GeoPcDx cutout pipeline",
@@ -348,7 +346,6 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_cutout",
             Some(wgpu::BlendState::REPLACE),
             true,
-            Some(wgpu::Face::Back),
         );
         let alpha_pipeline = make_pipeline(
             "GeoPcDx alpha pipeline",
@@ -356,7 +353,6 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_blended",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
-            Some(wgpu::Face::Back),
         );
         let wire_pipeline = make_pipeline(
             "GeoPcDx wireframe pipeline",
@@ -364,7 +360,6 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_opaque",
             Some(wgpu::BlendState::REPLACE),
             true,
-            None,
         );
         Ok(Self {
             device,

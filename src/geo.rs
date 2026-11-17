@@ -1023,17 +1023,36 @@ fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
     if matrix.iter().any(|value| !value.is_finite()) {
         return None;
     }
-    let parsed = Mat4::from_cols_array(&matrix);
-    let scale = [
-        parsed.x_axis.truncate().length(),
-        parsed.y_axis.truncate().length(),
-        parsed.z_axis.truncate().length(),
-    ];
-    if (matrix[15] - 1.0).abs() > 0.01 || scale.iter().any(|axis| *axis < 0.01 || *axis > 10.0) {
-        Some(Mat4::IDENTITY)
-    } else {
-        Some(parsed)
+    let mut parsed = Mat4::from_cols_array(&matrix);
+    if (parsed.x_axis.w.abs() > 0.01)
+        || (parsed.y_axis.w.abs() > 0.01)
+        || (parsed.z_axis.w.abs() > 0.01)
+        || (parsed.w_axis.w - 1.0).abs() > 0.01
+    {
+        return Some(Mat4::IDENTITY);
     }
+    let mut basis = [
+        parsed.x_axis.truncate(),
+        parsed.y_axis.truncate(),
+        parsed.z_axis.truncate(),
+    ];
+    let lengths = basis.map(Vec3::length);
+    if lengths
+        .iter()
+        .any(|length| !(0.8..=1.25).contains(length))
+        || (basis[0].dot(basis[1]).abs() > 0.2)
+        || (basis[0].dot(basis[2]).abs() > 0.2)
+        || (basis[1].dot(basis[2]).abs() > 0.2)
+    {
+        return Some(Mat4::IDENTITY);
+    }
+    for (axis, length) in basis.iter_mut().zip(lengths) {
+        *axis /= length;
+    }
+    parsed.x_axis = basis[0].extend(0.0);
+    parsed.y_axis = basis[1].extend(0.0);
+    parsed.z_axis = basis[2].extend(0.0);
+    Some(parsed)
 }
 
 fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option<PathBuf> {
@@ -1383,23 +1402,38 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
         if name.eq_ignore_ascii_case("cHcEffectMaterialDx") {
             let material_index = *next_index;
             *next_index = (*next_index).saturating_add(1);
-            let texture_index = find_text(children, &["texturebyname"])
-                .map(crate::auditor::normalize_texture_reference)
-                .and_then(|reference| {
+            let texture_index = collect_text_values(children, &["texturebyname"])
+                .iter()
+                .filter_map(|reference| {
+                    let reference = crate::auditor::normalize_texture_reference(reference);
                     textures
                         .iter()
                         .position(|texture| texture.eq_ignore_ascii_case(&reference))
+                        .map(|index| (index, texture_priority(&reference)))
                 })
+                .min_by_key(|(_, priority)| *priority)
+                .map(|(index, _)| index)
                 .unwrap_or(0) as u32;
             let shader_name =
                 find_text(children, &["shadername", "effectname"]).unwrap_or_default();
+            let texture_is_shadow = collect_text_values(children, &["texturebyname"])
+                .iter()
+                .any(|texture| texture.to_ascii_lowercase().contains("shadow"));
+            let subtract_alpha = find_text(children, &["framealphamode"])
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("ALPHA_MODE_SUBTRACT"));
             bindings.insert(
                 *id,
                 MaterialBinding {
                     material_index,
                     texture_index,
                     render_mode: classify_shader(shader_name),
-                    excluded: is_helper_name(shader_name),
+                    excluded: is_helper_name(shader_name)
+                        || is_helper_name(
+                            direct_text(children, &["name", "materialname"])
+                                .unwrap_or_default(),
+                        )
+                        || texture_is_shadow
+                        || subtract_alpha,
                 },
             );
         }
@@ -1444,7 +1478,8 @@ fn find_submeshes(
         return;
     };
     let clean_name = name.replace("::", "-").to_ascii_lowercase();
-    let node_label = direct_text(children, &["name", "nodename"]).unwrap_or_default();
+    let node_label =
+        direct_text(children, &["name", "nodename", "transformname"]).unwrap_or_default();
     let lod = lod_from_name(name)
         .or_else(|| lod_from_name(node_label))
         .or_else(|| {
@@ -1592,6 +1627,7 @@ fn lod_from_name(name: &str) -> Option<u32> {
 fn is_helper_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     [
+        "schatten",
         "shadow",
         "stencil",
         "occluder",
@@ -1602,6 +1638,68 @@ fn is_helper_name(name: &str) -> bool {
     ]
     .iter()
     .any(|marker| lower.contains(marker))
+}
+
+fn collect_text_values(children: &[SerzNode], expected: &[&str]) -> Vec<String> {
+    fn collect(node: &SerzNode, expected: &[&str], output: &mut Vec<String>) {
+        match node {
+            SerzNode::Property { name, value, .. }
+                if expected
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            {
+                output.push(value.trim().to_owned());
+            }
+            SerzNode::Element { name, children, .. }
+                if expected
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            {
+                collect_descendant_text(children, output);
+            }
+            SerzNode::Element { children, .. } => {
+                for child in children {
+                    collect(child, expected, output);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_descendant_text(children: &[SerzNode], output: &mut Vec<String>) {
+        for child in children {
+            match child {
+                SerzNode::Property { value, .. } => output.push(value.trim().to_owned()),
+                SerzNode::Array { values, .. } => output.extend(values.iter().cloned()),
+                SerzNode::Element { children, .. } => collect_descendant_text(children, output),
+                _ => {}
+            }
+        }
+    }
+
+    let mut values = Vec::new();
+    for child in children {
+        collect(child, expected, &mut values);
+    }
+    values
+}
+
+fn texture_priority(reference: &str) -> u8 {
+    let stem = Path::new(&reference.replace('\\', "/"))
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    if ["_diffuse", "_base_color"]
+        .iter()
+        .any(|suffix| stem.ends_with(suffix))
+    {
+        0
+    } else if ["_nm", "_emiss"].iter().any(|suffix| stem.ends_with(suffix)) {
+        2
+    } else {
+        1
+    }
 }
 
 fn is_skeleton_node(name: &str) -> bool {
@@ -2132,23 +2230,34 @@ pub fn resolve_texture_data(geo_path: &Path, reference: &str) -> Option<(String,
         .replace('/', "\\")
         .trim_start_matches('\\')
         .to_owned();
-    let stem = Path::new(&reference);
-    let relative = if stem.extension().is_some() {
-        reference.clone()
-    } else {
-        format!("{reference}.TgPcDx")
-    };
+    let stripped_reference = strip_texture_slot_prefix(&reference);
+    let relative_paths = [stripped_reference, reference]
+        .into_iter()
+        .map(|reference| {
+            if Path::new(&reference).extension().is_some() {
+                reference
+            } else {
+                format!("{reference}.TgPcDx")
+            }
+        })
+        .collect::<Vec<_>>();
     let parent = geo_path.parent()?;
     let mut ancestors = parent.ancestors().take(6).collect::<Vec<_>>();
     if ancestors.is_empty() {
         ancestors.push(parent);
     }
     for ancestor in &ancestors {
-        let candidate = ancestor.join(relative.replace('\\', std::path::MAIN_SEPARATOR_STR));
-        if let Ok(bytes) = std::fs::read(&candidate) {
-            return Some((candidate.display().to_string(), bytes));
+        for relative in &relative_paths {
+            let candidate = ancestor.join(relative.replace('\\', std::path::MAIN_SEPARATOR_STR));
+            if let Ok(bytes) = std::fs::read(&candidate) {
+                return Some((candidate.display().to_string(), bytes));
+            }
         }
     }
+    let targets = relative_paths
+        .iter()
+        .map(|relative| crate::archive::normalize_member(relative))
+        .collect::<Vec<_>>();
     for ancestor in ancestors {
         let Ok(entries) = std::fs::read_dir(ancestor) else {
             continue;
@@ -2167,12 +2276,16 @@ pub fn resolve_texture_data(geo_path: &Path, reference: &str) -> Option<(String,
             let Ok(mut archive) = zip::ZipArchive::new(file) else {
                 continue;
             };
-            let target = crate::archive::normalize_member(&relative);
             let found = (0..archive.len()).find_map(|index| {
                 let entry = archive.by_index(index).ok()?;
                 let name = entry.name().ok()?.replace('/', "\\");
                 let normalized = crate::archive::normalize_member(&name);
-                (normalized == target || normalized.ends_with(&format!("\\{target}")))
+                targets
+                    .iter()
+                    .any(|target| {
+                        normalized == *target
+                            || normalized.ends_with(&format!("\\{target}"))
+                    })
                     .then_some((index, name))
             });
             if let Some((index, name)) = found
@@ -2187,6 +2300,29 @@ pub fn resolve_texture_data(geo_path: &Path, reference: &str) -> Option<(String,
         }
     }
     None
+}
+
+fn strip_texture_slot_prefix(reference: &str) -> String {
+    let (parent, file) = reference
+        .rsplit_once('\\')
+        .map(|(parent, file)| (Some(parent), file))
+        .unwrap_or((None, reference));
+    let Some(prefix) = file.get(..4) else {
+        return reference.to_owned();
+    };
+    if prefix.starts_with('[')
+        && prefix.ends_with(']')
+        && prefix[1..3].chars().all(|character| character.is_ascii_hexdigit())
+    {
+        let stripped = &file[4..];
+        if let Some(parent) = parent {
+            format!("{parent}\\{stripped}")
+        } else {
+            stripped.to_owned()
+        }
+    } else {
+        reference.to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -2549,8 +2685,7 @@ mod tests {
             1.0, 0.0, 0.0, 0.25, 0.0, 1.0, 0.0, 0.5, 0.0, 0.0, 1.0, 0.75, 3.0, -2.0, 4.0, 1.0,
         ])
         .unwrap();
-        assert_eq!(matrix.w_axis.truncate(), Vec3::new(3.0, -2.0, 4.0));
-        assert_eq!(matrix.x_axis.w, 0.25);
+        assert_eq!(matrix, Mat4::IDENTITY);
 
         assert_eq!(
             matrix_from_values(&[
@@ -2564,6 +2699,22 @@ mod tests {
             ]),
             Some(Mat4::IDENTITY)
         );
+        assert_eq!(
+            matrix_from_values(&[
+                1.1, 0.0, 0.0, 0.0, 0.0, 0.9, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 3.0, -2.0, 4.0, 1.0,
+            ])
+            .unwrap()
+            .x_axis
+            .truncate()
+            .length(),
+            1.0
+        );
+        assert_eq!(
+            matrix_from_values(&[
+                1.0, 0.4, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]),
+            Some(Mat4::IDENTITY)
+        );
     }
 
     #[test]
@@ -2572,6 +2723,7 @@ mod tests {
         assert_eq!(classify_shader("RailVehicleFlora"), GeoRenderMode::Cutout);
         assert_eq!(classify_shader("TrainStandard"), GeoRenderMode::Opaque);
         assert!(is_helper_name("TrainShadowOnly"));
+        assert!(is_helper_name("Schatten"));
         assert!(is_helper_name("StencilShadow"));
         assert!(is_helper_name("DummyNode"));
 
@@ -2597,6 +2749,36 @@ mod tests {
         let model = GeoModel::parse(source.as_bytes()).unwrap();
         assert_eq!(model.submeshes.len(), 1);
         assert_eq!(model.indices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn excludes_subtractive_and_shadow_materials_and_prefers_diffuse_textures() {
+        let xml = r#"
+            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcEffectMaterialDx d:id="7">
+                    <TextureByName d:type="cDeltaString">Textures\body_nm.TgPcDx</TextureByName>
+                    <TextureByName d:type="cDeltaString">Textures\body_diffuse.TgPcDx</TextureByName>
+                </cHcEffectMaterialDx>
+                <cHcEffectMaterialDx d:id="8">
+                    <FrameAlphaMode d:type="cDeltaString">ALPHA_MODE_SUBTRACT</FrameAlphaMode>
+                </cHcEffectMaterialDx>
+                <cHcEffectMaterialDx d:id="9">
+                    <TextureByName d:type="cDeltaString">Textures\shadow.TgPcDx</TextureByName>
+                </cHcEffectMaterialDx>
+            </Root>
+        "#;
+        let root = SerzNode::from_xml_str(xml).unwrap().0;
+        let textures = [
+            r"Textures\body_nm.TgPcDx".to_owned(),
+            r"Textures\body_diffuse.TgPcDx".to_owned(),
+            r"Textures\shadow.TgPcDx".to_owned(),
+        ];
+        let bindings = find_material_bindings(&root, &textures);
+
+        assert_eq!(bindings[&7].texture_index, 1);
+        assert!(!bindings[&7].excluded);
+        assert!(bindings[&8].excluded);
+        assert!(bindings[&9].excluded);
     }
 
     #[test]
@@ -2670,7 +2852,7 @@ mod tests {
         archive.finish().unwrap();
 
         let (resolved_path, bytes) =
-            resolve_texture_data(&geo_path, r"Textures\body.TgPcDx").unwrap();
+            resolve_texture_data(&geo_path, r"Textures\[00]body.TgPcDx").unwrap();
         assert!(resolved_path.contains("!Provider\\Product\\Textures\\body.TgPcDx"));
         assert_eq!(bytes, b"texture data");
     }
