@@ -1,7 +1,8 @@
 use crate::serz::{SerzNode, SerzReader};
 use glam::{Mat4, Vec3};
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GeoVertex {
@@ -17,6 +18,19 @@ pub struct GeoModel {
     pub textures: Vec<String>,
     pub submeshes: Vec<GeoSubmesh>,
     pub diagnostics: GeoParseDiagnostics,
+}
+
+#[derive(Clone)]
+pub struct GeoAssemblyPart {
+    pub path: PathBuf,
+    pub model: Arc<GeoModel>,
+    pub transform: Mat4,
+    pub blueprint_attached: bool,
+}
+
+pub struct GeoAssembly {
+    pub parts: Vec<GeoAssemblyPart>,
+    pub has_blueprint_attachments: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,12 +89,7 @@ struct RawSubmesh {
 
 impl GeoModel {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let root = if data.starts_with(b"SERZ") {
-            SerzReader::new(data).parse()?
-        } else {
-            let xml = std::str::from_utf8(data).map_err(|error| error.to_string())?;
-            SerzNode::from_xml_str(xml)?.0
-        };
+        let root = parse_serz_document(data)?;
         let mut vertex_data = Vec::new();
         let mut index_data = Vec::new();
         let mut xml = String::new();
@@ -298,6 +307,870 @@ impl GeoModel {
             submeshes,
             diagnostics,
         })
+    }
+}
+
+impl GeoAssembly {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+        let primary_model = Arc::new(GeoModel::parse(&bytes)?);
+        log_parse_diagnostics(path, &primary_model.diagnostics);
+        let mut parts = vec![GeoAssemblyPart {
+            path: path.to_path_buf(),
+            model: primary_model,
+            transform: Mat4::IDENTITY,
+            blueprint_attached: false,
+        }];
+        let mut geometry_cache = HashMap::new();
+        geometry_cache.insert(
+            path.to_string_lossy().to_ascii_lowercase(),
+            Arc::clone(&parts[0].model),
+        );
+        let mut linked_geometry = Vec::new();
+        if let Some((blueprint_path, blueprint_document, blueprint_root)) =
+            find_geometry_blueprint(path, path.file_stem().unwrap_or_default().to_string_lossy().as_ref())
+        {
+            let id_map = build_id_map(&blueprint_document);
+            let mut attachments = Vec::new();
+            collect_blueprint_attachments(
+                &blueprint_root,
+                &id_map,
+                false,
+                false,
+                &mut attachments,
+            );
+            for attachment in attachments {
+                let Some(blueprint_path) = resolve_asset_path(
+                    &blueprint_path,
+                    &attachment.blueprint_reference,
+                    "bin",
+                ) else {
+                    log_assembly_warning(
+                        path,
+                        &format!(
+                            "Unable to resolve {} blueprint '{}'",
+                            attachment.kind, attachment.blueprint_reference
+                        ),
+                    );
+                    continue;
+                };
+                let blueprint_bytes = match std::fs::read(&blueprint_path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        log_assembly_warning(
+                            path,
+                            &format!(
+                                "Unable to read attachment blueprint {}: {error}",
+                                blueprint_path.display()
+                            ),
+                        );
+                        continue;
+                    }
+                };
+                let child_root = match parse_serz_document(&blueprint_bytes) {
+                    Ok(root) => root,
+                    Err(error) => {
+                        log_assembly_warning(
+                            path,
+                            &format!(
+                                "Unable to parse attachment blueprint {}: {error}",
+                                blueprint_path.display()
+                            ),
+                        );
+                        continue;
+                    }
+                };
+                let child_ids = build_id_map(&child_root);
+                let Some(geometry_reference) =
+                    find_named_text(&child_root, &["geometryid"], &child_ids)
+                else {
+                    log_assembly_warning(
+                        path,
+                        &format!(
+                            "Attachment blueprint {} has no GeometryID",
+                            blueprint_path.display()
+                        ),
+                    );
+                    continue;
+                };
+                let Some(geometry_path) =
+                    resolve_asset_path(&blueprint_path, &geometry_reference, "GeoPcDx")
+                else {
+                    log_assembly_warning(
+                        path,
+                        &format!(
+                            "Unable to resolve attachment geometry '{}' from {}",
+                            geometry_reference,
+                            blueprint_path.display()
+                        ),
+                    );
+                    continue;
+                };
+                let Some(model) = load_cached_geometry(
+                    &geometry_path,
+                    path,
+                    &mut geometry_cache,
+                ) else {
+                    continue;
+                };
+                linked_geometry.push(geometry_path.clone());
+                parts.push(GeoAssemblyPart {
+                    path: geometry_path,
+                    model,
+                    transform: attachment.transform,
+                    blueprint_attached: true,
+                });
+            }
+        }
+
+        for sibling in find_sibling_part_geometries(path) {
+            if linked_geometry
+                .iter()
+                .any(|linked| same_path(linked, &sibling))
+            {
+                continue;
+            }
+            if let Some(model) = load_cached_geometry(&sibling, path, &mut geometry_cache) {
+                parts.push(GeoAssemblyPart {
+                    path: sibling,
+                    model,
+                    transform: Mat4::IDENTITY,
+                    blueprint_attached: false,
+                });
+            }
+        }
+        let has_blueprint_attachments = parts.iter().any(|part| part.blueprint_attached);
+        Ok(Self {
+            parts,
+            has_blueprint_attachments,
+        })
+    }
+
+    pub fn compose(
+        &self,
+        side_by_side: bool,
+    ) -> Result<(GeoModel, Vec<(PathBuf, String)>), String> {
+        let primary = self.parts.first().ok_or("assembly has no primary geometry")?;
+        let (primary_min, primary_max) = model_bounds(&primary.model, Mat4::IDENTITY);
+        let mut next_x = primary_max.x;
+        let mut diagnostics = primary.model.diagnostics.clone();
+        diagnostics.vertex_count = 0;
+        diagnostics.raw_index_count = 0;
+        diagnostics.batch_ranges.clear();
+        let mut result = GeoModel {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            textures: Vec::new(),
+            submeshes: Vec::new(),
+            diagnostics,
+        };
+        let mut texture_sources = Vec::new();
+        for (part_index, part) in self.parts.iter().enumerate() {
+            if part_index > 0 && !side_by_side && !part.blueprint_attached {
+                continue;
+            }
+            let mut transform = if part_index == 0 {
+                Mat4::IDENTITY
+            } else if side_by_side || !transform_has_translation(part.transform) {
+                let (part_min, _) = model_bounds(&part.model, Mat4::IDENTITY);
+                Mat4::from_translation(Vec3::new(
+                    next_x + 1.5 - part_min.x,
+                    primary_min.y - part_min.y,
+                    0.0,
+                ))
+            } else {
+                part.transform
+            };
+            if !transform.is_finite() {
+                transform = Mat4::IDENTITY;
+            }
+            let (_, part_max) = model_bounds(&part.model, transform);
+            let vertex_offset =
+                u32::try_from(result.vertices.len()).map_err(|_| "too many assembly vertices")?;
+            let index_offset =
+                u32::try_from(result.indices.len()).map_err(|_| "too many assembly indices")?;
+            let texture_offset =
+                u32::try_from(result.textures.len()).map_err(|_| "too many assembly textures")?;
+            let normal_transform = if transform.determinant().abs() > f32::EPSILON {
+                transform.inverse().transpose()
+            } else {
+                Mat4::IDENTITY
+            };
+            let mut transformed_vertices = Vec::with_capacity(part.model.vertices.len());
+            let mut invalid_position = false;
+            for vertex in &part.model.vertices {
+                let mut transformed = *vertex;
+                transformed.position = transform
+                    .transform_point3(Vec3::from_array(vertex.position))
+                    .to_array();
+                if transformed.position.iter().any(|value| !value.is_finite()) {
+                    invalid_position = true;
+                    break;
+                }
+                transformed.normal = normal_transform
+                    .transform_vector3(Vec3::from_array(vertex.normal))
+                    .normalize_or_zero()
+                    .to_array();
+                transformed_vertices.push(transformed);
+            }
+            if invalid_position {
+                if part_index == 0 {
+                    return Err("primary geometry transform produced invalid positions".into());
+                }
+                log_assembly_warning(
+                    &part.path,
+                    "Skipping attachment whose transform produced invalid positions",
+                );
+                continue;
+            }
+            next_x = next_x.max(part_max.x);
+            result.vertices.extend(transformed_vertices);
+            result.indices.extend(
+                part.model
+                    .indices
+                    .iter()
+                    .map(|index| index.checked_add(vertex_offset).ok_or("assembly index overflow"))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            for submesh in &part.model.submeshes {
+                let mut submesh = *submesh;
+                submesh.first_index = submesh
+                    .first_index
+                    .checked_add(index_offset)
+                    .ok_or("assembly index overflow")?;
+                submesh.texture_index = submesh
+                    .texture_index
+                    .checked_add(texture_offset)
+                    .ok_or("assembly texture index overflow")?;
+                result.submeshes.push(submesh);
+            }
+            result.textures.extend(part.model.textures.iter().cloned());
+            texture_sources.extend(
+                part.model
+                    .textures
+                    .iter()
+                    .map(|reference| (part.path.clone(), reference.clone())),
+            );
+            result.diagnostics.batch_ranges.extend(
+                part.model
+                    .diagnostics
+                    .batch_ranges
+                    .iter()
+                    .map(|range| format!("{}: {range}", part.path.display())),
+            );
+            result.diagnostics.raw_index_count = result
+                .diagnostics
+                .raw_index_count
+                .saturating_add(part.model.diagnostics.raw_index_count);
+        }
+        result.diagnostics.vertex_count = result.vertices.len();
+        Ok((result, texture_sources))
+    }
+}
+
+fn parse_serz_document(data: &[u8]) -> Result<SerzNode, String> {
+    if data.starts_with(b"SERZ") {
+        SerzReader::new(data).parse()
+    } else {
+        let xml = std::str::from_utf8(data).map_err(|error| error.to_string())?;
+        SerzNode::from_xml_str(xml).map(|(root, _)| root)
+    }
+}
+
+#[derive(Clone)]
+struct AttachmentBlueprintRef {
+    kind: &'static str,
+    blueprint_reference: String,
+    transform: Mat4,
+}
+
+fn find_geometry_blueprint(
+    path: &Path,
+    geometry_stem: &str,
+) -> Option<(PathBuf, SerzNode, SerzNode)> {
+    let mut candidates = std::fs::read_dir(path.parent()?)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            candidate
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    for candidate in candidates {
+        let Ok(bytes) = std::fs::read(&candidate) else {
+            continue;
+        };
+        let Ok(root) = parse_serz_document(&bytes) else {
+            continue;
+        };
+        let id_map = build_id_map(&root);
+        if let Some(blueprint) = matching_geometry_blueprint(&root, geometry_stem, &id_map) {
+            return Some((candidate, root, blueprint));
+        }
+    }
+    None
+}
+
+fn build_id_map(root: &SerzNode) -> HashMap<u32, &SerzNode> {
+    fn collect<'a>(node: &'a SerzNode, ids: &mut HashMap<u32, &'a SerzNode>) {
+        if let SerzNode::Element {
+            id, children, ..
+        } = node
+        {
+            if *id != 0 {
+                ids.insert(*id, node);
+            }
+            for child in children {
+                collect(child, ids);
+            }
+        }
+    }
+
+    let mut ids = HashMap::new();
+    collect(root, &mut ids);
+    ids
+}
+
+fn matching_geometry_blueprint(
+    node: &SerzNode,
+    geometry_stem: &str,
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<SerzNode> {
+    let SerzNode::Element { name, children, .. } = node else {
+        return None;
+    };
+    let name = name.to_ascii_lowercase();
+    if ["cengineblueprint", "cwagonblueprint", "ctenderblueprint"]
+        .iter()
+        .any(|blueprint_type| name.contains(blueprint_type))
+        && ["geometryid", "collisiongeometryid"]
+            .iter()
+            .any(|property| {
+                find_named_text(node, &[*property], ids)
+                    .is_some_and(|reference| asset_reference_stem(&reference).eq_ignore_ascii_case(geometry_stem))
+            })
+    {
+        return Some(node.clone());
+    }
+    children
+        .iter()
+        .find_map(|child| matching_geometry_blueprint(child, geometry_stem, ids))
+}
+
+fn asset_reference_stem(reference: &str) -> String {
+    Path::new(&reference.replace('\\', "/"))
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn find_named_text(
+    node: &SerzNode,
+    names: &[&str],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<String> {
+    match node {
+        SerzNode::Property { name, value, .. }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            Some(value.trim().to_owned())
+        }
+        SerzNode::Array { name, values, .. }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            Some(values.join(" "))
+        }
+        SerzNode::Reference { name, target_id }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            ids.get(target_id)
+                .and_then(|target| find_asset_path_text(target))
+        }
+        SerzNode::Element { name, children, .. } => {
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate))
+            {
+                let value = children
+                    .iter()
+                    .find_map(|child| find_named_text(child, names, ids))
+                    .or_else(|| {
+                        names
+                            .iter()
+                            .any(|candidate| {
+                                candidate.eq_ignore_ascii_case("geometryid")
+                                    || candidate.eq_ignore_ascii_case("collisiongeometryid")
+                            })
+                            .then(|| {
+                                children.iter().find_map(|child| {
+                                    find_named_text(child, &["blueprintid"], ids)
+                                })
+                            })
+                            .flatten()
+                    })
+                    .or_else(|| match children.as_slice() {
+                        [SerzNode::Property { value, .. }] => Some(value.trim().to_owned()),
+                        _ => None,
+                    });
+                if let Some(value) = value {
+                    return Some(value);
+                }
+            }
+            children
+                .iter()
+                .find_map(|child| find_named_text(child, names, ids))
+        }
+        _ => None,
+    }
+}
+
+fn find_asset_path_text(node: &SerzNode) -> Option<String> {
+    match node {
+        SerzNode::Property { value, .. } => {
+            let value = value.trim();
+            (!value.is_empty()
+                && (value.contains('\\')
+                    || value.contains('/')
+                    || value.to_ascii_lowercase().ends_with(".xml")
+                    || value.to_ascii_lowercase().ends_with(".bin")
+                    || value.to_ascii_lowercase().ends_with(".geopcdx")))
+            .then(|| value.to_owned())
+        }
+        SerzNode::Array { values, .. } => values.iter().find_map(|value| {
+            let lower = value.to_ascii_lowercase();
+            (value.contains('\\')
+                || value.contains('/')
+                || lower.ends_with(".xml")
+                || lower.ends_with(".bin")
+                || lower.ends_with(".geopcdx"))
+            .then(|| value.clone())
+        }),
+        SerzNode::Element { children, .. } => children.iter().find_map(find_asset_path_text),
+        _ => None,
+    }
+}
+
+fn direct_named_text(
+    node: &SerzNode,
+    names: &[&str],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<String> {
+    let SerzNode::Element { children, .. } = node else {
+        return None;
+    };
+    children.iter().find_map(|child| match child {
+        SerzNode::Property { name, value, .. }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            Some(value.trim().to_owned())
+        }
+        SerzNode::Array { name, values, .. }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            Some(values.join(" "))
+        }
+        SerzNode::Reference { name, target_id }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            ids.get(target_id)
+                .and_then(|target| find_asset_path_text(target))
+        }
+        SerzNode::Element { name, .. }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            find_named_text(child, names, ids)
+        }
+        _ => None,
+    })
+}
+
+fn collect_blueprint_attachments(
+    node: &SerzNode,
+    ids: &HashMap<u32, &SerzNode>,
+    in_bogey: bool,
+    in_children: bool,
+    output: &mut Vec<AttachmentBlueprintRef>,
+) {
+    collect_blueprint_attachments_inner(
+        node,
+        ids,
+        in_bogey,
+        in_children,
+        &mut HashSet::new(),
+        output,
+    );
+}
+
+fn collect_blueprint_attachments_inner(
+    node: &SerzNode,
+    ids: &HashMap<u32, &SerzNode>,
+    in_bogey: bool,
+    in_children: bool,
+    reference_stack: &mut HashSet<u32>,
+    output: &mut Vec<AttachmentBlueprintRef>,
+) {
+    if let SerzNode::Reference { name, target_id } = node {
+        let name = name.to_ascii_lowercase();
+        let in_bogey = in_bogey || name.contains("bogey") || name.contains("bogie");
+        let in_children = in_children
+            || name.contains("schild")
+            || name.contains("childentity")
+            || name == "children";
+        if reference_stack.insert(*target_id) {
+            if let Some(target) = ids.get(target_id) {
+                collect_blueprint_attachments_inner(
+                    target,
+                    ids,
+                    in_bogey,
+                    in_children,
+                    reference_stack,
+                    output,
+                );
+            }
+            reference_stack.remove(target_id);
+        }
+        return;
+    }
+    let SerzNode::Element { name, children, .. } = node else {
+        return;
+    };
+    let name = name.to_ascii_lowercase();
+    let in_bogey = in_bogey || name.contains("bogey") || name.contains("bogie");
+    let in_children = in_children
+        || name.contains("schild")
+        || name.contains("childentity")
+        || name == "children";
+    if in_bogey || in_children {
+        let names = if in_bogey {
+            &[
+                "bogeyblueprint",
+                "bogieblueprint",
+                "bogeyblueprintid",
+                "bogieblueprintid",
+                "blueprintid",
+                "blueprint",
+            ][..]
+        } else {
+            &["blueprintid", "childblueprint", "blueprint"][..]
+        };
+        if let Some(blueprint_reference) = direct_named_text(node, names, ids)
+            && !blueprint_reference.is_empty()
+        {
+            output.push(AttachmentBlueprintRef {
+                kind: if in_bogey { "bogey" } else { "child" },
+                blueprint_reference,
+                transform: attachment_transform(node, ids, in_bogey),
+            });
+            return;
+        }
+    }
+    for child in children {
+        collect_blueprint_attachments_inner(
+            child,
+            ids,
+            in_bogey,
+            in_children,
+            reference_stack,
+            output,
+        );
+    }
+}
+
+fn attachment_transform(
+    node: &SerzNode,
+    ids: &HashMap<u32, &SerzNode>,
+    is_bogey: bool,
+) -> Mat4 {
+    if let Some(values) = find_named_numbers(node, &["matrix"], ids)
+        && let Some(matrix) = matrix_from_values(&values)
+    {
+        return matrix;
+    }
+    if let Some(values) = find_named_numbers(node, &["offset"], ids) {
+        if let Some(matrix) = matrix_from_values(&values) {
+            return matrix;
+        }
+        if values.len() >= 3 {
+            return Mat4::from_translation(Vec3::new(values[0], values[1], values[2]));
+        }
+    }
+    if is_bogey {
+        let x = find_named_number(node, &["bogeypivotx", "bogiepivotx", "pivotx"], ids);
+        let y = find_named_number(node, &["bogeypivoty", "bogiepivoty", "pivoty"], ids);
+        let z = find_named_number(node, &["bogeypivotz", "bogiepivotz", "pivotz"], ids);
+        if x.is_some() || y.is_some() || z.is_some() {
+            return Mat4::from_translation(Vec3::new(
+                x.unwrap_or(0.0),
+                y.unwrap_or(0.0),
+                z.unwrap_or(0.0),
+            ));
+        }
+    }
+    Mat4::IDENTITY
+}
+
+fn find_named_number(node: &SerzNode, names: &[&str], ids: &HashMap<u32, &SerzNode>) -> Option<f32> {
+    find_named_text(node, names, ids)?.parse().ok()
+}
+
+fn find_named_numbers(
+    node: &SerzNode,
+    names: &[&str],
+    ids: &HashMap<u32, &SerzNode>,
+) -> Option<Vec<f32>> {
+    match node {
+        SerzNode::Property { name, value, .. }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            Some(parse_float_values(value))
+        }
+        SerzNode::Array { name, values, .. }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            Some(values.iter().flat_map(|value| parse_float_values(value)).collect())
+        }
+        SerzNode::Reference { name, target_id }
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+        {
+            ids.get(target_id)
+                .and_then(|target| find_named_numbers(target, names, ids))
+        }
+        SerzNode::Element { name, children, .. } => {
+            if names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate))
+            {
+                let values = children
+                    .iter()
+                    .flat_map(|child| collect_float_values(child))
+                    .collect::<Vec<_>>();
+                if !values.is_empty() {
+                    return Some(values);
+                }
+            }
+            children
+                .iter()
+                .find_map(|child| find_named_numbers(child, names, ids))
+        }
+        _ => None,
+    }
+}
+
+fn collect_float_values(node: &SerzNode) -> Vec<f32> {
+    match node {
+        SerzNode::Property { value, .. } => parse_float_values(value),
+        SerzNode::Array { values, .. } => values
+            .iter()
+            .flat_map(|value| parse_float_values(value))
+            .collect(),
+        SerzNode::Element { children, .. } => {
+            children.iter().flat_map(collect_float_values).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn parse_float_values(value: &str) -> Vec<f32> {
+    value
+        .split(|character: char| {
+            character.is_whitespace() || matches!(character, ',' | ';' | '[' | ']')
+        })
+        .filter_map(|part| part.parse::<f32>().ok())
+        .collect()
+}
+
+fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
+    let matrix = <[f32; 16]>::try_from(values).ok()?;
+    if matrix.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    let serialized = Mat4::from_cols_array(&matrix);
+    let translation_is_last_column =
+        matrix[3].abs() > f32::EPSILON
+            || matrix[7].abs() > f32::EPSILON
+            || matrix[11].abs() > f32::EPSILON;
+    let translation_is_last_row =
+        matrix[12].abs() > f32::EPSILON
+            || matrix[13].abs() > f32::EPSILON
+            || matrix[14].abs() > f32::EPSILON;
+    Some(if translation_is_last_column && !translation_is_last_row {
+        serialized.transpose()
+    } else {
+        serialized
+    })
+}
+
+fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option<PathBuf> {
+    let normalized = reference
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .trim_start_matches('\\')
+        .to_owned();
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut relative = PathBuf::from(&normalized);
+    if relative
+        .components()
+        .next()
+        .is_some_and(|component| {
+            component
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("Assets")
+        })
+    {
+        relative = relative.components().skip(1).collect();
+    }
+    let variants = if relative
+        .extension()
+        .is_some_and(|current| current.eq_ignore_ascii_case(extension))
+    {
+        vec![relative]
+    } else {
+        vec![relative.with_extension(extension)]
+    };
+    let mut bases = Vec::new();
+    if let Some(parent) = source.parent() {
+        bases.extend(parent.ancestors().take(8).map(Path::to_path_buf));
+    }
+    for base in bases {
+        for variant in &variants {
+            let candidate = base.join(variant);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn load_cached_geometry(
+    path: &Path,
+    main_path: &Path,
+    cache: &mut HashMap<String, Arc<GeoModel>>,
+) -> Option<Arc<GeoModel>> {
+    let key = path.to_string_lossy().to_ascii_lowercase();
+    if let Some(model) = cache.get(&key) {
+        return Some(Arc::clone(model));
+    }
+    let result = std::fs::read(path)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| GeoModel::parse(&bytes));
+    match result {
+        Ok(model) => {
+            log_parse_diagnostics(path, &model.diagnostics);
+            let model = Arc::new(model);
+            cache.insert(key, Arc::clone(&model));
+            Some(model)
+        }
+        Err(error) => {
+            log_assembly_warning(
+                main_path,
+                &format!("Unable to load attached geometry {}: {error}", path.display()),
+            );
+            None
+        }
+    }
+}
+
+fn find_sibling_part_geometries(path: &Path) -> Vec<PathBuf> {
+    let Some(parent) = path.parent() else {
+        return Vec::new();
+    };
+    let part_names = [
+        "bogey", "bogie", "coupler", "pantograph", "underframe", "detail",
+    ];
+    let mut siblings = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            !same_path(candidate, path)
+                && candidate
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("GeoPcDx"))
+                && candidate.file_stem().is_some_and(|stem| {
+                    let stem = stem.to_string_lossy().to_ascii_lowercase();
+                    part_names.iter().any(|part_name| stem.contains(part_name))
+                })
+        })
+        .collect::<Vec<_>>();
+    siblings.sort();
+    siblings
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+fn model_bounds(model: &GeoModel, transform: Mat4) -> (Vec3, Vec3) {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for &index in &model.indices {
+        let position = transform.transform_point3(Vec3::from_array(model.vertices[index as usize].position));
+        min = min.min(position);
+        max = max.max(position);
+    }
+    if min.is_finite() && max.is_finite() {
+        (min, max)
+    } else {
+        (Vec3::ZERO, Vec3::ZERO)
+    }
+}
+
+fn transform_has_translation(transform: Mat4) -> bool {
+    transform.w_axis.truncate().length_squared() > 1e-6
+}
+
+pub(crate) fn log_assembly_warning(path: &Path, message: &str) {
+    use std::io::Write;
+
+    let log_path = crate::settings::log_file();
+    let result = (|| {
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?;
+        writeln!(
+            file,
+            "{} [GeoPcDx assembly] {}: {message}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            path.display()
+        )
+    })();
+    if let Err(error) = result {
+        eprintln!("Failed to write assembly warning to {}: {error}", log_path.display());
     }
 }
 
@@ -697,53 +1570,16 @@ fn is_helper_name(name: &str) -> bool {
 }
 
 fn find_local_transform(children: &[SerzNode]) -> Mat4 {
-    fn matrix_values(node: &SerzNode, values: &mut Vec<f32>) {
-        match node {
-            SerzNode::Property { value, .. } => {
-                values.extend(
-                    value
-                        .split(|character: char| {
-                            character.is_whitespace() || matches!(character, ',' | ';')
-                        })
-                        .filter_map(|part| part.parse::<f32>().ok()),
-                );
-            }
-            SerzNode::Element { children, .. } => {
-                for child in children {
-                    matrix_values(child, values);
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn parse_matrix(node: &SerzNode) -> Option<Mat4> {
-        let mut values = Vec::new();
-        matrix_values(node, &mut values);
-        let matrix = <[f32; 16]>::try_from(values).ok()?;
-        if matrix.iter().any(|value| !value.is_finite()) {
-            return None;
-        }
-        let serialized = Mat4::from_cols_array(&matrix);
-        let translation_is_last_column =
-            matrix[3].abs() > f32::EPSILON
-                || matrix[7].abs() > f32::EPSILON
-                || matrix[11].abs() > f32::EPSILON;
-        let translation_is_last_row =
-            matrix[12].abs() > f32::EPSILON
-                || matrix[13].abs() > f32::EPSILON
-                || matrix[14].abs() > f32::EPSILON;
-        Some(if translation_is_last_column && !translation_is_last_row {
-            serialized.transpose()
-        } else {
-            serialized
-        })
+        matrix_from_values(&collect_float_values(node))
     }
 
     for child in children {
         match child {
-            SerzNode::Property { name, .. } if name.to_ascii_lowercase().contains("transform") => {
-                if let Some(matrix) = parse_matrix(child) {
+            SerzNode::Property { name, value, .. }
+                if name.to_ascii_lowercase().contains("transform") =>
+            {
+                if let Some(matrix) = matrix_from_values(&parse_float_values(value)) {
                     return matrix;
                 }
             }
@@ -1329,6 +2165,140 @@ mod tests {
                 <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
             </Root>"#
         )
+    }
+
+    #[test]
+    fn reads_blueprint_geometry_and_attachment_transforms() {
+        let xml = r#"
+            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cWagonBlueprint d:id="1">
+                    <GeometryID d:type="cDeltaString">Models\Main.GeoPcDx</GeometryID>
+                    <Bogey>
+                        <BogeyBlueprint d:type="cDeltaString">Bogies\front.xml</BogeyBlueprint>
+                        <BogeyPivotX d:type="sFloat32">3</BogeyPivotX>
+                        <BogeyPivotY d:type="sFloat32">-1</BogeyPivotY>
+                        <BogiePivotZ d:type="sFloat32">7</BogiePivotZ>
+                    </Bogey>
+                    <Bogey d:type="ref">2</Bogey>
+                    <ContainerComponent>
+                        <Children>
+                            <cEntityContainerBlueprint-sChild>
+                                <BlueprintID d:type="cDeltaString">Parts\pantograph.xml</BlueprintID>
+                                <Matrix d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 5 6 7 1</Matrix>
+                            </cEntityContainerBlueprint-sChild>
+                        </Children>
+                    </ContainerComponent>
+                </cWagonBlueprint>
+                <BogeyEntry d:id="2">
+                    <BogeyBlueprint d:type="cDeltaString">Bogies\rear.xml</BogeyBlueprint>
+                    <BogeyPivotX d:type="sFloat32">-3</BogeyPivotX>
+                </BogeyEntry>
+            </Root>
+        "#;
+        let root = SerzNode::from_xml_str(xml).unwrap().0;
+        let ids = build_id_map(&root);
+
+        let blueprint = matching_geometry_blueprint(&root, "main", &ids).unwrap();
+        let mut attachments = Vec::new();
+        collect_blueprint_attachments(&blueprint, &ids, false, false, &mut attachments);
+        assert_eq!(
+            attachments
+                .iter()
+                .map(|attachment| attachment.blueprint_reference.as_str())
+                .collect::<Vec<_>>(),
+            [
+                r"Bogies\front.xml",
+                r"Bogies\rear.xml",
+                r"Parts\pantograph.xml"
+            ]
+        );
+        assert_eq!(attachments[0].kind, "bogey");
+        assert_eq!(attachments[0].blueprint_reference, r"Bogies\front.xml");
+        assert_eq!(
+            attachments[0].transform.w_axis.truncate(),
+            Vec3::new(3.0, -1.0, 7.0)
+        );
+        assert_eq!(attachments[1].kind, "bogey");
+        assert_eq!(
+            attachments[1].transform.w_axis.truncate(),
+            Vec3::new(-3.0, 0.0, 0.0)
+        );
+        assert_eq!(attachments[2].kind, "child");
+        assert_eq!(
+            attachments[2].transform.w_axis.truncate(),
+            Vec3::new(5.0, 6.0, 7.0)
+        );
+    }
+
+    #[test]
+    fn discovers_sibling_blueprint_and_resolves_asset_relative_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let assets = directory.path().join("Assets");
+        let model_dir = assets.join("Provider").join("Product").join("Models");
+        let bogey_dir = assets.join("Provider").join("Product").join("Bogies");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::create_dir_all(&bogey_dir).unwrap();
+        let geometry_path = model_dir.join("Main.GeoPcDx");
+        let blueprint_path = model_dir.join("Main.bin");
+        let bogey_path = bogey_dir.join("Front.bin");
+        std::fs::write(&geometry_path, b"").unwrap();
+        std::fs::write(
+            &blueprint_path,
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cWagonBlueprint>
+                    <GeometryID d:type="cDeltaString">Provider\Product\Models\Main.GeoPcDx</GeometryID>
+                </cWagonBlueprint>
+            </Root>"#,
+        )
+        .unwrap();
+        std::fs::write(&bogey_path, b"").unwrap();
+
+        let (found_path, _, _) = find_geometry_blueprint(&geometry_path, "main").unwrap();
+        let resolved = resolve_asset_path(
+            &found_path,
+            r"Provider\Product\Bogies\Front.xml",
+            "bin",
+        )
+        .unwrap();
+
+        assert_eq!(found_path, blueprint_path);
+        assert_eq!(resolved, bogey_path);
+    }
+
+    #[test]
+    fn composes_attached_parts_and_side_by_side_layouts() {
+        let source = xml(
+            &triangle_vertices(3),
+            &[0, 0, 1, 0, 2, 0],
+            32,
+        );
+        let model = Arc::new(GeoModel::parse(source.as_bytes()).unwrap());
+        let assembly = GeoAssembly {
+            parts: vec![
+                GeoAssemblyPart {
+                    path: PathBuf::from("Main.GeoPcDx"),
+                    model: Arc::clone(&model),
+                    transform: Mat4::IDENTITY,
+                    blueprint_attached: false,
+                },
+                GeoAssemblyPart {
+                    path: PathBuf::from("Bogey.GeoPcDx"),
+                    model,
+                    transform: Mat4::from_translation(Vec3::new(10.0, -1.0, 2.0)),
+                    blueprint_attached: true,
+                },
+            ],
+            has_blueprint_attachments: true,
+        };
+
+        let (assembled, sources) = assembly.compose(false).unwrap();
+        let bogey_position = assembled.vertices[assembled.indices[3] as usize].position;
+        assert_eq!(bogey_position, [10.0, -1.0, 2.0]);
+        assert_eq!(sources.len(), assembled.textures.len());
+
+        let (side_by_side, _) = assembly.compose(true).unwrap();
+        let bogey_position = side_by_side.vertices[side_by_side.indices[3] as usize].position;
+        assert_eq!(bogey_position, [3.5, 0.0, 0.0]);
     }
 
     #[test]
