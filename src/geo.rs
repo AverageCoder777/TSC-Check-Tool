@@ -2433,7 +2433,14 @@ fn is_helper_name(name: &str) -> bool {
         "digit",
         "digits",
         "rvn",
-        "decal",
+        "primarydigit",
+        "primarydigits",
+        "secondarydigit",
+        "secondarydigits",
+        "primarynumbers",
+        "decal_",
+        "_b",
+        "_c",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
@@ -4612,3 +4619,10 @@ mod tests {
         assert_eq!(model.diagnostics.vertex_count, 3);
     }
 }
+
+
+
+
+
+
+
