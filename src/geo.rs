@@ -39,9 +39,18 @@ pub struct GeoSubmesh {
     pub index_count: u32,
     pub material_index: u32,
     pub texture_index: u32,
+    pub render_mode: GeoRenderMode,
     pub vertex_buffer_index: u32,
     pub base_vertex: i32,
     pub vertex_buffer_offset: i32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GeoRenderMode {
+    #[default]
+    Opaque,
+    Cutout,
+    Blended,
 }
 
 #[derive(Clone, Debug)]
@@ -224,6 +233,9 @@ impl GeoModel {
                     .or(batch.texture_index)
                     .unwrap_or(material_index)
                     .min(textures.len().saturating_sub(1) as u32);
+                let render_mode = binding
+                    .map(|binding| binding.render_mode)
+                    .unwrap_or_default();
                 let triangles =
                     convert_to_triangle_list(range, batch.topology, index_buffer.element_type);
                 if batch.transform == Mat4::IDENTITY {
@@ -233,6 +245,7 @@ impl GeoModel {
                         triangles,
                         material_index,
                         texture_index,
+                        render_mode,
                         batch.vertex_buffer_index,
                         batch.base_vertex,
                         vertex_buffer_offset,
@@ -248,6 +261,7 @@ impl GeoModel {
                         batch.transform,
                         material_index,
                         texture_index,
+                        render_mode,
                         batch.vertex_buffer_index,
                         batch.base_vertex,
                         vertex_buffer_offset,
@@ -255,7 +269,7 @@ impl GeoModel {
                 }
             }
         }
-        if submeshes.is_empty() {
+        if !has_batch_ranges && submeshes.is_empty() {
             let triangles = convert_to_triangle_list(
                 &first_index_buffer.indices,
                 primitive_type,
@@ -267,6 +281,7 @@ impl GeoModel {
                 triangles,
                 0,
                 0,
+                GeoRenderMode::Opaque,
                 0,
                 0,
                 0,
@@ -1008,20 +1023,17 @@ fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
     if matrix.iter().any(|value| !value.is_finite()) {
         return None;
     }
-    let serialized = Mat4::from_cols_array(&matrix);
-    let translation_is_last_column =
-        matrix[3].abs() > f32::EPSILON
-            || matrix[7].abs() > f32::EPSILON
-            || matrix[11].abs() > f32::EPSILON;
-    let translation_is_last_row =
-        matrix[12].abs() > f32::EPSILON
-            || matrix[13].abs() > f32::EPSILON
-            || matrix[14].abs() > f32::EPSILON;
-    Some(if translation_is_last_column && !translation_is_last_row {
-        serialized.transpose()
+    let parsed = Mat4::from_cols_array(&matrix);
+    let scale = [
+        parsed.x_axis.truncate().length(),
+        parsed.y_axis.truncate().length(),
+        parsed.z_axis.truncate().length(),
+    ];
+    if (matrix[15] - 1.0).abs() > 0.01 || scale.iter().any(|axis| *axis < 0.01 || *axis > 10.0) {
+        Some(Mat4::IDENTITY)
     } else {
-        serialized
-    })
+        Some(parsed)
+    }
 }
 
 fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option<PathBuf> {
@@ -1194,6 +1206,8 @@ struct IndexBuffer {
 struct MaterialBinding {
     material_index: u32,
     texture_index: u32,
+    render_mode: GeoRenderMode,
+    excluded: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1369,20 +1383,25 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
         if name.eq_ignore_ascii_case("cHcEffectMaterialDx") {
             let material_index = *next_index;
             *next_index = (*next_index).saturating_add(1);
-            if let Some(reference) = find_text(children, &["texturebyname"]) {
-                let normalized = crate::auditor::normalize_texture_reference(reference);
-                let texture_index = textures
-                    .iter()
-                    .position(|texture| texture.eq_ignore_ascii_case(&normalized))
-                    .unwrap_or(0) as u32;
-                bindings.insert(
-                    *id,
-                    MaterialBinding {
-                        material_index,
-                        texture_index,
-                    },
-                );
-            }
+            let texture_index = find_text(children, &["texturebyname"])
+                .map(crate::auditor::normalize_texture_reference)
+                .and_then(|reference| {
+                    textures
+                        .iter()
+                        .position(|texture| texture.eq_ignore_ascii_case(&reference))
+                })
+                .unwrap_or(0) as u32;
+            let shader_name =
+                find_text(children, &["shadername", "effectname"]).unwrap_or_default();
+            bindings.insert(
+                *id,
+                MaterialBinding {
+                    material_index,
+                    texture_index,
+                    render_mode: classify_shader(shader_name),
+                    excluded: is_helper_name(shader_name),
+                },
+            );
         }
         for child in children {
             collect(child, textures, next_index, bindings);
@@ -1436,16 +1455,24 @@ fn find_submeshes(
                 .and_then(|level| u32::try_from(level).ok())
         })
         .or(inherited_lod);
-    let excluded = inherited_excluded
-        || lod.is_some_and(|level| level > 0)
-        || is_helper_name(name)
-        || is_helper_name(node_label);
-    let transform = parent_transform * find_local_transform(children);
     let material_reference = if clean_name.contains("sgnodematerial") {
         find_reference(children, "material").or(inherited_material)
     } else {
         inherited_material
     };
+    let excluded = inherited_excluded
+        || lod.is_some_and(|level| level > 0)
+        || is_helper_name(name)
+        || is_helper_name(node_label)
+        || material_reference
+            .and_then(|reference| material_bindings.get(&reference))
+            .is_some_and(|binding| binding.excluded);
+    let local_transform = if is_skeleton_node(name) || is_skeleton_node(node_label) {
+        Mat4::IDENTITY
+    } else {
+        find_local_transform(children)
+    };
+    let transform = parent_transform * local_transform;
     if clean_name.contains("primlist")
         || clean_name.contains("primitivelist")
         || clean_name.contains("batch")
@@ -1564,9 +1591,41 @@ fn lod_from_name(name: &str) -> Option<u32> {
 
 fn is_helper_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    ["shadow", "volume", "collision", "occlusion"]
+    [
+        "shadow",
+        "stencil",
+        "occluder",
+        "volume",
+        "collision",
+        "occlusion",
+        "dummy",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+fn is_skeleton_node(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["bone", "skeleton", "joint"]
         .iter()
         .any(|marker| lower.contains(marker))
+}
+
+fn classify_shader(shader_name: &str) -> GeoRenderMode {
+    let shader = shader_name.to_ascii_lowercase();
+    if ["glass", "trans", "alpha", "blend", "decal"]
+        .iter()
+        .any(|marker| shader.contains(marker))
+    {
+        GeoRenderMode::Blended
+    } else if ["flora", "veg", "fence", "mask", "1bit"]
+        .iter()
+        .any(|marker| shader.contains(marker))
+    {
+        GeoRenderMode::Cutout
+    } else {
+        GeoRenderMode::Opaque
+    }
 }
 
 fn find_local_transform(children: &[SerzNode]) -> Mat4 {
@@ -1759,6 +1818,7 @@ fn append_submesh(
     triangles: Vec<u32>,
     material_index: u32,
     texture_index: u32,
+    render_mode: GeoRenderMode,
     vertex_buffer_index: u32,
     base_vertex: i32,
     vertex_buffer_offset: i32,
@@ -1788,6 +1848,7 @@ fn append_submesh(
         index_count,
         material_index,
         texture_index,
+        render_mode,
         vertex_buffer_index,
         base_vertex,
         vertex_buffer_offset,
@@ -1804,6 +1865,7 @@ fn append_transformed_submesh(
     transform: Mat4,
     material_index: u32,
     texture_index: u32,
+    render_mode: GeoRenderMode,
     vertex_buffer_index: u32,
     base_vertex: i32,
     vertex_buffer_offset: i32,
@@ -1863,6 +1925,7 @@ fn append_transformed_submesh(
         index_count,
         material_index,
         texture_index,
+        render_mode,
         vertex_buffer_index,
         base_vertex,
         vertex_buffer_offset,
@@ -2356,6 +2419,7 @@ mod tests {
                 index_count: 6,
                 material_index: 2,
                 texture_index: 0,
+                render_mode: GeoRenderMode::Opaque,
                 vertex_buffer_index: 0,
                 base_vertex: 0,
                 vertex_buffer_offset: 0,
@@ -2436,6 +2500,14 @@ mod tests {
                 <StartIndex d:type="sUInt32">0</StartIndex>
                 <IndexCount d:type="sUInt32">3</IndexCount>
             </cHcPrimitiveList></softshadow>
+            <StencilShadow><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></StencilShadow>
+            <DummyNode><cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList></DummyNode>
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{batches}</Root>"));
@@ -2464,18 +2536,67 @@ mod tests {
 
         assert_eq!(transformed_position, [3.0, -2.0, 4.0]);
 
-        let row_major = transform.replace(
-            "1 0 0 0 0 1 0 0 0 0 1 0 3 -2 4 1",
-            "1 0 0 3 0 1 0 -2 0 0 1 4 0 0 0 1",
-        );
+        let skeleton = transform.replace("cHcTransformNode", "cHcSkeletonNode");
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
-            .replace("</Root>", &format!("{row_major}</Root>"));
+            .replace("</Root>", &format!("{skeleton}</Root>"));
         let model = GeoModel::parse(source.as_bytes()).unwrap();
-
         assert_eq!(
             model.vertices[model.indices[0] as usize].position,
-            [3.0, -2.0, 4.0]
+            [0.0, 0.0, 0.0]
         );
+
+        let matrix = matrix_from_values(&[
+            1.0, 0.0, 0.0, 0.25, 0.0, 1.0, 0.0, 0.5, 0.0, 0.0, 1.0, 0.75, 3.0, -2.0, 4.0, 1.0,
+        ])
+        .unwrap();
+        assert_eq!(matrix.w_axis.truncate(), Vec3::new(3.0, -2.0, 4.0));
+        assert_eq!(matrix.x_axis.w, 0.25);
+
+        assert_eq!(
+            matrix_from_values(&[
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 13.2, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]),
+            Some(Mat4::IDENTITY)
+        );
+        assert_eq!(
+            matrix_from_values(&[
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ]),
+            Some(Mat4::IDENTITY)
+        );
+    }
+
+    #[test]
+    fn classifies_shader_alpha_and_helper_batches() {
+        assert_eq!(classify_shader("TrainGlass"), GeoRenderMode::Blended);
+        assert_eq!(classify_shader("RailVehicleFlora"), GeoRenderMode::Cutout);
+        assert_eq!(classify_shader("TrainStandard"), GeoRenderMode::Opaque);
+        assert!(is_helper_name("TrainShadowOnly"));
+        assert!(is_helper_name("StencilShadow"));
+        assert!(is_helper_name("DummyNode"));
+
+        let batches = r#"
+            <cHcSGNodeMaterial>
+                <Material d:type="ref">7</Material>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList>
+            </cHcSGNodeMaterial>
+            <cHcPrimitiveList>
+                <StartIndex d:type="sUInt32">0</StartIndex>
+                <IndexCount d:type="sUInt32">3</IndexCount>
+            </cHcPrimitiveList>
+            <cHcEffectMaterialDx d:id="7">
+                <ShaderName d:type="cDeltaString">TrainShadowOnly</ShaderName>
+                <TextureByName d:type="cDeltaString">Textures\sample.TgPcDx</TextureByName>
+            </cHcEffectMaterialDx>
+        "#;
+        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
+            .replace("</Root>", &format!("{batches}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        assert_eq!(model.submeshes.len(), 1);
+        assert_eq!(model.indices, [0, 1, 2]);
     }
 
     #[test]

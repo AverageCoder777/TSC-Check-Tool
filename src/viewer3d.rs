@@ -1,4 +1,4 @@
-use crate::geo::{GeoAssembly, GeoModel, GeoVertex};
+use crate::geo::{GeoAssembly, GeoModel, GeoRenderMode, GeoVertex};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slint::ComponentHandle;
@@ -476,7 +476,19 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
             height,
         ));
     }
-    for submesh in &model.model.submeshes {
+    let ordered_submeshes = model
+        .model
+        .submeshes
+        .iter()
+        .filter(|submesh| submesh.render_mode != GeoRenderMode::Blended)
+        .chain(
+            model
+                .model
+                .submeshes
+                .iter()
+                .filter(|submesh| submesh.render_mode == GeoRenderMode::Blended),
+        );
+    for submesh in ordered_submeshes {
         let start = submesh.first_index as usize;
         let end = start + submesh.index_count as usize;
         let texture = model
@@ -503,6 +515,7 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
                     [a, b, c],
                     texture,
                     view,
+                    submesh.render_mode,
                 );
             }
         }
@@ -552,6 +565,7 @@ fn raster_triangle(
     vertices: [ProjectedVertex; 3],
     texture: &Texture,
     view: Mat4,
+    render_mode: GeoRenderMode,
 ) {
     let [a, b, c] = vertices;
     let edge1 = b.position.truncate() - a.position.truncate();
@@ -604,14 +618,20 @@ fn raster_triangle(
             }
             let uv = a.uv * w0 + b.uv * w1 + c.uv * w2;
             let texel = texture.sample(uv.to_array());
-            if texel[3] < 13 {
+            if (render_mode == GeoRenderMode::Cutout && texel[3] < 128)
+                || (render_mode == GeoRenderMode::Blended && texel[3] == 0)
+            {
                 continue;
             }
             let normal = (a.normal * w0 + b.normal * w1 + c.normal * w2).normalize_or_zero();
             let normal_view = view.transform_vector3(normal).normalize_or_zero();
             let diffuse = normal_view.dot(Vec3::new(-0.4, 0.7, 0.6).normalize()).abs();
             let light = 0.35 + diffuse * 0.65;
-            let alpha = texel[3] as f32 / 255.0;
+            let alpha = if render_mode == GeoRenderMode::Blended {
+                texel[3] as f32 / 255.0
+            } else {
+                1.0
+            };
             let start = offset * 4;
             for channel in 0..3 {
                 let source = texel[channel] as f32 * light;
@@ -619,7 +639,9 @@ fn raster_triangle(
                 pixels[start + channel] = (source * alpha + destination * (1.0 - alpha)) as u8;
             }
             pixels[start + 3] = 255;
-            depth[offset] = z;
+            if render_mode != GeoRenderMode::Blended {
+                depth[offset] = z;
+            }
         }
     }
 }

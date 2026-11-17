@@ -1,4 +1,4 @@
-use crate::geo::{GeoSubmesh, GeoVertex};
+use crate::geo::{GeoRenderMode, GeoSubmesh, GeoVertex};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::borrow::Cow;
@@ -17,7 +17,9 @@ struct GpuVertex {
 pub(crate) struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    solid_pipeline: wgpu::RenderPipeline,
+    opaque_pipeline: wgpu::RenderPipeline,
+    cutout_pipeline: wgpu::RenderPipeline,
+    alpha_pipeline: wgpu::RenderPipeline,
     wire_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     vertex_buffer: wgpu::Buffer,
@@ -248,12 +250,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.world_position = input.position;
     return output;
 }
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn shade(input: VertexOutput) -> vec4<f32> {
     let color = textureSample(albedo, albedo_sampler, input.uv);
-    if color.a < 0.05 {
-        discard;
-    }
     var normal = input.normal;
     if dot(normal, normal) < 1e-10 {
         normal = cross(dpdx(input.world_position), dpdy(input.world_position));
@@ -265,6 +263,23 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let light_direction = normalize(vec3<f32>(-0.4, 0.7, 0.6));
     let light = 0.35 + 0.65 * abs(dot(normal, light_direction));
     return vec4<f32>(color.rgb * light, color.a);
+}
+@fragment
+fn fs_opaque(input: VertexOutput) -> @location(0) vec4<f32> {
+    let color = shade(input);
+    return vec4<f32>(color.rgb, 1.0);
+}
+@fragment
+fn fs_cutout(input: VertexOutput) -> @location(0) vec4<f32> {
+    if textureSample(albedo, albedo_sampler, input.uv).a < 0.5 {
+        discard;
+    }
+    let color = shade(input);
+    return vec4<f32>(color.rgb, 1.0);
+}
+@fragment
+fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
+    return shade(input);
 }
 "#
                 .into(),
@@ -280,7 +295,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
         };
-        let make_pipeline = |label, topology| {
+        let make_pipeline = |label: &'static str,
+                             topology: wgpu::PrimitiveTopology,
+                             fragment_entry_point: &'static str,
+                             blend: Option<wgpu::BlendState>,
+                             depth_write_enabled: bool,
+                             cull_mode: Option<wgpu::Face>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -291,21 +311,21 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "fs_main",
+                    entry_point: fragment_entry_point,
                     targets: &[Some(wgpu::ColorTargetState {
                         format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        blend,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
-                    cull_mode: None,
+                    cull_mode,
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth24Plus,
-                    depth_write_enabled: true,
+                    depth_write_enabled,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: Default::default(),
                     bias: Default::default(),
@@ -314,18 +334,44 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 multiview: None,
             })
         };
-        let solid_pipeline = make_pipeline(
-            "GeoPcDx solid pipeline",
+        let opaque_pipeline = make_pipeline(
+            "GeoPcDx opaque pipeline",
             wgpu::PrimitiveTopology::TriangleList,
+            "fs_opaque",
+            Some(wgpu::BlendState::REPLACE),
+            true,
+            Some(wgpu::Face::Back),
+        );
+        let cutout_pipeline = make_pipeline(
+            "GeoPcDx cutout pipeline",
+            wgpu::PrimitiveTopology::TriangleList,
+            "fs_cutout",
+            Some(wgpu::BlendState::REPLACE),
+            true,
+            Some(wgpu::Face::Back),
+        );
+        let alpha_pipeline = make_pipeline(
+            "GeoPcDx alpha pipeline",
+            wgpu::PrimitiveTopology::TriangleList,
+            "fs_blended",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+            Some(wgpu::Face::Back),
         );
         let wire_pipeline = make_pipeline(
             "GeoPcDx wireframe pipeline",
             wgpu::PrimitiveTopology::LineList,
+            "fs_opaque",
+            Some(wgpu::BlendState::REPLACE),
+            true,
+            None,
         );
         Ok(Self {
             device,
             queue,
-            solid_pipeline,
+            opaque_pipeline,
+            cutout_pipeline,
+            alpha_pipeline,
             wire_pipeline,
             bind_group_layout,
             vertex_buffer,
@@ -465,11 +511,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(if camera.wireframe {
-                &self.wire_pipeline
-            } else {
-                &self.solid_pipeline
-            });
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(
                 if camera.wireframe {
@@ -479,7 +520,26 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 },
                 wgpu::IndexFormat::Uint32,
             );
-            for submesh in &self.submeshes {
+            let ordered_submeshes = self
+                .submeshes
+                .iter()
+                .filter(|submesh| submesh.render_mode != GeoRenderMode::Blended)
+                .chain(
+                    self.submeshes
+                        .iter()
+                        .filter(|submesh| submesh.render_mode == GeoRenderMode::Blended),
+                );
+            for submesh in ordered_submeshes {
+                let pipeline = if camera.wireframe {
+                    &self.wire_pipeline
+                } else {
+                    match submesh.render_mode {
+                        GeoRenderMode::Opaque => &self.opaque_pipeline,
+                        GeoRenderMode::Cutout => &self.cutout_pipeline,
+                        GeoRenderMode::Blended => &self.alpha_pipeline,
+                    }
+                };
+                pass.set_pipeline(pipeline);
                 let texture_index =
                     (submesh.texture_index as usize).min(bind_groups.len().saturating_sub(1));
                 pass.set_bind_group(0, &bind_groups[texture_index], &[]);
