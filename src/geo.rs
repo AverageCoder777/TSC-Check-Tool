@@ -4403,4 +4403,29 @@ mod tests {
             assert_eq!(find_transform_id(children, &ids), None);
         }
     }
+
+    #[test]
+    fn inspect_user_supplied_geo_file() {
+        let path = Path::new(
+            r"X:\SteamLibrary\steamapps\common\RailWorks\Assets\3DZUG\3DZ_Arbel_SNCF\RailVehicles\Cargo\Arbel_Wagen1.GeoPcDx",
+        );
+        let data = std::fs::read(path).unwrap();
+        let root = parse_serz_document(&data).unwrap();
+        let ids = build_id_map(&root);
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        find_geometry_buffers(&root, &ids, &[], &mut vertices, &mut indices);
+        for (index, buffer) in vertices.iter().enumerate() {
+            println!(
+                "buffer[{index}]: bytes={} stride={} count={} declared={} fvf=0x{:X} layout={}",
+                buffer.bytes.len(),
+                buffer.stride,
+                buffer.bytes.len() / buffer.stride.max(1),
+                buffer.declared_vertex_count,
+                buffer.fvf,
+                buffer.layout
+            );
+        }
+        assert!(!vertices.is_empty());
+    }
 }
