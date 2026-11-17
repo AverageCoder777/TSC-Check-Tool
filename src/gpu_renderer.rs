@@ -260,8 +260,13 @@ fn shade(input: VertexOutput) -> vec4<f32> {
         }
     }
     normal = normalize(normal);
-    let light_direction = normalize(vec3<f32>(-0.4, 0.7, 0.6));
-    let light = 0.35 + 0.65 * abs(dot(normal, light_direction));
+    let up = vec3<f32>(0.0, 1.0, 0.0);
+    let hemisphere = mix(0.58, 0.82, clamp(dot(normal, up) * 0.5 + 0.5, 0.0, 1.0));
+    let key = abs(dot(normal, normalize(vec3<f32>(-0.45, 0.72, 0.52)))) * 0.32;
+    let fill = abs(dot(normal, normalize(vec3<f32>(0.55, 0.2, -0.65)))) * 0.14;
+    let rim_direction = normalize(vec3<f32>(0.35, 0.45, -0.82));
+    let rim = pow(1.0 - max(dot(normal, rim_direction), 0.0), 2.0) * 0.10;
+    let light = clamp(max(0.55, hemisphere + key + fill + rim), 0.55, 1.2);
     return vec4<f32>(color.rgb * light, color.a);
 }
 @fragment

@@ -57,6 +57,7 @@ pub enum GeoRenderMode {
 pub struct GeoParseDiagnostics {
     pub vertex_stride: usize,
     pub vertex_count: usize,
+    pub local_transform_count: usize,
     pub index_element_type: &'static str,
     pub raw_index_count: usize,
     pub primitive_type: PrimitiveTopology,
@@ -99,6 +100,26 @@ struct RawSubmesh {
 impl GeoModel {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         let root = parse_serz_document(data)?;
+        let local_transforms = find_named_values(&root, "SourceLToPTransform")
+            .into_iter()
+            .flatten()
+            .flat_map(collect_float_values)
+            .collect::<Vec<_>>()
+            .chunks_exact(16)
+            .map(|values| {
+                if values.iter().all(|value| value.is_finite()) {
+                    Mat4::from_cols_array(values.try_into().expect("16-value matrix chunk"))
+                } else {
+                    Mat4::IDENTITY
+                }
+            })
+            .collect::<Vec<_>>();
+        let transform_dependencies = find_named_values(&root, "TransformDependency")
+            .into_iter()
+            .flatten()
+            .flat_map(collect_i32_values)
+            .collect::<Vec<_>>();
+        let world_transforms = compute_world_transforms(&local_transforms, &transform_dependencies);
         let mut vertex_data = Vec::new();
         let mut index_data = Vec::new();
         let mut xml = String::new();
@@ -171,6 +192,8 @@ impl GeoModel {
             None,
             &material_bindings,
             Mat4::IDENTITY,
+            &world_transforms,
+            None,
             None,
             false,
             &mut raw_batches,
@@ -308,6 +331,7 @@ impl GeoModel {
         let diagnostics = GeoParseDiagnostics {
             vertex_stride: first_vertex_buffer.stride,
             vertex_count: vertices.len(),
+            local_transform_count: local_transforms.len(),
             index_element_type: first_index_buffer.element_type,
             raw_index_count: index_data.iter().map(|buffer| buffer.indices.len()).sum(),
             primitive_type,
@@ -1005,6 +1029,10 @@ fn collect_float_values(node: &SerzNode) -> Vec<f32> {
         SerzNode::Element { children, .. } => {
             children.iter().flat_map(collect_float_values).collect()
         }
+        SerzNode::Blob { data } => data
+            .chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("4-byte float chunk")))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -1016,6 +1044,147 @@ fn parse_float_values(value: &str) -> Vec<f32> {
         })
         .filter_map(|part| part.parse::<f32>().ok())
         .collect()
+}
+
+fn parse_i32_values(value: &str) -> Vec<i32> {
+    value
+        .split(|character: char| {
+            character.is_whitespace() || matches!(character, ',' | ';' | '[' | ']')
+        })
+        .filter_map(|part| part.parse::<i32>().ok())
+        .collect()
+}
+
+fn collect_i32_values(node: &SerzNode) -> Vec<i32> {
+    match node {
+        SerzNode::Property { value, .. } => parse_i32_values(value),
+        SerzNode::Array { values, .. } => values
+            .iter()
+            .flat_map(|value| parse_i32_values(value))
+            .collect(),
+        SerzNode::Element { children, .. } => {
+            children.iter().flat_map(collect_i32_values).collect()
+        }
+        SerzNode::Blob { data } => data
+            .chunks_exact(4)
+            .map(|bytes| i32::from_le_bytes(bytes.try_into().expect("4-byte integer chunk")))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn find_named_values<'a>(node: &'a SerzNode, expected: &str) -> Option<Vec<&'a SerzNode>> {
+    fn collect_values<'a>(node: &'a SerzNode, values: &mut Vec<&'a SerzNode>) {
+        match node {
+            SerzNode::Property { .. } | SerzNode::Array { .. } | SerzNode::Blob { .. } => {
+                values.push(node);
+            }
+            SerzNode::Element { children, .. } => {
+                for child in children {
+                    collect_values(child, values);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    match node {
+        SerzNode::Property { name, .. } | SerzNode::Array { name, .. }
+            if name.eq_ignore_ascii_case(expected) =>
+        {
+            Some(vec![node])
+        }
+        SerzNode::Element { name, children, .. } if name.eq_ignore_ascii_case(expected) => {
+            let mut values = Vec::new();
+            for child in children {
+                collect_values(child, &mut values);
+            }
+            Some(values)
+        }
+        SerzNode::Element { children, .. } => children
+            .iter()
+            .find_map(|child| find_named_values(child, expected)),
+        _ => None,
+    }
+}
+
+fn compute_world_transforms(local: &[Mat4], parents: &[i32]) -> Vec<Mat4> {
+    fn resolve(
+        index: usize,
+        local: &[Mat4],
+        parents: &[i32],
+        states: &mut [u8],
+        invalid: &mut [bool],
+        world: &mut [Mat4],
+        stack: &mut Vec<usize>,
+    ) -> Mat4 {
+        if states[index] == 2 {
+            return world[index];
+        }
+        if states[index] == 1 {
+            if let Some(cycle_start) = stack.iter().position(|&item| item == index) {
+                for &cycle_index in &stack[cycle_start..] {
+                    invalid[cycle_index] = true;
+                }
+            }
+            return Mat4::IDENTITY;
+        }
+
+        states[index] = 1;
+        stack.push(index);
+        let parent = parents.get(index).copied().unwrap_or(-1);
+        let resolved = if parent == -1 {
+            local[index]
+        } else if let Ok(parent_index) = usize::try_from(parent)
+            && parent_index < local.len()
+        {
+            resolve(parent_index, local, parents, states, invalid, world, stack) * local[index]
+        } else {
+            invalid[index] = true;
+            Mat4::IDENTITY
+        };
+        stack.pop();
+
+        world[index] = if invalid[index]
+            || resolved
+                .to_cols_array()
+                .iter()
+                .any(|value| !value.is_finite())
+        {
+            Mat4::IDENTITY
+        } else {
+            resolved
+        };
+        states[index] = 2;
+        world[index]
+    }
+
+    let mut states = vec![0; local.len()];
+    let mut invalid = vec![false; local.len()];
+    let mut world = vec![Mat4::IDENTITY; local.len()];
+    let mut stack = Vec::new();
+    for index in 0..local.len() {
+        resolve(
+            index,
+            local,
+            parents,
+            &mut states,
+            &mut invalid,
+            &mut world,
+            &mut stack,
+        );
+    }
+    world
+}
+
+fn find_transform_id(children: &[SerzNode]) -> Option<usize> {
+    direct_text(
+        children,
+        &["transformid", "primarytransformid", "childtransformid"],
+    )
+    .and_then(|value| value.trim().parse::<i64>().ok())
+    .filter(|&value| value >= 0)
+    .and_then(|value| usize::try_from(value).ok())
 }
 
 fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
@@ -1387,6 +1556,44 @@ fn vertex_element_size(type_name: &str) -> Option<usize> {
 }
 
 fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, MaterialBinding> {
+    fn collect_delta_strings(node: &SerzNode, output: &mut Vec<String>) {
+        match node {
+            SerzNode::Property {
+                name,
+                type_name,
+                value,
+                ..
+            } if type_name.eq_ignore_ascii_case("cDeltaString")
+                && !["shadername", "effectname"]
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            {
+                output.push(value.trim().to_owned());
+            }
+            SerzNode::Array {
+                name,
+                type_name,
+                values,
+            } if type_name.eq_ignore_ascii_case("cDeltaString")
+                && !["shadername", "effectname"]
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            {
+                output.extend(values.iter().map(|value| value.trim().to_owned()));
+            }
+            SerzNode::Element { name, children, .. }
+                if !["shadername", "effectname"]
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            {
+                for child in children {
+                    collect_delta_strings(child, output);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn collect(
         node: &SerzNode,
         textures: &[String],
@@ -1399,10 +1606,22 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
         else {
             return;
         };
-        if name.eq_ignore_ascii_case("cHcEffectMaterialDx") {
+        if name.eq_ignore_ascii_case("cHcEffectMaterialDx")
+            || name.eq_ignore_ascii_case("cHcExplicitStateMaterial")
+        {
             let material_index = *next_index;
             *next_index = (*next_index).saturating_add(1);
-            let texture_index = collect_text_values(children, &["texturebyname"])
+            let mut texture_references = collect_text_values(children, &["texturebyname"]);
+            let mut delta_strings = Vec::new();
+            for child in children {
+                collect_delta_strings(child, &mut delta_strings);
+            }
+            texture_references.extend(delta_strings.into_iter().filter(|value| {
+                value.contains('\\')
+                    || value.contains('/')
+                    || value.to_ascii_lowercase().contains(".tgpcdx")
+            }));
+            let texture_index = texture_references
                 .iter()
                 .filter_map(|reference| {
                     let reference = crate::auditor::normalize_texture_reference(reference);
@@ -1416,7 +1635,8 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
                 .unwrap_or(0) as u32;
             let shader_name =
                 find_text(children, &["shadername", "effectname"]).unwrap_or_default();
-            let texture_is_shadow = collect_text_values(children, &["texturebyname"])
+            let material_name = find_text(children, &["name", "materialname"]).unwrap_or_default();
+            let texture_is_shadow = texture_references
                 .iter()
                 .any(|texture| texture.to_ascii_lowercase().contains("shadow"));
             let subtract_alpha = find_text(children, &["framealphamode"])
@@ -1428,10 +1648,7 @@ fn find_material_bindings(node: &SerzNode, textures: &[String]) -> HashMap<u32, 
                     texture_index,
                     render_mode: classify_shader(shader_name),
                     excluded: is_helper_name(shader_name)
-                        || is_helper_name(
-                            direct_text(children, &["name", "materialname"])
-                                .unwrap_or_default(),
-                        )
+                        || is_helper_name(material_name)
                         || texture_is_shadow
                         || subtract_alpha,
                 },
@@ -1470,6 +1687,8 @@ fn find_submeshes(
     inherited_material: Option<u32>,
     material_bindings: &HashMap<u32, MaterialBinding>,
     parent_transform: Mat4,
+    world_transforms: &[Mat4],
+    inherited_transform_id: Option<usize>,
     inherited_lod: Option<u32>,
     inherited_excluded: bool,
     output: &mut Vec<RawSubmesh>,
@@ -1502,11 +1721,8 @@ fn find_submeshes(
         || material_reference
             .and_then(|reference| material_bindings.get(&reference))
             .is_some_and(|binding| binding.excluded);
-    let local_transform = if is_skeleton_node(name) || is_skeleton_node(node_label) {
-        Mat4::IDENTITY
-    } else {
-        find_local_transform(children)
-    };
+    let active_transform_id = find_transform_id(children).or(inherited_transform_id);
+    let local_transform = find_local_transform(children);
     let transform = parent_transform * local_transform;
     if clean_name.contains("primlist")
         || clean_name.contains("primitivelist")
@@ -1514,12 +1730,12 @@ fn find_submeshes(
         || clean_name.contains("primitive set desc")
         || clean_name.contains("primitivesetdescdx")
     {
-        let is_primitive_set = clean_name.contains("primitivesetdescdx");
         let first = find_number(
             children,
             &["firstindex", "startindex", "indexstart", "indexarraystart"],
         );
         let topology = find_primitive_topology(node);
+        let is_primitive_set = clean_name.contains("primitivesetdescdx");
         let count = find_number(children, &["indexcount", "numindices"]).or_else(|| {
             find_number(children, &["primcount", "numprimitives"]).and_then(|value| {
                 if is_primitive_set {
@@ -1564,26 +1780,34 @@ fn find_submeshes(
                 index_buffer_index,
                 base_vertex,
                 topology,
-                transform,
+                transform: active_transform_id
+                    .map(|id| world_transforms.get(id).copied().unwrap_or(Mat4::IDENTITY))
+                    .unwrap_or(transform),
                 excluded,
             });
         }
     }
+    let is_lod_container =
+        clean_name.contains("lodlist") || clean_name.contains("chcsgnodelodselector");
     let mut next_lod = 0;
     for child in children {
-        let child_lod =
-            if clean_name.contains("lodlist") && matches!(child, SerzNode::Element { .. }) {
-                let level = next_lod;
-                next_lod += 1;
-                Some(level)
-            } else {
-                None
-            };
+        let child_lod = if is_lod_container && matches!(child, SerzNode::Element { .. }) {
+            let level = next_lod;
+            next_lod += 1;
+            if level > 0 {
+                continue;
+            }
+            Some(level)
+        } else {
+            None
+        };
         find_submeshes(
             child,
             material_reference,
             material_bindings,
             transform,
+            world_transforms,
+            active_transform_id,
             child_lod.or(lod),
             excluded,
             output,
@@ -1700,13 +1924,6 @@ fn texture_priority(reference: &str) -> u8 {
     } else {
         1
     }
-}
-
-fn is_skeleton_node(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    ["bone", "skeleton", "joint"]
-        .iter()
-        .any(|marker| lower.contains(marker))
 }
 
 fn classify_shader(shader_name: &str) -> GeoRenderMode {
@@ -2118,10 +2335,11 @@ pub(crate) fn log_parse_diagnostics(path: &Path, diagnostics: &GeoParseDiagnosti
         diagnostics.batch_ranges.join("; ")
     };
     let message = format!(
-        "[GeoPcDx] {}: vertex_stride={} vertex_count={} vertex_layout=[{}] index_type={} raw_index_count={} index_layout=[{}] primitive_type={} batches=[{}]",
+        "[GeoPcDx] {}: vertex_stride={} vertex_count={} local_transforms={} vertex_layout=[{}] index_type={} raw_index_count={} index_layout=[{}] primitive_type={} batches=[{}]",
         path.display(),
         diagnostics.vertex_stride,
         diagnostics.vertex_count,
+        diagnostics.local_transform_count,
         diagnostics.vertex_layout,
         diagnostics.index_element_type,
         diagnostics.raw_index_count,
@@ -2622,6 +2840,127 @@ mod tests {
     }
 
     #[test]
+    fn primitive_set_counts_follow_triangle_topology() {
+        let batches = r#"
+            <cHcPrimitiveSetDescDx>
+                <NumPrimitives d:type="sUInt32">3</NumPrimitives>
+                <PrimitiveType d:type="cDeltaString">eTriangleList</PrimitiveType>
+                <IndexArrayStart d:type="sUInt32">0</IndexArrayStart>
+            </cHcPrimitiveSetDescDx>
+            <cHcPrimitiveSetDescDx>
+                <NumPrimitives d:type="sUInt32">4</NumPrimitives>
+                <PrimitiveType d:type="cDeltaString">eTriangleStrip</PrimitiveType>
+                <IndexArrayStart d:type="sUInt32">3</IndexArrayStart>
+            </cHcPrimitiveSetDescDx>
+        "#;
+        let source = xml(
+            &triangle_vertices(4),
+            &[0, 0, 1, 0, 2, 0, 0, 0, 1, 0, 2, 0, 3, 0],
+            32,
+        )
+        .replace("</Root>", &format!("{batches}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.indices, [0, 1, 2, 0, 1, 2, 2, 1, 3]);
+        assert!(model.diagnostics.batch_ranges[0].contains("start=0 count=3"));
+        assert!(model.diagnostics.batch_ranges[1].contains("start=3 count=4"));
+    }
+
+    #[test]
+    fn reads_float_matrices_and_integer_dependencies_from_blobs() {
+        let matrix_values = [
+            1.0_f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 3.0, 4.0, 0.0, 1.0,
+        ];
+        let matrix_bytes = matrix_values
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        let dependency_bytes = [-1_i32, 0].into_iter().flat_map(i32::to_le_bytes).collect();
+        let root = SerzNode::Element {
+            name: "Root".into(),
+            id: 0,
+            version: 0,
+            children: vec![
+                SerzNode::Element {
+                    name: "SourceLToPTransform".into(),
+                    id: 0,
+                    version: 0,
+                    children: vec![SerzNode::Blob { data: matrix_bytes }],
+                },
+                SerzNode::Element {
+                    name: "TransformDependency".into(),
+                    id: 0,
+                    version: 0,
+                    children: vec![SerzNode::Blob {
+                        data: dependency_bytes,
+                    }],
+                },
+            ],
+        };
+        let transforms = find_named_values(&root, "SourceLToPTransform")
+            .unwrap()
+            .into_iter()
+            .flat_map(collect_float_values)
+            .collect::<Vec<_>>();
+        let dependencies = find_named_values(&root, "TransformDependency")
+            .unwrap()
+            .into_iter()
+            .flat_map(collect_i32_values)
+            .collect::<Vec<_>>();
+
+        assert_eq!(transforms.len(), 16);
+        assert_eq!(
+            matrix_from_values(&transforms).unwrap().w_axis.truncate(),
+            Vec3::new(3.0, 4.0, 0.0)
+        );
+        assert_eq!(dependencies, [-1, 0]);
+    }
+
+    #[test]
+    fn applies_root_transform_dependency_hierarchy_to_scenegraph_batches() {
+        let transforms = r#"
+            <SourceLToPTransform d:type="sFloat32">
+                1 0 0 0 0 1 0 0 0 0 1 0 3 0 0 1
+                1 0 0 0 0 1 0 0 0 0 1 0 0 4 0 1
+            </SourceLToPTransform>
+            <TransformDependency d:type="sInt32">-1 0</TransformDependency>
+            <cHcTransformNode>
+                <Transform d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 100 0 0 1</Transform>
+                <cHcGeometryNodeSameState>
+                    <PrimaryTransformID d:type="sInt32">1</PrimaryTransformID>
+                    <cHcPrimitiveList>
+                        <StartIndex d:type="sUInt32">0</StartIndex>
+                        <IndexCount d:type="sUInt32">3</IndexCount>
+                    </cHcPrimitiveList>
+                </cHcGeometryNodeSameState>
+            </cHcTransformNode>
+        "#;
+        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
+            .replace("</Root>", &format!("{transforms}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.diagnostics.local_transform_count, 2);
+        assert_eq!(
+            model.vertices[model.indices[0] as usize].position,
+            [3.0, 4.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn invalid_transform_dependencies_fall_back_to_identity() {
+        let local = [
+            Mat4::from_translation(Vec3::X),
+            Mat4::from_translation(Vec3::Y),
+            Mat4::from_translation(Vec3::Z),
+        ];
+        let cyclic = compute_world_transforms(&local[..2], &[1, 0]);
+        assert_eq!(cyclic, [Mat4::IDENTITY, Mat4::IDENTITY]);
+
+        let invalid_parent = compute_world_transforms(&local[2..], &[9]);
+        assert_eq!(invalid_parent, [Mat4::IDENTITY]);
+    }
+
+    #[test]
     fn keeps_only_lod_zero_and_excludes_helper_batches() {
         let batches = r#"
             <LOD0><cHcPrimitiveList>
@@ -2655,6 +2994,32 @@ mod tests {
     }
 
     #[test]
+    fn traverses_only_the_first_lod_selector_child() {
+        let selector = r#"
+            <cHcSGNodeLODSelector>
+                <Child>
+                    <LOD0><cHcPrimitiveList>
+                        <StartIndex d:type="sUInt32">0</StartIndex>
+                        <IndexCount d:type="sUInt32">3</IndexCount>
+                    </cHcPrimitiveList></LOD0>
+                </Child>
+                <Child>
+                    <LOD0><cHcPrimitiveList>
+                        <StartIndex d:type="sUInt32">0</StartIndex>
+                        <IndexCount d:type="sUInt32">3</IndexCount>
+                    </cHcPrimitiveList></LOD0>
+                </Child>
+            </cHcSGNodeLODSelector>
+        "#;
+        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
+            .replace("</Root>", &format!("{selector}</Root>"));
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.submeshes.len(), 1);
+        assert_eq!(model.indices, [0, 1, 2]);
+    }
+
+    #[test]
     fn applies_parent_transform_to_batch_vertices() {
         let transform = r#"
             <cHcTransformNode>
@@ -2678,7 +3043,7 @@ mod tests {
         let model = GeoModel::parse(source.as_bytes()).unwrap();
         assert_eq!(
             model.vertices[model.indices[0] as usize].position,
-            [0.0, 0.0, 0.0]
+            [3.0, -2.0, 4.0]
         );
 
         let matrix = matrix_from_values(&[
@@ -2755,16 +3120,19 @@ mod tests {
     fn excludes_subtractive_and_shadow_materials_and_prefers_diffuse_textures() {
         let xml = r#"
             <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
-                <cHcEffectMaterialDx d:id="7">
+                <cHcExplicitStateMaterial d:id="7">
                     <TextureByName d:type="cDeltaString">Textures\body_nm.TgPcDx</TextureByName>
                     <TextureByName d:type="cDeltaString">Textures\body_diffuse.TgPcDx</TextureByName>
-                </cHcEffectMaterialDx>
-                <cHcEffectMaterialDx d:id="8">
+                </cHcExplicitStateMaterial>
+                <cHcExplicitStateMaterial d:id="8">
                     <FrameAlphaMode d:type="cDeltaString">ALPHA_MODE_SUBTRACT</FrameAlphaMode>
-                </cHcEffectMaterialDx>
-                <cHcEffectMaterialDx d:id="9">
+                    <ShaderName d:type="cDeltaString">Lit3DirSingle</ShaderName>
+                    <TextureByName d:type="cDeltaString">Textures\shadow_mask.TgPcDx</TextureByName>
+                </cHcExplicitStateMaterial>
+                <cHcExplicitStateMaterial d:id="9">
+                    <Name d:type="cDeltaString">ShadowMaterial</Name>
                     <TextureByName d:type="cDeltaString">Textures\shadow.TgPcDx</TextureByName>
-                </cHcEffectMaterialDx>
+                </cHcExplicitStateMaterial>
             </Root>
         "#;
         let root = SerzNode::from_xml_str(xml).unwrap().0;
