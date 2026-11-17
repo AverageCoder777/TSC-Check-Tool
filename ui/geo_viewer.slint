@@ -14,6 +14,8 @@ export component GeoViewerWindow inherits Window {
     in-out property <string> texture-status: "";
     in-out property <bool> textures-expanded: false;
     in-out property <bool> wireframe: false;
+    in-out property <bool> sibling-parts-available: false;
+    in-out property <bool> side-by-side: false;
     in-out property <float> yaw: 0.7;
     in-out property <float> pitch: 0.25;
     in-out property <float> distance: 4.0;
@@ -21,7 +23,7 @@ export component GeoViewerWindow inherits Window {
     in-out property <float> pan-x: 0.0;
     in-out property <float> pan-y: 0.0;
 
-    callback camera-changed(float, float, float, float, float, float, float, bool);
+    callback camera-changed(float, float, float, float, float, float, float, bool, bool);
     VerticalBox {
         spacing: 6px;
         padding: 8px;
@@ -32,7 +34,15 @@ export component GeoViewerWindow inherits Window {
                 text: root.wireframe ? "Solid" : "Wireframe";
                 clicked => {
                     root.wireframe = !root.wireframe;
-                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe);
+                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe, root.side-by-side);
+                }
+            }
+            Button {
+                text: root.side-by-side ? "Assembly / Bogies: Side-by-side" : "Assembly / Bogies: Assembled";
+                enabled: root.sibling-parts-available;
+                clicked => {
+                    root.side-by-side = !root.side-by-side;
+                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe, root.side-by-side);
                 }
             }
             Button {
@@ -43,7 +53,7 @@ export component GeoViewerWindow inherits Window {
                     root.distance = root.initial-distance;
                     root.pan-x = 0.0;
                     root.pan-y = 0.0;
-                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe);
+                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe, root.side-by-side);
                 }
             }
         }
@@ -87,7 +97,7 @@ export component GeoViewerWindow inherits Window {
                         }
                         last-x = self.mouse-x / 1px;
                         last-y = self.mouse-y / 1px;
-                        root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
+                        root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe, root.side-by-side);
                     }
                 }
                 scroll-event(event) => {
@@ -96,7 +106,7 @@ export component GeoViewerWindow inherits Window {
                     } else if (event.delta-y < 0) {
                         root.distance = Math.min(500.0, root.distance * 1.12);
                     }
-                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
+                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe, root.side-by-side);
                     accept
                 }
             }

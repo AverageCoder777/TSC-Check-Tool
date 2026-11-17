@@ -1,4 +1,4 @@
-use crate::geo::{GeoModel, GeoVertex};
+use crate::geo::{GeoAssembly, GeoModel, GeoVertex};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slint::ComponentHandle;
@@ -18,6 +18,7 @@ pub(crate) struct Camera {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) wireframe: bool,
+    pub(crate) side_by_side: bool,
 }
 
 impl Default for Camera {
@@ -31,6 +32,7 @@ impl Default for Camera {
             width: 900,
             height: 560,
             wireframe: false,
+            side_by_side: false,
         }
     }
 }
@@ -69,47 +71,43 @@ impl Texture {
 }
 
 struct LoadedModel {
+    assembly: GeoAssembly,
     model: GeoModel,
+    texture_sources: Vec<(PathBuf, String)>,
     texture: Arc<Texture>,
     textures: Vec<Arc<Texture>>,
     texture_status: String,
     center: Vec3,
     radius: f32,
+    side_by_side: bool,
+    texture_catalog: HashMap<(PathBuf, String), (String, Result<Arc<Texture>, String>)>,
 }
 
 impl LoadedModel {
     fn load(path: &Path) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        let model = GeoModel::parse(&bytes)?;
-        crate::geo::log_parse_diagnostics(path, &model.diagnostics);
-        let mut min = Vec3::splat(f32::INFINITY);
-        let mut max = Vec3::splat(f32::NEG_INFINITY);
-        for &index in &model.indices {
-            let vertex = &model.vertices[index as usize];
-            let position = Vec3::from_array(vertex.position);
-            min = min.min(position);
-            max = max.max(position);
+        let assembly = GeoAssembly::load(path)?;
+        let side_by_side = !assembly.has_blueprint_attachments;
+        let (model, texture_sources) = assembly.compose(side_by_side)?;
+        let mut texture_references = HashMap::new();
+        for part in &assembly.parts {
+            for name in &part.model.textures {
+                texture_references.insert((part.path.clone(), name.clone()), ());
+            }
         }
-        let center = (min + max) * 0.5;
-        let radius = ((max - min) * 0.5).length().max(0.01);
-        let fallback = Arc::new(Texture::fallback());
-        let mut texture = fallback.clone();
-        let mut textures = Vec::new();
-        let mut statuses = Vec::new();
-        let resolved = model
-            .textures
+        let texture_references = texture_references.into_keys().collect::<Vec<_>>();
+        let resolved = texture_references
             .par_iter()
-            .map(|name| crate::geo::resolve_texture_data(path, name))
+            .map(|(geo_path, name)| crate::geo::resolve_texture_data(geo_path, name))
             .collect::<Vec<_>>();
         let mut unique_resolved = HashMap::<PathBuf, (String, Vec<u8>)>::new();
-        let texture_paths = resolved
-            .into_iter()
-            .map(|resolved| {
-                resolved.map(|(resolved_path, bytes)| {
-                    let key = PathBuf::from(&resolved_path);
+        let resolved_paths = resolved
+            .iter()
+            .map(|entry| {
+                entry.as_ref().map(|(resolved_path, bytes)| {
+                    let key = PathBuf::from(resolved_path);
                     unique_resolved
                         .entry(key.clone())
-                        .or_insert((resolved_path, bytes));
+                        .or_insert_with(|| (resolved_path.clone(), bytes.clone()));
                     key
                 })
             })
@@ -117,7 +115,7 @@ impl LoadedModel {
         let decoded = unique_resolved
             .into_par_iter()
             .map(|(key, (resolved_path, bytes))| {
-                let texture = crate::texture::decode_tgpcdx_for_viewer(&bytes).map(
+                let result = crate::texture::decode_tgpcdx_for_viewer(&bytes).map(
                     |(width, height, pixels)| {
                         Arc::new(Texture {
                             width,
@@ -126,16 +124,75 @@ impl LoadedModel {
                         })
                     },
                 );
-                (key, (resolved_path, texture))
+                (key, (resolved_path, result))
             })
             .collect::<HashMap<_, _>>();
-        for (index, name) in model.textures.iter().enumerate() {
-            let resolved_texture = if let Some(key) = &texture_paths[index] {
-                let (resolved_path, decoded) = &decoded[key];
+        let texture_catalog = texture_references
+            .into_iter()
+            .zip(resolved_paths)
+            .filter_map(|(reference, resolved_path)| {
+                let path_key = resolved_path?;
+                let (display_path, result) = decoded.get(&path_key)?;
+                Some((
+                    reference,
+                    (display_path.clone(), result.clone()),
+                ))
+            })
+            .collect();
+        let mut loaded = Self {
+            assembly,
+            model,
+            texture_sources,
+            texture: Arc::new(Texture::fallback()),
+            textures: Vec::new(),
+            texture_status: String::new(),
+            center: Vec3::ZERO,
+            radius: 0.01,
+            side_by_side,
+            texture_catalog,
+        };
+        loaded.update_bounds();
+        loaded.update_textures();
+        Ok(loaded)
+    }
+
+    fn set_layout(&mut self, side_by_side: bool) -> Result<(), String> {
+        let (model, texture_sources) = self.assembly.compose(side_by_side)?;
+        self.model = model;
+        self.texture_sources = texture_sources;
+        self.side_by_side = side_by_side;
+        self.update_bounds();
+        self.update_textures();
+        Ok(())
+    }
+
+    fn update_bounds(&mut self) {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for &index in &self.model.indices {
+            let position = Vec3::from_array(self.model.vertices[index as usize].position);
+            min = min.min(position);
+            max = max.max(position);
+        }
+        if min.is_finite() && max.is_finite() {
+            self.center = (min + max) * 0.5;
+            self.radius = ((max - min) * 0.5).length().max(0.01);
+        }
+    }
+
+    fn update_textures(&mut self) {
+        let fallback = Arc::new(Texture::fallback());
+        let mut textures = Vec::new();
+        let mut statuses = Vec::new();
+        for (index, name) in self.model.textures.iter().enumerate() {
+            let source = &self.texture_sources[index];
+            let resolved_texture = if let Some((resolved_path, decoded)) =
+                self.texture_catalog.get(source)
+            {
                 match decoded {
-                    Ok(resolved_texture) => {
+                    Ok(texture) => {
                         statuses.push(format!("Loaded: {name} ({resolved_path})"));
-                        resolved_texture.clone()
+                        Arc::clone(texture)
                     }
                     Err(error) => {
                         statuses.push(format!("Missing / invalid: {name} ({error})"));
@@ -146,32 +203,25 @@ impl LoadedModel {
                 statuses.push(format!("Missing: {name}"));
                 fallback.clone()
             };
-            if textures.is_empty() {
-                texture = resolved_texture.clone();
-            }
             textures.push(resolved_texture);
         }
         if statuses.is_empty() {
             statuses.push("No texture references found".into());
-            textures.push(fallback);
+            textures.push(fallback.clone());
         }
-        Ok(Self {
-            model,
-            texture,
-            textures,
-            texture_status: statuses.join("    •    "),
-            center,
-            radius,
-        })
+        self.texture = textures.first().cloned().unwrap_or(fallback);
+        self.textures = textures;
+        self.texture_status = statuses.join("    •    ");
     }
 
     fn stats(&self) -> String {
         format!(
-            "{} vertices  •  {} triangles  •  {} draw batches  •  {} textures",
+            "{} vertices  •  {} triangles  •  {} draw batches  •  {} textures  •  {} assembly parts",
             self.model.vertices.len(),
             self.model.indices.len() / 3,
             self.model.submeshes.len(),
-            self.model.textures.len()
+            self.model.textures.len(),
+            self.assembly.parts.len().saturating_sub(1)
         )
     }
 }
@@ -198,7 +248,7 @@ pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
 
 fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<Camera>) {
     window.on_camera_changed(
-        move |yaw, pitch, distance, pan_x, pan_y, width, height, wireframe| {
+        move |yaw, pitch, distance, pan_x, pan_y, width, height, wireframe, side_by_side| {
             let _ = sender.send(Camera {
                 yaw,
                 pitch,
@@ -208,6 +258,7 @@ fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<Camera>) {
                 width: width.max(1.0) as u32,
                 height: height.max(1.0) as u32,
                 wireframe,
+                side_by_side,
             });
         },
     );
@@ -218,7 +269,7 @@ fn render_worker(
     window: slint::Weak<crate::GeoViewerWindow>,
     receiver: Receiver<Camera>,
 ) {
-    let loaded = match LoadedModel::load(&path) {
+    let mut loaded = match LoadedModel::load(&path) {
         Ok(model) => model,
         Err(error) => {
             let _ = slint::invoke_from_event_loop(move || {
@@ -232,19 +283,9 @@ fn render_worker(
     let stats = loaded.stats();
     let texture_status = loaded.texture_status.clone();
     let initial_distance = loaded.radius * 2.8;
-    let (mut gpu, renderer_status) = match crate::gpu_renderer::GpuRenderer::new(
-        &loaded.model.vertices,
-        &loaded.model.indices,
-        &loaded.model.submeshes,
-        loaded.center,
-        &loaded.textures,
-    ) {
-        Ok(renderer) => (Some(renderer), String::new()),
-        Err(error) => (
-            None,
-            format!("GPU unavailable; using CPU fallback: {error}"),
-        ),
-    };
+    let (mut gpu, renderer_status) = create_gpu_renderer(&loaded);
+    let sibling_parts_available = loaded.assembly.parts.len() > 1;
+    let side_by_side = loaded.side_by_side;
     let initial_window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(window) = initial_window.upgrade() {
@@ -253,11 +294,14 @@ fn render_worker(
             window.set_texture_status(texture_status.into());
             window.set_initial_distance(initial_distance);
             window.set_distance(initial_distance);
+            window.set_sibling_parts_available(sibling_parts_available);
+            window.set_side_by_side(side_by_side);
         }
     });
 
     let mut camera = Camera {
         distance: initial_distance,
+        side_by_side,
         ..Camera::default()
     };
     let frame = render_frame(&loaded, gpu.as_mut(), camera);
@@ -292,6 +336,46 @@ fn render_worker(
         while let Ok(next) = receiver.try_recv() {
             camera = next;
         }
+        if camera.side_by_side != loaded.side_by_side {
+            match loaded.set_layout(camera.side_by_side) {
+                Ok(()) => {
+                    let initial_distance = loaded.radius * 2.8;
+                    camera.distance = initial_distance;
+                    camera.pan_x = 0.0;
+                    camera.pan_y = 0.0;
+                    let (new_gpu, status) = create_gpu_renderer(&loaded);
+                    gpu = new_gpu;
+                    let stats = loaded.stats();
+                    let texture_status = loaded.texture_status.clone();
+                    let side_by_side = loaded.side_by_side;
+                    let weak = window.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(window) = weak.upgrade() {
+                            window.set_status_text(status.into());
+                            window.set_stats_text(stats.into());
+                            window.set_texture_status(texture_status.into());
+                            window.set_initial_distance(initial_distance);
+                            window.set_distance(initial_distance);
+                            window.set_side_by_side(side_by_side);
+                        }
+                    });
+                }
+                Err(error) => {
+                    crate::geo::log_assembly_warning(
+                        &path,
+                        &format!("Unable to switch assembly layout: {error}"),
+                    );
+                    camera.side_by_side = loaded.side_by_side;
+                    let side_by_side = loaded.side_by_side;
+                    let weak = window.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(window) = weak.upgrade() {
+                            window.set_side_by_side(side_by_side);
+                        }
+                    });
+                }
+            }
+        }
         let (width, height, pixels) = match render_frame(&loaded, gpu.as_mut(), camera) {
             Ok(frame) => frame,
             Err(error) => {
@@ -315,6 +399,24 @@ fn render_worker(
                 window.set_frame(slint::Image::from_rgba8(buffer));
             }
         });
+    }
+}
+
+fn create_gpu_renderer(
+    loaded: &LoadedModel,
+) -> (Option<crate::gpu_renderer::GpuRenderer>, String) {
+    match crate::gpu_renderer::GpuRenderer::new(
+        &loaded.model.vertices,
+        &loaded.model.indices,
+        &loaded.model.submeshes,
+        loaded.center,
+        &loaded.textures,
+    ) {
+        Ok(renderer) => (Some(renderer), String::new()),
+        Err(error) => (
+            None,
+            format!("GPU unavailable; using CPU fallback: {error}"),
+        ),
     }
 }
 
