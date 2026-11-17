@@ -658,7 +658,7 @@ where
             .collect();
         // Пары, которые всегда загружены симулятором и не требуют объявления
         // в RouteProperties.xml.
-        const SKIPPED_PROVIDER_PRODUCT: &[( &str, &str)] = &[("kuju", "railsimulatorcore")];
+        const SKIPPED_PROVIDER_PRODUCT: &[(&str, &str)] = &[("kuju", "railsimulatorcore")];
         let mut used_pairs: HashSet<(String, String)> = HashSet::new();
         for relative_asset in asset_uses.keys() {
             let parts: Vec<&str> = relative_asset.split('/').collect();

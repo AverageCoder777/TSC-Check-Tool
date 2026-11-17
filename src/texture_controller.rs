@@ -101,10 +101,14 @@ impl TextureController {
                             v.set_pan_y(0.0);
                             v.set_show_alpha(false);
                             v.set_info_text(info.into());
-                            if let Ok(i) = crate::texture::inspect_tgpcdx_with_path(&data, Some(&path)) {
+                            if let Ok(i) =
+                                crate::texture::inspect_tgpcdx_with_path(&data, Some(&path))
+                            {
                                 v.set_texture_name(i.name.into());
                             }
-                            let enabled = !std::fs::metadata(&path).map(|m| m.permissions().readonly()).unwrap_or(false);
+                            let enabled = !std::fs::metadata(&path)
+                                .map(|m| m.permissions().readonly())
+                                .unwrap_or(false);
                             v.set_texture_name_enabled(enabled);
                             let _ = v.show();
                         }
@@ -121,7 +125,9 @@ impl TextureController {
         let viewer_weak_toggle = self.weak.clone();
         let tex_state_for_toggle = self.tex_state.clone();
         self.window.on_toggle_alpha(move || {
-            let Some(v) = viewer_weak_toggle.upgrade() else { return };
+            let Some(v) = viewer_weak_toggle.upgrade() else {
+                return;
+            };
             let show_alpha = !v.get_show_alpha();
             v.set_show_alpha(show_alpha);
 
@@ -158,7 +164,12 @@ impl TextureController {
                 .and_then(|g| g.as_ref().map(|(_, _, _, p)| p.clone()));
             let Some(path) = path else {
                 let msg = "Нет загруженной текстуры для экспорта".to_string();
-                notify(&viewer_weak_export, &ui_weak_export, &msg, crate::app::LogLevel::Warning);
+                notify(
+                    &viewer_weak_export,
+                    &ui_weak_export,
+                    &msg,
+                    crate::app::LogLevel::Warning,
+                );
                 return;
             };
             let stem = path

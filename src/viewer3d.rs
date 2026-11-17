@@ -133,10 +133,7 @@ impl LoadedModel {
             .filter_map(|(reference, resolved_path)| {
                 let path_key = resolved_path?;
                 let (display_path, result) = decoded.get(&path_key)?;
-                Some((
-                    reference,
-                    (display_path.clone(), result.clone()),
-                ))
+                Some((reference, (display_path.clone(), result.clone())))
             })
             .collect();
         let mut loaded = Self {
@@ -186,23 +183,22 @@ impl LoadedModel {
         let mut statuses = Vec::new();
         for (index, name) in self.model.textures.iter().enumerate() {
             let source = &self.texture_sources[index];
-            let resolved_texture = if let Some((resolved_path, decoded)) =
-                self.texture_catalog.get(source)
-            {
-                match decoded {
-                    Ok(texture) => {
-                        statuses.push(format!("Loaded: {name} ({resolved_path})"));
-                        Arc::clone(texture)
+            let resolved_texture =
+                if let Some((resolved_path, decoded)) = self.texture_catalog.get(source) {
+                    match decoded {
+                        Ok(texture) => {
+                            statuses.push(format!("Loaded: {name} ({resolved_path})"));
+                            Arc::clone(texture)
+                        }
+                        Err(error) => {
+                            statuses.push(format!("Missing / invalid: {name} ({error})"));
+                            fallback.clone()
+                        }
                     }
-                    Err(error) => {
-                        statuses.push(format!("Missing / invalid: {name} ({error})"));
-                        fallback.clone()
-                    }
-                }
-            } else {
-                statuses.push(format!("Missing: {name}"));
-                fallback.clone()
-            };
+                } else {
+                    statuses.push(format!("Missing: {name}"));
+                    fallback.clone()
+                };
             textures.push(resolved_texture);
         }
         if statuses.is_empty() {
@@ -402,9 +398,7 @@ fn render_worker(
     }
 }
 
-fn create_gpu_renderer(
-    loaded: &LoadedModel,
-) -> (Option<crate::gpu_renderer::GpuRenderer>, String) {
+fn create_gpu_renderer(loaded: &LoadedModel) -> (Option<crate::gpu_renderer::GpuRenderer>, String) {
     match crate::gpu_renderer::GpuRenderer::new(
         &loaded.model.vertices,
         &loaded.model.indices,

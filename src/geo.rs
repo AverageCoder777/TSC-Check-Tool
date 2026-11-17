@@ -1961,6 +1961,11 @@ fn find_submeshes(
     let clean_name = name.replace("::", "-").to_ascii_lowercase();
     let node_label =
         direct_text(children, &["name", "nodename", "transformname"], ids).unwrap_or_default();
+    let has_lower_lod_name = lod_name_is_nonzero(name)
+        || ["name", "nodename", "transformname"]
+            .iter()
+            .filter_map(|field| direct_text(children, &[*field], ids))
+            .any(lod_name_is_nonzero);
     let lod = lod_from_name(name)
         .or_else(|| lod_from_name(node_label))
         .or_else(|| {
@@ -1978,12 +1983,20 @@ fn find_submeshes(
     };
     let excluded = inherited_excluded
         || lod.is_some_and(|level| level > 0)
+        || has_lower_lod_name
         || is_helper_name(name)
         || is_helper_name(node_label)
         || material_reference
             .and_then(|reference| material_bindings.get(&reference))
             .is_some_and(|binding| binding.excluded);
-    let child_transform_id = find_transform_id(children, ids);
+    let child_transform_id = if clean_name.contains("chcsgnodezsorter")
+        && !direct_text(children, &["singlechildtransform"], ids)
+            .is_some_and(|value| value.trim() == "1" || value.trim().eq_ignore_ascii_case("true"))
+    {
+        None
+    } else {
+        find_transform_id(children, ids)
+    };
     let primary_transform_is_default =
         direct_text(children, &["primarytransformid"], ids)
             .and_then(|value| value.trim().parse::<i64>().ok())
@@ -2148,11 +2161,36 @@ fn direct_text<'a>(
 fn lod_from_name(name: &str) -> Option<u32> {
     let lower = name.to_ascii_lowercase();
     let start = lower.find("lod")? + 3;
-    let digits = lower[start..].trim_start_matches(|character: char| !character.is_ascii_digit());
+    let digits = lower[start..].trim_start_matches(|character: char| {
+        character == '_' || character == '-' || character.is_ascii_whitespace()
+    });
     let end = digits
         .find(|character: char| !character.is_ascii_digit())
         .unwrap_or(digits.len());
     (end > 0).then(|| digits[..end].parse().ok()).flatten()
+}
+
+fn lod_name_is_nonzero(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let mut remaining = lower.as_str();
+    while let Some(index) = remaining.find("lod") {
+        let after_lod = &remaining[index + 3..];
+        let digits = after_lod.trim_start_matches(|character: char| {
+            character == '_' || character == '-' || character.is_ascii_whitespace()
+        });
+        let digit_end = digits
+            .find(|character: char| !character.is_ascii_digit())
+            .unwrap_or(digits.len());
+        if digit_end > 0
+            && digits[..digit_end]
+                .parse::<u32>()
+                .is_ok_and(|level| level > 0)
+        {
+            return true;
+        }
+        remaining = after_lod;
+    }
+    false
 }
 
 fn is_helper_name(name: &str) -> bool {
@@ -3726,10 +3764,10 @@ mod tests {
                     </cHcPrimitiveList></LOD0>
                 </Child>
                 <Child>
-                    <LOD0><cHcPrimitiveList>
+                    <LOD1><cHcPrimitiveList>
                         <StartIndex d:type="sUInt32">0</StartIndex>
                         <IndexCount d:type="sUInt32">3</IndexCount>
-                    </cHcPrimitiveList></LOD0>
+                    </cHcPrimitiveList></LOD1>
                 </Child>
             </cHcSGNodeLODSelector>
         "#;
@@ -3937,10 +3975,12 @@ mod tests {
             <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
                 <cHcSGNodeZSorter>
                     <TransformID d:type="sUInt32">0</TransformID>
+                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
                     <Child d:type="ref">7</Child>
                 </cHcSGNodeZSorter>
                 <cHcSGNodeZSorter>
                     <TransformID d:type="sUInt32">1</TransformID>
+                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
                     <Child d:type="ref">7</Child>
                 </cHcSGNodeZSorter>
             </Root>
@@ -3979,6 +4019,59 @@ mod tests {
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0].transform, transforms[0]);
         assert_eq!(batches[1].transform, transforms[1]);
+    }
+
+    #[test]
+    fn z_sorter_transform_requires_single_child_transform() {
+        let root_xml = r#"
+            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcSGNodeZSorter>
+                    <TransformID d:type="sUInt32">1</TransformID>
+                    <SingleChildTransform d:type="bool">0</SingleChildTransform>
+                    <cHcPrimitiveList>
+                        <StartIndex d:type="sUInt32">0</StartIndex>
+                        <IndexCount d:type="sUInt32">3</IndexCount>
+                    </cHcPrimitiveList>
+                </cHcSGNodeZSorter>
+                <cHcSGNodeZSorter>
+                    <TransformID d:type="sUInt32">1</TransformID>
+                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
+                    <cHcPrimitiveList>
+                        <StartIndex d:type="sUInt32">0</StartIndex>
+                        <IndexCount d:type="sUInt32">3</IndexCount>
+                    </cHcPrimitiveList>
+                </cHcSGNodeZSorter>
+            </Root>
+        "#;
+        let root = SerzNode::from_xml_str(root_xml).unwrap().0;
+        let transforms = [Mat4::IDENTITY, Mat4::from_translation(Vec3::Y)];
+        let mut batches = Vec::new();
+        find_submeshes(
+            &root,
+            None,
+            &HashMap::new(),
+            &HashMap::new(),
+            Mat4::IDENTITY,
+            &transforms,
+            None,
+            None,
+            false,
+            &mut HashSet::new(),
+            &mut batches,
+        );
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].transform, Mat4::IDENTITY);
+        assert_eq!(batches[1].transform, transforms[1]);
+    }
+
+    #[test]
+    fn excludes_lower_lod_names_and_recognizes_lod_separators() {
+        assert_eq!(lod_from_name("bogie_lod1"), Some(1));
+        assert_eq!(lod_from_name("bogie_lod_2"), Some(2));
+        assert!(lod_name_is_nonzero("bogie_lod1"));
+        assert!(lod_name_is_nonzero("bogie_lod_4"));
+        assert!(!lod_name_is_nonzero("bogie_lod0"));
     }
 
     #[test]

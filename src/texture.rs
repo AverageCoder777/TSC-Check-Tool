@@ -394,14 +394,15 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
     // Размеры blob-данных.
     let total_blob_bytes: u64 = blocks
         .iter()
-        .map(|b| extract_blob(b).map(|s| hex_decode(&s).len() as u64).unwrap_or(0))
+        .map(|b| {
+            extract_blob(b)
+                .map(|s| hex_decode(&s).len() as u64)
+                .unwrap_or(0)
+        })
         .sum();
     // Если blob-строки не распознались, используем d:size.
     let total_blob_bytes = if total_blob_bytes == 0 {
-        blocks
-            .iter()
-            .map(|b| extract_blob_size(b))
-            .sum()
+        blocks.iter().map(|b| extract_blob_size(b)).sum()
     } else {
         total_blob_bytes
     };
@@ -460,30 +461,20 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
     // Путь / файл.
     let (file_size_bytes, has_bak, bak_size_bytes, name_matches_filename) = match path {
         Some(p) => {
-            let fs_size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(data.len() as u64);
+            let fs_size = std::fs::metadata(p)
+                .map(|m| m.len())
+                .unwrap_or(data.len() as u64);
             let bak_path = PathBuf::from(format!("{}.bak", p.display()));
             let (has, bak_sz) = match std::fs::metadata(&bak_path) {
                 Ok(m) => (true, m.len()),
                 Err(_) => (false, 0u64),
             };
-            let file_stem = p
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            let internal_tail = name
-                .rsplit(['\\', '/'])
-                .next()
-                .unwrap_or(&name);
-            let matches = !file_stem.is_empty()
-                && file_stem.eq_ignore_ascii_case(internal_tail);
+            let file_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let internal_tail = name.rsplit(['\\', '/']).next().unwrap_or(&name);
+            let matches = !file_stem.is_empty() && file_stem.eq_ignore_ascii_case(internal_tail);
             (fs_size, has, bak_sz, matches)
         }
-        None => (
-            data.len() as u64,
-            false,
-            0u64,
-            false,
-        ),
+        None => (data.len() as u64, false, 0u64, false),
     };
 
     let header_bytes = file_size_bytes.saturating_sub(total_blob_bytes);
@@ -553,12 +544,12 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     let bak_path = PathBuf::from(format!("{}.bak", tgpcdx_path.display()));
     if !bak_path.exists() {
         std::fs::copy(tgpcdx_path, &bak_path).map_err(|e| {
-            format!("Не удалось создать резервную копию {}: {e}", bak_path.display())
+            format!(
+                "Не удалось создать резервную копию {}: {e}",
+                bak_path.display()
+            )
         })?;
-        append_tgpcdx_log(&format!(
-            "Создана резервная копия: {}",
-            bak_path.display()
-        ));
+        append_tgpcdx_log(&format!("Создана резервная копия: {}", bak_path.display()));
     }
 
     // Парсим SERZ с сохранением преамбулы (или XML).
@@ -579,7 +570,8 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     }
 
     let out_bytes = if is_serz {
-        crate::serz::encode_to_vec(&root, preamble.as_ref()).map_err(|e| format!("serz encode: {e}"))?
+        crate::serz::encode_to_vec(&root, preamble.as_ref())
+            .map_err(|e| format!("serz encode: {e}"))?
     } else {
         crate::serz::SerzReader::to_xml(&root, 0, true).into_bytes()
     };
@@ -622,7 +614,8 @@ pub fn update_tgpcdx_internal_name_bytes(data: &[u8], new_name: &str) -> Result<
     }
 
     let out_bytes = if is_serz {
-        crate::serz::encode_to_vec(&root, preamble.as_ref()).map_err(|e| format!("serz encode: {e}"))?
+        crate::serz::encode_to_vec(&root, preamble.as_ref())
+            .map_err(|e| format!("serz encode: {e}"))?
     } else {
         crate::serz::SerzReader::to_xml(&root, 0, true).into_bytes()
     };
@@ -718,11 +711,7 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
         if info.is_swizzled { 1 } else { 0 },
         info.flags_u16,
     ));
-    let bak = if info.has_bak {
-        "есть"
-    } else {
-        "нет"
-    };
+    let bak = if info.has_bak { "есть" } else { "нет" };
     s.push_str(&format!(
         "Размер файла: {} ({} Б) | Пиксели (blob): {} Б | Заголовок: {} Б | Бэкап (.bak): {}\n",
         format_size_bytes(info.file_size_bytes),
@@ -1371,10 +1360,10 @@ fn extract_unnamed_u16(block: &str) -> u16 {
         if let Some(start) = pre.rfind("<e d:type=\"sUInt16\">") {
             let rest = &pre[start + "<e d:type=\"sUInt16\">".len()..];
             if let Some(end) = rest.find("</e>")
-            && let Ok(v) = rest[..end].trim().parse::<u16>()
-        {
-            return v;
-        }
+                && let Ok(v) = rest[..end].trim().parse::<u16>()
+            {
+                return v;
+            }
         }
     }
     // Fallback: any <e d:type="sUInt16"> in block.
@@ -1890,14 +1879,14 @@ mod tests {
         let orig_blob = first_blob(&orig_bytes);
 
         // Длиннее.
-        update_tgpcdx_internal_name(
-            &tg_path,
-            "Provider\\Product\\Folder\\LongerTextureName",
-        )
-        .unwrap();
+        update_tgpcdx_internal_name(&tg_path, "Provider\\Product\\Folder\\LongerTextureName")
+            .unwrap();
         let long_bytes = fs::read(&tg_path).unwrap();
         let long_info = inspect_tgpcdx_with_path(&long_bytes, Some(&tg_path)).unwrap();
-        assert_eq!(long_info.name, "Provider\\Product\\Folder\\LongerTextureName");
+        assert_eq!(
+            long_info.name,
+            "Provider\\Product\\Folder\\LongerTextureName"
+        );
         assert_eq!(long_info.width, orig_info.width);
         assert_eq!(long_info.height, orig_info.height);
         assert_eq!(long_info.format, orig_info.format);
