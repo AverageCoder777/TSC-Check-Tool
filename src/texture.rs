@@ -984,29 +984,23 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
             .first()
             .is_some_and(|image| image.width == width && image.height == height)
         {
-            let packed_mips: Vec<(u32, u32, Vec<u8>)> = if existing_images.len() == 1 {
-                vec![(width, height, all.to_vec())]
-            } else {
-                mips.clone()
-            };
-            let expected_lengths: Vec<usize> = packed_mips
-                .iter()
-                .map(|(_, _, bytes)| bytes.len())
-                .collect();
+            let expected_lengths: Vec<usize> =
+                mips.iter().map(|(_, _, bytes)| bytes.len()).collect();
 
-            let existing_layout_matches = existing_images.len() == packed_mips.len()
-                && existing_images.iter().zip(&packed_mips).all(
-                    |(existing, (width, height, _))| {
+            let existing_layout_matches = existing_images.len() == mips.len()
+                && existing_images
+                    .iter()
+                    .zip(&mips)
+                    .all(|(existing, (width, height, _))| {
                         existing.width == *width
                             && existing.height == *height
                             && existing.format == fmt_str
-                    },
-                );
+                    });
             if existing_layout_matches
-                && let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &packed_mips)
+                && let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &mips)
             {
                 crate::serz::validate_tgpcdx_binary(&patched, Some(&expected_lengths))?;
-                validate_imported_tgpcdx(&patched, width, height, &fmt_str, &packed_mips)?;
+                validate_imported_tgpcdx(&patched, width, height, &fmt_str, &mips)?;
                 return write_output_bytes(output, &patched).map(|()| report);
             }
         }
@@ -1947,6 +1941,67 @@ mod tests {
         let (width, height, rgba) = decode_tgpcdx_to_rgba(&imported).unwrap();
         assert_eq!((width, height), (16, 16));
         assert_eq!(rgba.len(), 16 * 16 * 4);
+    }
+
+    #[test]
+    fn dds_import_expands_single_blob_to_declared_mip_nodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let target_path = dir.path().join("texture.TgPcDx");
+        let original_dds_path = dir.path().join("original.dds");
+        let original_dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
+            height: 16,
+            width: 16,
+            depth: None,
+            format: ddsfile::D3DFormat::DXT5,
+            mipmap_levels: Some(1),
+            caps2: None,
+        })
+        .unwrap();
+        let mut original_file = fs::File::create(&original_dds_path).unwrap();
+        original_dds.write(&mut original_file).unwrap();
+        convert_dds_to_tgpcdx(&original_dds_path, &target_path).unwrap();
+        assert_eq!(
+            image_mips_from_bytes(&fs::read(&target_path).unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let input_dds_path = dir.path().join("replacement.dds");
+        let mut input_dds = ddsfile::Dds::new_d3d(ddsfile::NewD3dParams {
+            height: 16,
+            width: 16,
+            depth: None,
+            format: ddsfile::D3DFormat::DXT5,
+            mipmap_levels: Some(3),
+            caps2: None,
+        })
+        .unwrap();
+        for (index, byte) in input_dds.data.iter_mut().enumerate() {
+            *byte = (index as u8).wrapping_mul(17).wrapping_add(0x5B);
+        }
+        let declared_mip_count = input_dds.get_num_mipmap_levels() as usize;
+        let mut input_file = fs::File::create(&input_dds_path).unwrap();
+        input_dds.write(&mut input_file).unwrap();
+
+        let report = convert_dds_to_tgpcdx_report(&input_dds_path, &target_path).unwrap();
+        let imported = fs::read(&target_path).unwrap();
+        let imported_mips = image_mips_from_bytes(&imported).unwrap();
+        assert_eq!(report.mip_count as usize, declared_mip_count);
+        assert_eq!(imported_mips.len(), declared_mip_count);
+
+        let xml = serz_bytes_to_xml(&imported).unwrap();
+        let image_blocks = all_image_blocks(&xml);
+        assert_eq!(image_blocks.len(), declared_mip_count);
+        let declared_blob_sizes = image_blocks
+            .iter()
+            .map(|block| extract_blob_size(block) as usize)
+            .collect::<Vec<_>>();
+        let actual_blob_sizes = imported_mips
+            .iter()
+            .map(|mip| mip.data.len())
+            .collect::<Vec<_>>();
+        assert_eq!(declared_blob_sizes, actual_blob_sizes);
     }
 
     #[test]
