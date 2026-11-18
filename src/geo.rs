@@ -1,11 +1,7 @@
 use crate::serz::{SerzNode, SerzReader};
 use glam::{Mat4, Vec3};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
-#[cfg(test)]
-use std::path::PathBuf;
-#[cfg(test)]
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GeoVertex {
@@ -27,7 +23,7 @@ pub struct GeoModel {
 #[derive(Clone)]
 pub struct GeoAssemblyPart {
     pub path: PathBuf,
-    pub model: Arc<GeoModel>,
+    pub model: std::sync::Arc<GeoModel>,
     pub transform: Mat4,
     pub blueprint_attached: bool,
 }
@@ -57,6 +53,9 @@ pub struct GeoSubmesh {
     pub shader_name: String,
     pub lod_level: u8,
     pub triangle_count: u32,
+    /// True when the batch's world transform has a negative determinant (mirrored),
+    /// meaning winding order is flipped and front-face culling must be inverted.
+    pub mirrored: bool,
 }
 
 impl GeoSubmesh {
@@ -161,12 +160,12 @@ impl Default for BatchInfo {
 impl GeoModel {
     pub fn load(path: &Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        let model = Self::parse(&bytes)?;
+        let model = Self::parse(path, &bytes)?;
         log_parse_diagnostics(path, &model.diagnostics);
         Ok(model)
     }
 
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(path: &Path, data: &[u8]) -> Result<Self, String> {
         let root = parse_serz_document(data)?;
         let id_map = build_id_map(&root);
         let local_transforms = find_named_values(&root, "SourceLToPTransform")
@@ -191,6 +190,7 @@ impl GeoModel {
         };
         let textures = crate::auditor::extract_geo_texture_references(&xml);
         let material_bindings = find_material_bindings(&root, &textures, &id_map);
+        log_material_diagnostics(path, &material_bindings);
         let transform_names = collect_transform_names(&root);
         let context = NodeContext {
             material_bindings: &material_bindings,
@@ -212,6 +212,7 @@ impl GeoModel {
             &mut raw_batches,
         );
         deduplicate_submeshes(&mut raw_batches);
+        log_batch_diagnostics(path, &raw_batches);
 
         let mut vertex_data = Vec::new();
         let mut index_data = Vec::new();
@@ -222,6 +223,7 @@ impl GeoModel {
             &mut vertex_data,
             &mut index_data,
         );
+        log_vertex_buffer_diagnostics(path, &vertex_data, &index_data);
 
         let first_vertex_buffer = vertex_data
             .first()
@@ -500,6 +502,9 @@ impl GeoModel {
         })
     }
 }
+
+#[cfg(test)]
+use std::sync::Arc;
 
 #[cfg(test)]
 impl GeoAssembly {
@@ -1473,6 +1478,9 @@ fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
     if matrix.iter().any(|value| !value.is_finite()) {
         return None;
     }
+    // Train Simulator stores DX9 matrices. `Mat4::from_cols_array` interprets
+    // each group of four floats as a column, which matches the layout produced
+    // by the SERZ→XML round-trip used by the parser.
     let parsed = Mat4::from_cols_array(&matrix);
     if parsed.x_axis.w.abs() > 0.01
         || parsed.y_axis.w.abs() > 0.01
@@ -1554,20 +1562,20 @@ fn resolve_asset_path(source: &Path, reference: &str, extension: &str) -> Option
 fn load_cached_geometry(
     path: &Path,
     main_path: &Path,
-    cache: &mut HashMap<String, Arc<GeoModel>>,
-) -> Option<Arc<GeoModel>> {
+    cache: &mut HashMap<String, std::sync::Arc<GeoModel>>,
+) -> Option<std::sync::Arc<GeoModel>> {
     let key = path.to_string_lossy().to_ascii_lowercase();
     if let Some(model) = cache.get(&key) {
-        return Some(Arc::clone(model));
+        return Some(std::sync::Arc::clone(model));
     }
     let result = std::fs::read(path)
         .map_err(|error| error.to_string())
-        .and_then(|bytes| GeoModel::parse(&bytes));
+        .and_then(|bytes| GeoModel::parse(path, &bytes));
     match result {
         Ok(model) => {
             log_parse_diagnostics(path, &model.diagnostics);
-            let model = Arc::new(model);
-            cache.insert(key, Arc::clone(&model));
+            let model = std::sync::Arc::new(model);
+            cache.insert(key, std::sync::Arc::clone(&model));
             Some(model)
         }
         Err(error) => {
@@ -1713,6 +1721,7 @@ struct VertexAttributeOffsets {
     position: Option<usize>,
     position_format: PositionFormat,
     normal: Option<usize>,
+    tangent: Option<usize>,
     uv: Option<usize>,
     declaration_stride: usize,
     declaration: String,
@@ -2046,6 +2055,8 @@ fn find_vertex_attribute_offsets(
                     attributes.position_format = position_format_from_type(&type_name);
                 } else if usage_lower.contains("normal") && attributes.normal.is_none() {
                     attributes.normal = Some(offset);
+                } else if usage_lower.contains("tangent") && attributes.tangent.is_none() {
+                    attributes.tangent = Some(offset);
                 } else if usage_lower.contains("texcoord")
                     && find_direct_number(children, &["usageindex"], ids).unwrap_or(0) == 0
                     && attributes.uv.is_none()
@@ -2075,6 +2086,7 @@ fn find_vertex_attribute_offsets(
         position: None,
         position_format: PositionFormat::default(),
         normal: None,
+        tangent: None,
         uv: None,
         declaration_stride: 0,
         declaration: String::new(),
@@ -2246,9 +2258,11 @@ fn find_material_bindings(
             // visible batches fall back to the wrong texture index.
             let excluded = is_hidden_shader_name(&shader_name) || texture_is_shadow || subtract_alpha;
             let material_index = *next_index;
-            if !excluded {
-                *next_index = (*next_index).saturating_add(1);
-            }
+            // Always advance the index counter so excluded materials (shadows,
+            // subtractive, hidden) still consume a slot and material_index stays
+            // synchronized with the full material table (0..N). The `excluded`
+            // flag only marks the batch as non-renderable.
+            *next_index = (*next_index).saturating_add(1);
             let texture_index = texture_references
                 .iter()
                 .filter_map(|reference| {
@@ -2834,10 +2848,12 @@ fn node_is_explicitly_hidden(children: &[SerzNode], ids: &HashMap<u32, &SerzNode
         })
 }
 
-/// Auxiliary nodes (shadows, decals, running numbers) start hidden in the inspector.
+/// Auxiliary nodes (shadows, stencil, occlusion) start hidden in the inspector.
+/// Numbering, decals and `_b`/`_c` suffixed nodes are real rolling-stock geometry
+/// and must NOT be filtered out by name.
 fn is_auxiliary_node(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    ["schatten", "shadow", "primarydigit", "decal"]
+    ["schatten", "shadow", "stencil", "invisible", "occluder", "occlusion"]
         .iter()
         .any(|marker| lower.contains(marker))
 }
@@ -3302,6 +3318,7 @@ fn append_submesh(
         shader_name: info.shader_name.clone(),
         lod_level: info.lod_level,
         triangle_count: index_count / 3,
+        mirrored: false,
     });
     Ok(())
 }
@@ -3391,6 +3408,7 @@ fn append_transformed_submesh(
         shader_name: info.shader_name.clone(),
         lod_level: info.lod_level,
         triangle_count: index_count / 3,
+        mirrored: transform.determinant() < 0.0,
     });
     Ok(())
 }
@@ -3652,6 +3670,138 @@ fn warn_parse_skip(message: String) {
     }
 }
 
+/// Diagnostic log for every material binding resolved during parsing.
+fn log_material_diagnostics(path: &Path, bindings: &std::collections::HashMap<u32, MaterialBinding>) {
+    use std::io::Write;
+
+    let mut entries: Vec<_> = bindings.iter().collect();
+    entries.sort_by_key(|(id, _)| *id);
+    let mut lines = Vec::new();
+    for (id, binding) in entries {
+        lines.push(format!(
+            "material id={} index={} name={:?} shader={:?} mode={:?} alpha_cutoff={} texture_index={} excluded={}",
+            id,
+            binding.material_index,
+            binding.material_name,
+            binding.shader_name,
+            binding.render_mode,
+            binding.alpha_ref,
+            binding.texture_index,
+            binding.excluded,
+        ));
+    }
+    let message = format!("[GeoPcDx] {}: materials=[{}]", path.display(), lines.join("; "));
+    eprintln!("{message}");
+    let log_path = crate::settings::log_file();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(
+            file,
+            "{} {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            message
+        );
+    }
+}
+
+/// Diagnostic log for every vertex and index buffer found during parsing.
+fn log_vertex_buffer_diagnostics(path: &Path, vertex_data: &[VertexBuffer], index_data: &[IndexBuffer]) {
+    use std::io::Write;
+
+    let mut vb_lines = Vec::new();
+    for buffer in vertex_data {
+        vb_lines.push(format!(
+            "vb[{}]: num_vertices={} stride={} pos_offset={} pos_format={:?} norm_offset={:?} uv_offset={:?}",
+            buffer.source_index,
+            buffer.bytes.len().checked_div(buffer.stride).unwrap_or(0),
+            buffer.stride,
+            buffer.position_offset,
+            buffer.position_format,
+            buffer.normal_offset,
+            buffer.uv_offset,
+        ));
+    }
+    let mut ib_lines = Vec::new();
+    for buffer in index_data {
+        ib_lines.push(format!(
+            "ib[{}]: indices={} type={}",
+            buffer.source_index,
+            buffer.indices.len(),
+            buffer.element_type,
+        ));
+    }
+    let message = format!(
+        "[GeoPcDx] {}: vertex_buffers=[{}]; index_buffers=[{}]",
+        path.display(),
+        vb_lines.join("; "),
+        ib_lines.join("; ")
+    );
+    eprintln!("{message}");
+    let log_path = crate::settings::log_file();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(
+            file,
+            "{} {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            message
+        );
+    }
+}
+
+/// Diagnostic log for every raw batch before submesh conversion.
+fn log_batch_diagnostics(path: &Path, batches: &[RawSubmesh]) {
+    use std::io::Write;
+
+    let mut lines = Vec::new();
+    for batch in batches {
+        let det = batch.transform.determinant();
+        lines.push(format!(
+            "batch node={:?} det={:.4} prim={} num_prim={} index_start={} vertex_base={} vbuf_idx={} ibuf_idx={} mode={:?} material_name={:?}",
+            batch.node_name,
+            det,
+            batch.topology,
+            batch.index_count,
+            batch.first_index,
+            batch.base_vertex,
+            batch.vertex_buffer_index,
+            batch.index_buffer_index,
+            batch.render_mode,
+            batch.material_name,
+        ));
+    }
+    let message = format!("[GeoPcDx] {}: batches=[{}]", path.display(), lines.join("; "));
+    eprintln!("{message}");
+    let log_path = crate::settings::log_file();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(
+            file,
+            "{} {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            message
+        );
+    }
+}
+
 pub(crate) fn log_parse_diagnostics(path: &Path, diagnostics: &GeoParseDiagnostics) {
     use std::io::Write;
 
@@ -3848,7 +3998,11 @@ fn fill_missing_normals(vertices: &mut [GeoVertex], indices: &[u32]) {
     }
 }
 
-pub fn resolve_texture_data(geo_path: &Path, reference: &str) -> Option<(String, Vec<u8>)> {
+pub fn resolve_texture_data(
+    geo_path: &Path,
+    reference: &str,
+    archive_toc_cache: &mut HashMap<PathBuf, Vec<String>>,
+) -> Option<(String, Vec<u8>)> {
     let reference = reference
         .replace('/', "\\")
         .trim_start_matches('\\')
@@ -3893,31 +4047,53 @@ pub fn resolve_texture_data(geo_path: &Path, reference: &str) -> Option<(String,
             {
                 continue;
             }
+            // Cache the archive table of contents so the central directory is only
+            // read once per archive during an entire model load.
+            let member_names = archive_toc_cache
+                .entry(archive_path.clone())
+                .or_insert_with(|| {
+                    std::fs::File::open(&archive_path)
+                        .ok()
+                        .and_then(|file| zip::ZipArchive::new(file).ok())
+                        .map(|mut archive| {
+                            let mut names = Vec::with_capacity(archive.len());
+                            for index in 0..archive.len() {
+                                if let Ok(entry) = archive.by_index(index) {
+                                    if let Ok(name) = entry.name() {
+                                        names.push(name.to_string().replace('/', "\\"));
+                                    }
+                                }
+                            }
+                            names
+                        })
+                        .unwrap_or_default()
+                });
+            let found = member_names.iter().find_map(|name| {
+                let normalized = crate::archive::normalize_member(name);
+                targets
+                    .iter()
+                    .any(|target| {
+                        normalized == *target || normalized.ends_with(&format!("\\{target}"))
+                    })
+                .then_some(name.to_owned())
+            });
+            let Some(member_name) = found else {
+                continue;
+            };
             let Ok(file) = std::fs::File::open(&archive_path) else {
                 continue;
             };
             let Ok(mut archive) = zip::ZipArchive::new(file) else {
                 continue;
             };
-            let found = (0..archive.len()).find_map(|index| {
-                let entry = archive.by_index(index).ok()?;
-                let name = entry.name().ok()?.replace('/', "\\");
-                let normalized = crate::archive::normalize_member(&name);
-                targets
-                    .iter()
-                    .any(|target| {
-                        normalized == *target || normalized.ends_with(&format!("\\{target}"))
-                    })
-                    .then_some((index, name))
-            });
-            if let Some((index, name)) = found
-                && let Ok(mut member) = archive.by_index(index)
-            {
-                use std::io::Read;
-                let mut bytes = Vec::new();
-                if member.read_to_end(&mut bytes).is_ok() {
-                    return Some((format!("{}!{name}", archive_path.display()), bytes));
-                }
+            let index = member_names.iter().position(|n| n == &member_name)?;
+            let Ok(mut member) = archive.by_index(index) else {
+                continue;
+            };
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            if member.read_to_end(&mut bytes).is_ok() {
+                return Some((format!("{}!{}", archive_path.display(), member_name), bytes));
             }
         }
     }
@@ -3952,6 +4128,7 @@ fn strip_texture_slot_prefix(reference: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn triangle_vertices(count: usize) -> Vec<u8> {
         let mut vertices = Vec::new();
@@ -4095,7 +4272,7 @@ mod tests {
     #[test]
     fn composes_attached_parts_and_side_by_side_layouts() {
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32);
-        let model = Arc::new(GeoModel::parse(source.as_bytes()).unwrap());
+        let model = Arc::new(GeoModel::parse(Path::new(""),source.as_bytes()).unwrap());
         let assembly = GeoAssembly {
             parts: vec![
                 GeoAssemblyPart {
@@ -4127,7 +4304,7 @@ mod tests {
     #[test]
     fn parses_mesh_and_texture_reference() {
         let vertices = triangle_vertices(3);
-        let model = GeoModel::parse(&xml(&vertices, &[0, 0, 1, 0, 2, 0], 32).into_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),&xml(&vertices, &[0, 0, 1, 0, 2, 0], 32).into_bytes()).unwrap();
         assert_eq!(model.vertices.len(), 3);
         assert_eq!(model.indices, [0, 1, 2]);
         assert_eq!(model.textures, [r"Textures\sample.TgPcDx"]);
@@ -4160,7 +4337,7 @@ mod tests {
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{second_buffer}</Root>"));
 
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.vertices.len(), 6);
         assert_eq!(model.indices, [0, 1, 2]);
@@ -4172,19 +4349,19 @@ mod tests {
         for _ in 0..3 {
             vertices.extend_from_slice(&[0u8; 32]);
         }
-        assert!(GeoModel::parse(&xml(&vertices, &[0, 0, 1, 0, 3, 0], 32).into_bytes()).is_err());
+        assert!(GeoModel::parse(Path::new(""),&xml(&vertices, &[0, 0, 1, 0, 3, 0], 32).into_bytes()).is_err());
     }
 
     #[test]
     fn rejects_truncated_vertex_records() {
-        assert!(GeoModel::parse(&xml(&[0; 31], &[0, 0, 1, 0, 2, 0], 32).into_bytes()).is_err());
+        assert!(GeoModel::parse(Path::new(""),&xml(&[0; 31], &[0, 0, 1, 0, 2, 0], 32).into_bytes()).is_err());
     }
 
     #[test]
     fn truncates_incomplete_triangle_list_indices_and_odd_byte_padding() {
         let vertices = triangle_vertices(4);
         let raw_indices = [0, 0, 1, 0, 2, 0, 3, 0, 0xff];
-        let model = GeoModel::parse(&xml(&vertices, &raw_indices, 32).into_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),&xml(&vertices, &raw_indices, 32).into_bytes()).unwrap();
         assert_eq!(model.diagnostics.index_element_type, "u16");
         assert_eq!(model.diagnostics.raw_index_count, 4);
         assert_eq!(model.indices, [0, 1, 2]);
@@ -4203,7 +4380,7 @@ mod tests {
         "#;
         let source = xml(&vertices, &[5, 0, 0, 0, 1, 0, 2, 0, 3, 0, 4, 0], 32)
             .replace("</Root>", &format!("{batch}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
         assert_eq!(model.indices, [0, 1, 2, 2, 1, 3]);
         assert_eq!(
             model.submeshes,
@@ -4223,6 +4400,7 @@ mod tests {
                 shader_name: String::new(),
                 lod_level: 0,
                 triangle_count: 2,
+                mirrored: false,
             }]
         );
         assert_eq!(
@@ -4266,7 +4444,7 @@ mod tests {
             32,
         )
         .replace("</Root>", &format!("{batches_and_materials}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.submeshes.len(), 2);
         assert_eq!(model.indices, [0, 1, 2, 6, 7, 8]);
@@ -4305,7 +4483,7 @@ mod tests {
             32,
         )
         .replace("</Root>", &format!("{batches}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.indices, [0, 1, 2, 0, 1, 2, 2, 1, 3]);
         assert!(model.diagnostics.batch_ranges[0].contains("start=0 count=3"));
@@ -4357,7 +4535,7 @@ mod tests {
         assert_eq!(find_number(children, &["vertexindexbase"], &ids), Some(0));
         assert_eq!(find_number(children, &["vertexindexmin"], &ids), Some(0));
         assert_eq!(find_number(children, &["vertexindexrange"], &ids), Some(4));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(
             model.diagnostics.primitive_type,
@@ -4445,7 +4623,7 @@ mod tests {
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{transforms}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.diagnostics.local_transform_count, 2);
         assert_eq!(
@@ -4494,7 +4672,7 @@ mod tests {
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{batches}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.submeshes.len(), 1);
         assert_eq!(model.indices, [0, 1, 2]);
@@ -4521,7 +4699,7 @@ mod tests {
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{selector}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.submeshes.len(), 1);
         assert_eq!(model.indices, [0, 1, 2]);
@@ -4540,7 +4718,7 @@ mod tests {
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{transform}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
         let transformed_position = model.vertices[model.indices[0] as usize].position;
 
         assert_eq!(transformed_position, [3.0, -2.0, 4.0]);
@@ -4548,7 +4726,7 @@ mod tests {
         let skeleton = transform.replace("cHcTransformNode", "cHcSkeletonNode");
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{skeleton}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
         assert_eq!(
             model.vertices[model.indices[0] as usize].position,
             [3.0, -2.0, 4.0]
@@ -4626,7 +4804,7 @@ mod tests {
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{batches}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
         assert_eq!(model.submeshes.len(), 1);
         assert_eq!(model.indices, [0, 1, 2]);
     }
@@ -4870,7 +5048,7 @@ mod tests {
             32,
         )
         .replace("</Root>", &format!("{batch}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.indices, [0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5]);
         assert!(model.diagnostics.batch_ranges[0].contains("count=6"));
@@ -4898,7 +5076,7 @@ mod tests {
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{batch}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.submeshes[0].node_name, "Cabin");
     }
@@ -4921,7 +5099,7 @@ mod tests {
             </cHcPrimitiveList>
         "#;
         source = source.replace("</Root>", &format!("{batch}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
         assert_eq!(model.diagnostics.index_element_type, "u32");
         assert_eq!(model.diagnostics.raw_index_count, 4);
         assert_eq!(model.indices, [0, 1, 2, 2, 1, 3]);
@@ -4948,7 +5126,7 @@ mod tests {
                     </cHcPrimitiveList>
                 </Root>"#,
         );
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.diagnostics.index_element_type, "u16");
         assert_eq!(
@@ -4964,7 +5142,7 @@ mod tests {
             "<IndexData><blob>000001000200</blob></IndexData>",
             "<IndexData d:numElements=\"3\" d:elementType=\"sUInt16\">0 1 2</IndexData>",
         );
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
         assert_eq!(model.indices, [0, 1, 2]);
         assert_eq!(model.diagnostics.index_element_type, "u16");
     }
@@ -4995,8 +5173,10 @@ mod tests {
         archive.write_all(b"texture data").unwrap();
         archive.finish().unwrap();
 
+        let mut archive_toc_cache = HashMap::new();
         let (resolved_path, _bytes) =
-            resolve_texture_data(&geo_path, r"Textures\[00]body.TgPcDx").unwrap();
+            resolve_texture_data(&geo_path, r"Textures\[00]body.TgPcDx", &mut archive_toc_cache)
+                .unwrap();
         assert!(resolved_path.contains("!Provider\\Product\\Textures\\body.TgPcDx"));
     }
 
@@ -5015,7 +5195,7 @@ mod tests {
         let vertices = triangle_vertices(usize::from(u16::MAX) + 1);
         let source = xml(&vertices, &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{batches}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.diagnostics.index_element_type, "u16");
         assert_eq!(model.submeshes[0].base_vertex, 5);
@@ -5082,7 +5262,7 @@ mod tests {
             "</cHcVertexBuffer>",
             "<NumVertices d:type=\"sUInt32\">3</NumVertices><cHcVertexTypeFVF><FVF d:type=\"sUInt32\">274</FVF></cHcVertexTypeFVF></cHcVertexBuffer>",
         );
-        let model = match GeoModel::parse(source.as_bytes()) {
+        let model = match GeoModel::parse(Path::new(""),source.as_bytes()) {
             Ok(m) => m,
             Err(e) => panic!("parse error: {e}"),
         };
@@ -5100,7 +5280,7 @@ mod tests {
             "</cHcVertexBuffer>",
             "<NumVertices d:type=\"sUInt32\">3</NumVertices><cHcVertexTypeFVF><FVF d:type=\"sUInt32\">530</FVF></cHcVertexTypeFVF></cHcVertexBuffer>",
         );
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
         assert_eq!(model.diagnostics.vertex_stride, 40);
         assert_eq!(model.diagnostics.fvf, 0x212);
     }
@@ -5167,7 +5347,7 @@ mod tests {
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{batches}</Root>"));
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.submeshes.len(), 4);
         assert_eq!(model.indices.len(), 12);
@@ -5266,7 +5446,7 @@ mod tests {
                 <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
             </Root>"#
         );
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.submeshes.len(), 1);
         assert_eq!(model.indices.len(), 3);
@@ -5299,7 +5479,7 @@ mod tests {
             "</cHcVertexBuffer>",
             "<NumVertices d:type=\"sUInt32\">3</NumVertices><cHcVertexTypeFVF><FVF d:type=\"sUInt32\">274</FVF></cHcVertexTypeFVF></cHcVertexBuffer>",
         );
-        let model = GeoModel::parse(source.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),source.as_bytes()).unwrap();
 
         assert_eq!(model.diagnostics.vertex_stride, 52);
         assert_eq!(model.diagnostics.vertex_count, 3);
@@ -5354,7 +5534,7 @@ mod tests {
                 <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
             </Root>"#
         );
-        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),xml.as_bytes()).unwrap();
         assert_eq!(model.vertices.len(), 3);
         assert_eq!(model.vertices[0].position, [1.0, 2.0, 3.0]);
         assert_eq!(model.vertices[1].position, [4.0, 5.0, 6.0]);
@@ -5401,7 +5581,7 @@ mod tests {
                 <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
             </Root>"#
         );
-        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),xml.as_bytes()).unwrap();
         assert_eq!(model.vertices.len(), 3);
         assert_eq!(model.vertices[0].position, [1.0f32, 0.0, -1.0]);
         assert!((model.vertices[1].position[0] - 0.0f32).abs() < 1e-5);
@@ -5505,7 +5685,7 @@ mod tests {
                 <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
             </Root>"#
         );
-        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),xml.as_bytes()).unwrap();
         assert_eq!(model.vertices.len(), 6);
         assert_eq!(model.indices, [3, 4, 5]);
         assert_eq!(model.vertices[3].position, [10.0, 0.0, 0.0]);
@@ -5561,7 +5741,7 @@ mod tests {
                 <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
             </Root>"#
         );
-        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        let model = GeoModel::parse(Path::new(""),xml.as_bytes()).unwrap();
         assert_eq!(model.vertices.len(), 6);
         assert_eq!(model.indices, [3, 4, 5]);
         assert_eq!(model.vertices[3].position, [10.0, 0.0, 0.0]);

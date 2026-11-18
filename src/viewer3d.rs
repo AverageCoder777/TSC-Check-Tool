@@ -94,9 +94,12 @@ impl LoadedModel {
             .iter()
             .map(|name| (path.to_path_buf(), name.clone()))
             .collect::<Vec<_>>();
+        let mut archive_toc_cache = HashMap::new();
         let resolved = texture_sources
-            .par_iter()
-            .map(|(geo_path, name)| crate::geo::resolve_texture_data(geo_path, name))
+            .iter()
+            .map(|(geo_path, name)| {
+                crate::geo::resolve_texture_data(geo_path, name, &mut archive_toc_cache)
+            })
             .collect::<Vec<_>>();
         let mut unique_resolved = HashMap::<PathBuf, (String, Vec<u8>)>::new();
         let resolved_paths = resolved
