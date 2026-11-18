@@ -1721,12 +1721,16 @@ fn select_vertex_stride(
     declaration: usize,
     fvf_stride: usize,
 ) -> usize {
-    let valid = |stride: usize| stride > 0 && bytes_len.is_multiple_of(stride);
-    explicit
-        .filter(|stride| valid(*stride))
-        .or(Some(declaration).filter(|stride| valid(*stride)))
+    let valid = |stride: usize| stride > 0 && bytes_len % stride == 0;
+    // Сначала ищем первый валидный stride, который ИДЕАЛЬНО делит байтовый буфер без остатка.
+    // Приоритет отдаем декларациям (они точнее всего описывают структуру), 
+    // затем - явно указанному в файле stride.
+    Some(declaration).filter(|stride| valid(*stride))
         .or(declared.filter(|stride| valid(*stride)))
+        .or(explicit.filter(|stride| valid(*stride)))
         .or(Some(fvf_stride).filter(|stride| valid(*stride)))
+        // Если из-за мусорных байтов в конце буфера ни один шаг не делится нацело,
+        // фоллбечимся по жесткому приоритету без проверки деления.
         .or(explicit)
         .or(declared)
         .or(Some(declaration).filter(|stride| *stride > 0))
