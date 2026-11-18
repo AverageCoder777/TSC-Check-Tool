@@ -195,7 +195,7 @@ impl GeoModel {
 
         // Collect vertex buffers first to build the SERZ ID -> source_index map
         let mut vertex_data = Vec::new();
-        let vb_id_to_index = collect_vertex_buffers(&root, &id_map, &mut vertex_data);
+        let (vb_id_to_index, prim_id_to_vbuf) = collect_vertex_buffers(&root, &id_map, &mut vertex_data);
 
         let context = NodeContext {
             material_bindings: &material_bindings,
@@ -203,6 +203,7 @@ impl GeoModel {
             world_transforms: &world_transforms,
             transform_names: &transform_names,
             vb_id_to_index: &vb_id_to_index,
+            prim_id_to_vbuf: &prim_id_to_vbuf,
         };
         let mut raw_batches = Vec::new();
         find_submeshes(
@@ -1815,13 +1816,17 @@ fn select_vertex_stride(
 }
 
 /// Collect vertex buffers and build SERZ ID -> source_index map.
-/// Returns the map so it can be used by `find_submeshes` for resolving VertexBufferIndex references.
+/// Returns (vb_id_to_index, prim_id_to_vbuf) where:
+///   - vb_id_to_index: SERZ ID (of cHcVertexBufferDx or cHcGeometryVertexDataDx) -> vertex buffer source_index
+///   - prim_id_to_vbuf: SERZ ID of cHcPrimitiveSetDescDx -> vertex buffer source_index (from References inside cHcGeometryVertexDataDx)
 fn collect_vertex_buffers(
     node: &SerzNode,
     ids: &HashMap<u32, &SerzNode>,
     vertices: &mut Vec<VertexBuffer>,
-) -> HashMap<u32, u32> {
+) -> (HashMap<u32, u32>, HashMap<u32, u32>) {
     let mut vertex_buffer_id_map = HashMap::new();
+    let mut prim_id_to_vbuf = HashMap::new();
+    let mut vertex_data_counter = 0u32;
 
     fn collect(
         node: &SerzNode,
@@ -1831,7 +1836,9 @@ fn collect_vertex_buffers(
         visited_elements: &mut HashSet<u32>,
         next_slot: &mut usize,
         vertex_buffer_id_map: &mut HashMap<u32, u32>,
+        prim_id_to_vbuf: &mut HashMap<u32, u32>,
         ancestor_ids: &mut Vec<u32>,
+        vertex_data_counter: &mut u32,
     ) {
         if let SerzNode::Reference { target_id, .. } = node {
             if reference_stack.insert(*target_id) {
@@ -1844,7 +1851,9 @@ fn collect_vertex_buffers(
                         visited_elements,
                         next_slot,
                         vertex_buffer_id_map,
+                        prim_id_to_vbuf,
                         ancestor_ids,
+                        vertex_data_counter,
                     );
                 }
                 reference_stack.remove(target_id);
@@ -1873,6 +1882,92 @@ fn collect_vertex_buffers(
         } else {
             false
         };
+        
+        // When we encounter a cHcGeometryVertexDataDx, collect all References inside it
+        // that point to cHcPrimitiveSetDescDx nodes (primitive set descriptors).
+        if clean_name.contains("chcgeometryvertexdata") {
+            let buf_idx = *vertex_data_counter;
+            *vertex_data_counter += 1;
+            
+            // Debug logging for first two cHcGeometryVertexDataDx elements
+            if buf_idx < 2 {
+                let xml = crate::serz::SerzReader::to_xml(node, 2, false);
+                let msg = format!(
+                    "[GeoPcDx DEBUG] cHcGeometryVertexDataDx #{} buf_idx={} xml=\n{}",
+                    buf_idx, buf_idx, xml
+                );
+                eprintln!("{msg}");
+                let log_path = crate::settings::log_file();
+                if let Some(parent) = log_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)
+                {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        file,
+                        "{} {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                        msg
+                    );
+                }
+            }
+            
+            // Collect all SerzNode::Reference children inside this cHcGeometryVertexDataDx
+            // (excluding references to the vertex buffer itself and vertex type declaration)
+            fn collect_prim_refs(
+                node: &SerzNode,
+                ids: &HashMap<u32, &SerzNode>,
+                reference_stack: &mut HashSet<u32>,
+                vb_idx: u32,
+                vb_id: u32,
+                vtd_id: Option<u32>,
+                prim_id_to_vbuf: &mut HashMap<u32, u32>,
+            ) {
+                match node {
+                    SerzNode::Reference { target_id, .. } => {
+                        // Skip references to the vertex buffer itself and vertex type declaration
+                        if *target_id == vb_id || vtd_id.is_some_and(|vtd| vtd == *target_id) {
+                            return;
+                        }
+                        prim_id_to_vbuf.insert(*target_id, vb_idx);
+                    }
+                    SerzNode::Element { children, .. } => {
+                        for child in children {
+                            collect_prim_refs(child, ids, reference_stack, vb_idx, vb_id, vtd_id, prim_id_to_vbuf);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            
+            // Find the vertex buffer ID and vertex type declaration ID to exclude them
+            let vb_id = children.iter().find_map(|c| {
+                if let SerzNode::Element { name, id, .. } = c {
+                    if name.to_ascii_lowercase().contains("chcvertexbuffer") {
+                        return Some(*id);
+                    }
+                }
+                None
+            }).unwrap_or(0);
+            
+            let vtd_id = children.iter().find_map(|c| {
+                if let SerzNode::Element { name, id, .. } = c {
+                    if name.to_ascii_lowercase().contains("chcvertextypedeclaration") {
+                        return Some(*id);
+                    }
+                }
+                None
+            });
+            
+            let mut ref_stack = HashSet::new();
+            for child in children {
+                collect_prim_refs(child, ids, &mut ref_stack, buf_idx, vb_id, vtd_id, prim_id_to_vbuf);
+            }
+        }
         
         if clean_name.contains("chcvertexbuffer") {
             let source_index =
@@ -1969,7 +2064,9 @@ fn collect_vertex_buffers(
                 visited_elements,
                 next_slot,
                 vertex_buffer_id_map,
+                prim_id_to_vbuf,
                 ancestor_ids,
+                vertex_data_counter,
             );
         }
         // Pop ancestor ID when backtracking
@@ -1986,10 +2083,12 @@ fn collect_vertex_buffers(
         &mut HashSet::new(),
         &mut 0,
         &mut vertex_buffer_id_map,
+        &mut prim_id_to_vbuf,
         &mut Vec::new(),
+        &mut vertex_data_counter,
     );
 
-    vertex_buffer_id_map
+    (vertex_buffer_id_map, prim_id_to_vbuf)
 }
 
 /// Collect index buffers (requires batches for vertex count inference).
@@ -2606,6 +2705,8 @@ struct NodeContext<'a> {
     transform_names: &'a [String],
     /// SERZ ID (of cHcVertexBufferDx or cHcGeometryVertexDataDx) -> vertex buffer source_index.
     vb_id_to_index: &'a HashMap<u32, u32>,
+    /// SERZ ID of cHcPrimitiveSetDescDx -> vertex buffer source_index (from References inside cHcGeometryVertexDataDx).
+    prim_id_to_vbuf: &'a HashMap<u32, u32>,
 }
 
 fn find_submeshes(
@@ -2627,6 +2728,7 @@ fn find_submeshes(
         world_transforms,
         transform_names,
         vb_id_to_index,
+        prim_id_to_vbuf,
     } = context;
     if let SerzNode::Reference { name, target_id } = node {
         if name.eq_ignore_ascii_case("material") {
@@ -2837,20 +2939,28 @@ fn find_submeshes(
             let max_local_vertex_ref =
                 i128::from(vertex_index_min) + i128::from(vertex_index_range);
             let max_local_vertex_ref = u64::try_from(max_local_vertex_ref).ok();
-            // Vertex buffer index: try explicit index fields first, then a reference to the
-            // cHcVertexBufferDx / cHcGeometryVertexDataDx node via vb_id_to_index map.
-            // Also check for SerzNode::Reference children that point to a known vertex buffer.
-            let vertex_buffer_index = find_number(
-                children,
-                &[
-                    "vertexbufferindex",
-                    "vertexdataindex",
-                    "bufferindex",
-                    "vertexbuffer",
-                ],
-                ids,
-            )
-            .and_then(|value| u32::try_from(value).ok())
+            // Vertex buffer index: for cHcPrimitiveSetDescDx, use the prim_id_to_vbuf map
+            // which maps the primitive set's own SERZ ID to the vertex buffer index.
+            // For other batch types, fall back to the existing logic.
+            let vertex_buffer_index = if is_primitive_set {
+                // Look up the vertex buffer index from the primitive set's own SERZ ID
+                prim_id_to_vbuf.get(id).copied()
+            } else {
+                None
+            }
+            .or_else(|| {
+                find_number(
+                    children,
+                    &[
+                        "vertexbufferindex",
+                        "vertexdataindex",
+                        "bufferindex",
+                        "vertexbuffer",
+                    ],
+                    ids,
+                )
+                .and_then(|value| u32::try_from(value).ok())
+            })
             .or_else(|| {
                 // Check for SerzNode::Reference children pointing to known vertex buffer IDs
                 children.iter().find_map(|child| {
@@ -2920,41 +3030,6 @@ fn find_submeshes(
     // to inherit down to cHcPrimitiveSetDescDx children.
     let mut next_inherited_vbuf = inherited_vertex_buffer_index;
     if clean_name.contains("geometrynodesamestate") {
-        // Debug logging for first two cHcGeometryNodeSameState nodes that have
-        // "chassis" or "int2" children — write full XML to app.log.
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static LOGGED_SAME_STATE_COUNT: AtomicU32 = AtomicU32::new(0);
-        let node_name_lower = batch_node_name.to_ascii_lowercase();
-        let has_target_child = node_name_lower == "chassis" || node_name_lower == "int2";
-        if has_target_child {
-            let count = LOGGED_SAME_STATE_COUNT.fetch_add(1, Ordering::Relaxed);
-            if count < 2 {
-                let xml = crate::serz::SerzReader::to_xml(node, 2, false);
-                let msg = format!(
-                    "[GeoPcDx DEBUG] cHcGeometryNodeSameState #{} node_name={:?} xml=\n{}",
-                    count, batch_node_name, xml
-                );
-                eprintln!("{msg}");
-                let log_path = crate::settings::log_file();
-                if let Some(parent) = log_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path)
-                {
-                    use std::io::Write;
-                    let _ = writeln!(
-                        file,
-                        "{} {}",
-                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                        msg
-                    );
-                }
-            }
-        }
-
         if let Some(vbuf_idx) = find_number(
             children,
             &["vertexbufferindex", "vertexdataindex", "bufferindex"],
@@ -5291,6 +5366,7 @@ mod tests {
             world_transforms: &transforms,
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
+            prim_id_to_vbuf: &empty_vb_map,
         };
         find_submeshes(
             &root,
@@ -5346,6 +5422,7 @@ mod tests {
             world_transforms: &transforms,
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
+            prim_id_to_vbuf: &empty_vb_map,
         };
         find_submeshes(
             &root,
@@ -5591,6 +5668,7 @@ mod tests {
             world_transforms: &transforms,
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
+            prim_id_to_vbuf: &empty_vb_map,
         };
         find_submeshes(
             &root,
