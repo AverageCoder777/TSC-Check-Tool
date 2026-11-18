@@ -2004,84 +2004,6 @@ fn find_vertex_attribute_offsets(
     children: &[SerzNode],
     ids: &HashMap<u32, &SerzNode>,
 ) -> VertexAttributeOffsets {
-    fn collect(
-        node: &SerzNode,
-        ids: &HashMap<u32, &SerzNode>,
-        reference_stack: &mut HashSet<u32>,
-        stream_offsets: &mut HashMap<u64, usize>,
-        stream_sizes: &mut HashMap<u64, usize>,
-        attributes: &mut VertexAttributeOffsets,
-        declaration: &mut Vec<String>,
-    ) {
-        if let SerzNode::Reference { target_id, .. } = node {
-            if reference_stack.insert(*target_id) {
-                if let Some(target) = ids.get(target_id) {
-                    collect(
-                        target,
-                        ids,
-                        reference_stack,
-                        stream_offsets,
-                        stream_sizes,
-                        attributes,
-                        declaration,
-                    );
-                }
-                reference_stack.remove(target_id);
-            }
-            return;
-        }
-        let SerzNode::Element { name, children, .. } = node else {
-            return;
-        };
-        let clean_name = name.to_ascii_lowercase();
-        if clean_name.contains("elementdecl") {
-            let usage = direct_text(children, &["usage"], ids).unwrap_or_default();
-            let type_name = direct_text(children, &["type"], ids).unwrap_or_default();
-            let stream_index = find_direct_number(children, &["streamindex"], ids).unwrap_or(0);
-            let explicit_offset = find_direct_number(children, &["offset", "byteoffset"], ids)
-                .and_then(|value| usize::try_from(value).ok());
-            let offset =
-                explicit_offset.unwrap_or_else(|| *stream_offsets.entry(stream_index).or_default());
-            let size = vertex_element_size(type_name);
-            if let Some(size) = size {
-                stream_offsets.insert(stream_index, offset.saturating_add(size));
-                let stream_size = stream_sizes.entry(stream_index).or_default();
-                *stream_size = stream_size.saturating_add(size);
-            }
-            if stream_index == 0 {
-                let usage_lower = usage.to_ascii_lowercase();
-                if usage_lower.contains("position") && attributes.position.is_none() {
-                    attributes.position = Some(offset);
-                    attributes.position_format = position_format_from_type(&type_name);
-                } else if usage_lower.contains("normal") && attributes.normal.is_none() {
-                    attributes.normal = Some(offset);
-                } else if usage_lower.contains("tangent") && attributes.tangent.is_none() {
-                    attributes.tangent = Some(offset);
-                } else if usage_lower.contains("texcoord")
-                    && find_direct_number(children, &["usageindex"], ids).unwrap_or(0) == 0
-                    && attributes.uv.is_none()
-                {
-                    attributes.uv = Some(offset);
-                }
-            }
-            declaration.push(format!(
-                "{}:{}@stream{}+{}",
-                usage, type_name, stream_index, offset
-            ));
-        }
-        for child in children {
-            collect(
-                child,
-                ids,
-                reference_stack,
-                stream_offsets,
-                stream_sizes,
-                attributes,
-                declaration,
-            );
-        }
-    }
-
     let mut attributes = VertexAttributeOffsets {
         position: None,
         position_format: PositionFormat::default(),
@@ -2094,17 +2016,62 @@ fn find_vertex_attribute_offsets(
     let mut stream_offsets = HashMap::new();
     let mut stream_sizes = HashMap::new();
     let mut declaration = Vec::new();
+
+    // Only inspect the direct cHcVertexTypeDeclarationDx child of this vertex buffer.
+    // Do NOT recurse into other cHcVertexBufferDx nodes (siblings or nested).
     for child in children {
-        collect(
-            child,
-            ids,
-            &mut HashSet::new(),
-            &mut stream_offsets,
-            &mut stream_sizes,
-            &mut attributes,
-            &mut declaration,
-        );
+        let SerzNode::Element { name, children: decl_children, .. } = child else {
+            continue;
+        };
+        if !name.to_ascii_lowercase().contains("chcvertextypedeclaration") {
+            continue;
+        }
+        // Iterate only direct ElementDecl children of the declaration.
+        for decl_child in decl_children {
+            let SerzNode::Element { name: decl_name, children: element_children, .. } = decl_child else {
+                continue;
+            };
+            if !decl_name.to_ascii_lowercase().contains("elementdecl") {
+                continue;
+            }
+            let usage = direct_text(element_children, &["usage"], ids).unwrap_or_default();
+            let type_name = direct_text(element_children, &["type"], ids).unwrap_or_default();
+            let stream_index = find_direct_number(element_children, &["streamindex"], ids).unwrap_or(0);
+            let explicit_offset = find_direct_number(element_children, &["offset", "byteoffset"], ids)
+                .and_then(|value| usize::try_from(value).ok());
+            let offset =
+                explicit_offset.unwrap_or_else(|| *stream_offsets.entry(stream_index).or_default());
+            let size = vertex_element_size(type_name);
+            if let Some(size) = size {
+                stream_offsets.insert(stream_index, offset.saturating_add(size));
+                let stream_size: &mut usize = stream_sizes.entry(stream_index).or_default();
+                *stream_size = stream_size.saturating_add(size);
+            }
+            if stream_index == 0 {
+                let usage_lower = usage.to_ascii_lowercase();
+                if usage_lower.contains("position") && attributes.position.is_none() {
+                    attributes.position = Some(offset);
+                    attributes.position_format = position_format_from_type(&type_name);
+                } else if usage_lower.contains("normal") && attributes.normal.is_none() {
+                    attributes.normal = Some(offset);
+                } else if usage_lower.contains("tangent") && attributes.tangent.is_none() {
+                    attributes.tangent = Some(offset);
+                } else if usage_lower.contains("texcoord")
+                    && find_direct_number(element_children, &["usageindex"], ids).unwrap_or(0) == 0
+                    && attributes.uv.is_none()
+                {
+                    attributes.uv = Some(offset);
+                }
+            }
+            declaration.push(format!(
+                "{}:{}@stream{}+{}",
+                usage, type_name, stream_index, offset
+            ));
+        }
+        // Stop after the first declaration block — do not descend further.
+        break;
     }
+
     attributes.declaration_stride = stream_sizes.get(&0).copied().unwrap_or(0);
     attributes.declaration = declaration.join(", ");
     attributes
@@ -2285,27 +2252,47 @@ fn find_material_bindings(
                     trimmed.to_owned()
                 }
             };
+            let frame_alpha_mode = find_text(children, &["framealphamode"], ids)
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_uppercase();
             let alpha_test_type = find_text(children, &["alphatesttype"], ids)
                 .unwrap_or_default()
                 .trim()
                 .to_ascii_uppercase();
-            // Only `HC_ALPHATEST_GREATER` enables alpha cutout. In Train Simulator the
-            // diffuse alpha channel is a specular/environment mask, not transparency, so
-            // `HC_ALPHATEST_ALWAYS` / missing must never discard fragments.
-            let alpha_test_greater = alpha_test_type == "HC_ALPHATEST_GREATER";
+            // In Train Simulator, the diffuse alpha channel is a specular/environment mask,
+            // NOT transparency. Alpha test is ONLY enabled when AlphaTestType explicitly
+            // requests a comparison (GREATER, GREATEREQUAL, LESS, LESSEQUAL, NOTEQUAL).
+            // HC_ALPHATEST_ALWAYS means "always pass" (test disabled). ALPHA_MODE_NONE
+            // means no alpha processing. Both force Opaque regardless of AlphaRef.
+            let alpha_test_enabled = matches!(
+                alpha_test_type.as_str(),
+                "HC_ALPHATEST_GREATER"
+                    | "HC_ALPHATEST_GREATEREQUAL"
+                    | "HC_ALPHATEST_LESS"
+                    | "HC_ALPHATEST_LESSEQUAL"
+                    | "HC_ALPHATEST_NOTEQUAL"
+            );
+            let alpha_test_disabled = alpha_test_type == "HC_ALPHATEST_ALWAYS"
+                || frame_alpha_mode == "ALPHA_MODE_NONE";
             let alpha_ref = find_text(children, &["alpharef"], ids)
                 .and_then(|value| value.trim().parse::<f32>().ok())
                 .map(|value| (value / 255.0).clamp(0.0, 1.0))
                 .unwrap_or(0.5);
             let mut render_mode = classify_shader(shader_name);
-            if alpha_test_greater && render_mode == GeoRenderMode::Opaque {
-                render_mode = GeoRenderMode::Cutout;
-            } else if render_mode == GeoRenderMode::Opaque {
-                render_mode = match frame_alpha_mode.as_str() {
-                    "ALPHA_MODE_TEST" => GeoRenderMode::Cutout,
-                    "ALPHA_MODE_BLEND" | "ALPHA_MODE_ADD" => GeoRenderMode::Blended,
-                    _ => GeoRenderMode::Opaque,
-                };
+            // Shader classification gives a baseline. Material settings can only
+            // *upgrade* Opaque -> Cutout/Blended, never downgrade Cutout/Blended -> Opaque.
+            if render_mode == GeoRenderMode::Opaque {
+                if alpha_test_disabled {
+                    render_mode = GeoRenderMode::Opaque;
+                } else if alpha_test_enabled || frame_alpha_mode == "ALPHA_MODE_TEST" {
+                    render_mode = GeoRenderMode::Cutout;
+                } else {
+                    render_mode = match frame_alpha_mode.as_str() {
+                        "ALPHA_MODE_BLEND" | "ALPHA_MODE_ADD" => GeoRenderMode::Blended,
+                        _ => GeoRenderMode::Opaque,
+                    };
+                }
             }
             bindings.insert(
                 *id,
@@ -2597,9 +2584,39 @@ fn find_submeshes(
             let max_local_vertex_ref =
                 i128::from(vertex_index_min) + i128::from(vertex_index_range);
             let max_local_vertex_ref = u64::try_from(max_local_vertex_ref).ok();
-            let vertex_buffer_index = find_number(children, &["vertexbufferindex"], ids)
-                .and_then(|value| u32::try_from(value).ok())
-                .unwrap_or(0);
+            // Vertex buffer index: try explicit index fields first, then a reference to the
+            // cHcVertexBufferDx / cHcGeometryVertexDataDx node. The resolved index must
+            // match the `source_index` assigned during buffer collection (see
+            // `find_geometry_buffers`).
+            let vertex_buffer_index = find_number(
+                children,
+                &[
+                    "vertexbufferindex",
+                    "vertexdataindex",
+                    "bufferindex",
+                    "vertexbuffer",
+                ],
+                ids,
+            )
+            .and_then(|value| u32::try_from(value).ok())
+            .or_else(|| {
+                find_reference(children, "vertexbuffer")
+                    .and_then(|target_id| {
+                        // Resolve the referenced vertex buffer node and read its BufferIndex.
+                        ids.get(&target_id).and_then(|vb_node| {
+                            find_direct_number(
+                                match vb_node {
+                                    SerzNode::Element { children, .. } => children,
+                                    _ => &[],
+                                },
+                                &["bufferindex", "vertexbufferindex"],
+                                ids,
+                            )
+                            .and_then(|value| u32::try_from(value).ok())
+                        })
+                    })
+            })
+            .unwrap_or(0);
             let index_buffer_index = find_number(children, &["indexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(0);
@@ -2976,15 +2993,20 @@ fn texture_priority(reference: &str) -> u8 {
 
 fn classify_shader(shader_name: &str) -> GeoRenderMode {
     let shader = shader_name.to_ascii_lowercase();
+    // Explicit cutout shaders (alpha-tested foliage, decals, flora). "mask" is NOT a cutout trigger:
+    // TrainBumpSpecEnvMask.fx, TrainBumpSpec.fx, TrainSpecEnvMask.fx, TrainBasicObjectDiffuse.fx
+    // use the diffuse alpha channel as a specular/env mask, NOT as transparency.
     if [
         "flora",
         "veg",
         "fence",
-        "mask",
         "1bit",
         "blendatex",
         "alphatest",
         "cutout",
+        "trainflora",
+        "lofttexdifftrans",
+        "traindecal",
     ]
     .iter()
     .any(|marker| shader.contains(marker))
@@ -4777,7 +4799,7 @@ mod tests {
         assert_eq!(classify_shader("TrainGlass"), GeoRenderMode::Blended);
         assert_eq!(classify_shader("RailVehicleFlora"), GeoRenderMode::Cutout);
         assert_eq!(classify_shader("BlendATexDiff"), GeoRenderMode::Cutout);
-        assert_eq!(classify_shader("TrainDecal"), GeoRenderMode::Blended);
+        assert_eq!(classify_shader("TrainDecal"), GeoRenderMode::Cutout);
         assert_eq!(classify_shader("TrainStandard"), GeoRenderMode::Opaque);
         assert!(is_hidden_shader_name("TrainShadowOnly"));
         assert!(is_hidden_shader_name("StencilShadow"));
