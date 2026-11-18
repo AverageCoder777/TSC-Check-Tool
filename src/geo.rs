@@ -1867,10 +1867,16 @@ fn collect_vertex_buffers(
             *next_slot += 1;
             // Record this vertex buffer's SERZ ID -> source_index mapping
             vertex_buffer_id_map.insert(*id, source_index as u32);
-            // Also check for parent cHcGeometryVertexDataDx and record its ID
+            // Also record the parent cHcGeometryVertexDataDx ID (if any)
             if let SerzNode::Element { id: parent_id, .. } = find_parent_geometry_vertex_data(node, ids) {
                 if *parent_id != 0 {
                     vertex_buffer_id_map.insert(*parent_id, source_index as u32);
+                }
+            }
+            // Also record the VertexData array element ID (if any) - look for parent Element with name containing "vertexdata" that has an id
+            if let SerzNode::Element { id: vdata_id, .. } = find_parent_vertex_data_element(node, ids) {
+                if *vdata_id != 0 {
+                    vertex_buffer_id_map.insert(*vdata_id, source_index as u32);
                 }
             }
             if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
@@ -2086,6 +2092,26 @@ fn find_parent_geometry_vertex_data<'a>(
     node
 }
 
+/// Find the VertexData array element (e.g., <VertexData d:id="123">) that contains this vertex buffer.
+fn find_parent_vertex_data_element<'a>(
+    node: &'a SerzNode,
+    ids: &HashMap<u32, &'a SerzNode>,
+) -> &'a SerzNode {
+    for (_, candidate) in ids {
+        if let SerzNode::Element { name, children, id, .. } = candidate {
+            let clean_name = name.replace("::", "-").to_ascii_lowercase();
+            if clean_name.contains("vertexdata") && *id != 0 {
+                for child in children {
+                    if references_target(child, node) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+    }
+    node
+}
+
 fn references_target<'a>(
     node: &'a SerzNode,
     target: &'a SerzNode,
@@ -2102,6 +2128,48 @@ fn references_target<'a>(
         SerzNode::Element { children, .. } => children.iter().any(|c| references_target(c, target)),
         _ => false,
     }
+}
+
+/// Recursively search for a SerzNode::Reference in the subtree that points to a known vertex buffer ID.
+/// Stops at cHcGeometryNodeSameState boundaries to avoid crossing into other state groups.
+fn find_vbuf_ref_in_subtree(
+    children: &[SerzNode],
+    vb_id_to_index: &HashMap<u32, u32>,
+) -> Option<u32> {
+    fn search(node: &SerzNode, vb_id_to_index: &HashMap<u32, u32>, depth: u32) -> Option<u32> {
+        if depth > 10 {
+            return None; // Prevent infinite recursion
+        }
+        match node {
+            SerzNode::Reference { target_id, .. } => {
+                vb_id_to_index.get(target_id).copied()
+            }
+            SerzNode::Element { name, children, .. } => {
+                let clean_name = name.replace("::", "-").to_ascii_lowercase();
+                // Stop at other state group boundaries
+                if clean_name.contains("geometrynodesamestate")
+                    || clean_name.contains("primitivesetdescdx")
+                    || clean_name.contains("primlist")
+                    || clean_name.contains("primitivelist")
+                {
+                    return None;
+                }
+                for child in children {
+                    if let Some(idx) = search(child, vb_id_to_index, depth + 1) {
+                        return Some(idx);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+    for child in children {
+        if let Some(idx) = search(child, vb_id_to_index, 0) {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 fn find_vertex_attribute_offsets(
@@ -2805,34 +2873,6 @@ fn find_submeshes(
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(0);
 
-            // Debug logging for specific batches to understand SERZ structure - write to app.log
-            let node_name_lower = batch_node_name.to_ascii_lowercase();
-            if node_name_lower == "chassis" || node_name_lower == "int2" || node_name_lower.starts_with("sunblend") {
-                let xml = crate::serz::SerzReader::to_xml(node, 3, false);
-                let msg = format!(
-                    "[GeoPcDx DEBUG] Batch node_name={:?} clean_name={:?} vbuf_idx={} base_vertex={} xml=\n{}",
-                    batch_node_name, clean_name, vertex_buffer_index, base_vertex, xml
-                );
-                eprintln!("{msg}");
-                let log_path = crate::settings::log_file();
-                if let Some(parent) = log_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path)
-                {
-                    use std::io::Write;
-                    let _ = writeln!(
-                        file,
-                        "{} {}",
-                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                        msg
-                    );
-                }
-            }
-
             output.push(RawSubmesh {
                 first_index,
                 index_count,
@@ -2876,15 +2916,10 @@ fn find_submeshes(
         {
             next_inherited_vbuf = Some(vbuf_idx);
         } else {
-            // Also check for SerzNode::Reference children pointing to known vertex buffer IDs
-            for child in children {
-                if let SerzNode::Reference { target_id, .. } = child {
-                    if let Some(&vbuf_idx) = vb_id_to_index.get(target_id) {
-                        next_inherited_vbuf = Some(vbuf_idx);
-                        break;
-                    }
-                }
-            }
+            // Recursively search for SerzNode::Reference children pointing to known vertex buffer IDs
+            // (the reference might be nested inside named elements like GeometryVertexData/VertexBuffer)
+            next_inherited_vbuf = find_vbuf_ref_in_subtree(children, vb_id_to_index)
+                .or(next_inherited_vbuf);
         }
     }
 

@@ -553,6 +553,9 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
     let projection =
         Mat4::perspective_rh(45.0f32.to_radians(), aspect, 0.01, distance + radius * 4.0);
     let transform = projection * view;
+    // Train Simulator (DirectX 9) uses Left-Handed coordinates; wgpu/cpu uses Right-Handed.
+    // Flip X to convert LH -> RH, which mirrors the model horizontally.
+    let transform = transform * Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
     let mut projected = Vec::with_capacity(model.model.vertices.len());
     for vertex in &model.model.vertices {
         projected.push(project_vertex(

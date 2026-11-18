@@ -431,7 +431,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
-                    front_face: wgpu::FrontFace::Cw,
+                    front_face: wgpu::FrontFace::Ccw,
                     cull_mode: Some(cull_mode),
                     ..Default::default()
                 },
@@ -612,6 +612,9 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             distance + radius * 4.0,
         );
         let view_projection = projection * view;
+        // Train Simulator (DirectX 9) uses Left-Handed coordinates; wgpu uses Right-Handed.
+        // Flip X to convert LH -> RH, which mirrors the model horizontally.
+        let view_projection = view_projection * Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
         let camera_uniform = CameraUniform {
             view_projection: view_projection.to_cols_array(),
         };
