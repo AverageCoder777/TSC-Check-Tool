@@ -242,7 +242,8 @@ impl GeoModel {
                 return Err("vertex buffer length is not a nonzero multiple of the stride".into());
             }
             for record in buffer.bytes.chunks_exact(buffer.stride) {
-                let position = read_position(record, buffer.position_offset, buffer.position_format)?;
+                let position =
+                    read_position(record, buffer.position_offset, buffer.position_format)?;
                 let normal = buffer
                     .normal_offset
                     .filter(|offset| {
@@ -1673,7 +1674,10 @@ fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
         offset += 16;
     } else if fvf & 0x002 != 0 {
         offset += 12;
-        offset += (((fvf & 0x00E) >> 1) * 4) as usize;
+        let pos_mask = fvf & 0x00E;
+        if pos_mask >= 0x006 {
+            offset += (((pos_mask >> 1) - 2) * 4) as usize;
+        }
     }
     if fvf & 0x010 != 0 {
         normal_offset = Some(offset);
@@ -1730,7 +1734,8 @@ fn select_vertex_stride(
         .unwrap_or(32)
 }
 
-fn find_geometry_buffers(node: &SerzNode,
+fn find_geometry_buffers(
+    node: &SerzNode,
     ids: &HashMap<u32, &SerzNode>,
     batches: &[RawSubmesh],
     vertices: &mut Vec<VertexBuffer>,
@@ -1929,9 +1934,9 @@ fn find_vertex_attribute_offsets(
             }
             return;
         }
-    let SerzNode::Element { name, children, .. } = node else {
-        return;
-    };
+        let SerzNode::Element { name, children, .. } = node else {
+            return;
+        };
         let clean_name = name.to_ascii_lowercase();
         if clean_name.contains("elementdecl") {
             let usage = direct_text(children, &["usage"], ids).unwrap_or_default();
@@ -2382,7 +2387,9 @@ fn find_submeshes(
     let binding = material_reference.and_then(|reference| material_bindings.get(&reference));
     let batch_node_name = {
         let own_label = node_label.trim();
-        let inherited_label = inherited_node_name.map(str::trim).filter(|name| !name.is_empty());
+        let inherited_label = inherited_node_name
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
         let transform_name = active_transform_id
             .and_then(|transform_id| transform_names.get(transform_id))
             .map(|name| name.trim())
@@ -2455,12 +2462,19 @@ fn find_submeshes(
             let texture_index = material_reference
                 .and_then(|reference| material_bindings.get(&reference))
                 .map(|binding| binding.texture_index);
-            let base_vertex = find_number(
+            let base_vertex = find_text(
                 children,
                 &["vertexindexbase", "vertexindexbases", "basevertex"],
                 ids,
             )
-            .and_then(|value| i32::try_from(value).ok())
+            .and_then(|value| {
+                let trimmed = value.trim();
+                trimmed
+                    .parse::<i32>()
+                    .ok()
+                    .or_else(|| trimmed.parse::<u32>().ok().map(|v| v as i32))
+                    .or_else(|| trimmed.parse::<i64>().ok().map(|v| v as i32))
+            })
             .unwrap_or(0);
             let vertex_index_min = find_number(children, &["vertexindexmin"], ids).unwrap_or(0);
             let vertex_index_range = find_number(children, &["vertexindexrange"], ids).unwrap_or(0);
@@ -2871,7 +2885,7 @@ fn classify_shader(shader_name: &str) -> GeoRenderMode {
     .any(|marker| shader.contains(marker))
     {
         GeoRenderMode::Cutout
-    } else if ["glass", "trans", "alpha", "blend", "decal", "lit3dir"]
+    } else if ["glass", "trans", "alpha", "blend", "decal"]
         .iter()
         .any(|marker| shader.contains(marker))
     {
@@ -3627,7 +3641,11 @@ fn half_to_f32(bits: u16) -> f32 {
         }
         31 => {
             if mantissa == 0 {
-                return if sign == 0 { f32::INFINITY } else { -f32::INFINITY };
+                return if sign == 0 {
+                    f32::INFINITY
+                } else {
+                    -f32::INFINITY
+                };
             }
             return f32::NAN;
         }
@@ -3638,16 +3656,14 @@ fn half_to_f32(bits: u16) -> f32 {
     f32::from_bits(bits32)
 }
 
-fn read_position(
-    record: &[u8],
-    offset: usize,
-    format: PositionFormat,
-) -> Result<[f32; 3], String> {
+fn read_position(record: &[u8], offset: usize, format: PositionFormat) -> Result<[f32; 3], String> {
     match format {
         PositionFormat::Float3 => read_vec3(record, offset),
         PositionFormat::Float16_4 => {
             let end = offset.checked_add(8).ok_or("vertex offset overflow")?;
-            let bytes = record.get(offset..end).ok_or("position outside vertex record")?;
+            let bytes = record
+                .get(offset..end)
+                .ok_or("position outside vertex record")?;
             Ok([
                 half_to_f32(u16::from_le_bytes([bytes[0], bytes[1]])),
                 half_to_f32(u16::from_le_bytes([bytes[2], bytes[3]])),
@@ -3656,7 +3672,9 @@ fn read_position(
         }
         PositionFormat::Short4N => {
             let end = offset.checked_add(8).ok_or("vertex offset overflow")?;
-            let bytes = record.get(offset..end).ok_or("position outside vertex record")?;
+            let bytes = record
+                .get(offset..end)
+                .ok_or("position outside vertex record")?;
             let to_f32 = |value: i16| {
                 if value == i16::MIN {
                     -1.0
@@ -5088,9 +5106,15 @@ mod tests {
     fn decodes_float16_4_position_from_vertex_type_declaration() {
         let half = |v: f32| -> u16 {
             match v {
-                1.0 => 0x3C00, 2.0 => 0x4000, 3.0 => 0x4200,
-                4.0 => 0x4400, 5.0 => 0x4500, 6.0 => 0x4600,
-                7.0 => 0x4700, 8.0 => 0x4800, 0.0 => 0x0000,
+                1.0 => 0x3C00,
+                2.0 => 0x4000,
+                3.0 => 0x4200,
+                4.0 => 0x4400,
+                5.0 => 0x4500,
+                6.0 => 0x4600,
+                7.0 => 0x4700,
+                8.0 => 0x4800,
+                0.0 => 0x0000,
                 _ => 0,
             }
         };
