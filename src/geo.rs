@@ -77,7 +77,7 @@ impl GeoSubmesh {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum GeoRenderMode {
     #[default]
     Opaque,
@@ -134,6 +134,7 @@ struct RawSubmesh {
     node_name: String,
     material_name: String,
     shader_name: String,
+    render_mode: GeoRenderMode,
     lod_level: u8,
 }
 
@@ -2571,6 +2572,7 @@ fn find_submeshes(
                 shader_name: binding
                     .map(|binding| binding.shader_name.clone())
                     .unwrap_or_default(),
+                render_mode: binding.map(|binding| binding.render_mode).unwrap_or_default(),
                 lod_level: u8::try_from(lod.unwrap_or(0)).unwrap_or(u8::MAX),
             });
         }
@@ -2625,7 +2627,9 @@ struct RawSubmeshKey {
     excluded: bool,
     lod_level: u8,
     node_name: String,
+    material_name: String,
     shader_name: String,
+    render_mode: GeoRenderMode,
 }
 
 fn deduplicate_submeshes(batches: &mut Vec<RawSubmesh>) {
@@ -2646,7 +2650,9 @@ fn deduplicate_submeshes(batches: &mut Vec<RawSubmesh>) {
             excluded: batch.excluded,
             lod_level: batch.lod_level,
             node_name: batch.node_name.clone(),
+            material_name: batch.material_name.clone(),
             shader_name: batch.shader_name.clone(),
+            render_mode: batch.render_mode,
         })
     });
 }
@@ -5101,6 +5107,41 @@ mod tests {
 
         assert_eq!(model.submeshes.len(), 4);
         assert_eq!(model.indices.len(), 12);
+    }
+
+    #[test]
+    fn deduplicates_only_exact_batches_not_material_layers() {
+        let base = RawSubmesh {
+            first_index: 0,
+            index_count: 3,
+            material_reference: Some(7),
+            material_index: Some(0),
+            texture_index: Some(0),
+            vertex_buffer_index: 0,
+            index_buffer_index: 0,
+            base_vertex: 0,
+            max_local_vertex_ref: Some(3),
+            topology: PrimitiveTopology::TriangleList,
+            transform: Mat4::IDENTITY,
+            excluded: false,
+            node_name: "body".into(),
+            material_name: "body".into(),
+            shader_name: "TrainStandard".into(),
+            render_mode: GeoRenderMode::Opaque,
+            lod_level: 0,
+        };
+        let dirt_layer = RawSubmesh {
+            material_name: "body_dirt".into(),
+            ..base.clone()
+        };
+        let blended_overlay = RawSubmesh {
+            render_mode: GeoRenderMode::Blended,
+            ..base.clone()
+        };
+        let mut batches = vec![base, dirt_layer.clone(), blended_overlay, dirt_layer];
+        deduplicate_submeshes(&mut batches);
+
+        assert_eq!(batches.len(), 3);
     }
 
     #[test]
