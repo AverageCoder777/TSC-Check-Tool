@@ -248,19 +248,24 @@ impl GeoModel {
                 .and_then(|position| index_data.get(*position))
         };
         let mut vertices = Vec::new();
-        let mut vertex_buffer_offsets = Vec::with_capacity(vertex_data.len());
+        // Indexed by `vertex_data` position, not by decode order: a skipped buffer keeps a
+        // `None` slot so later batches still resolve to the right offset (or are skipped).
+        let mut vertex_buffer_offsets: Vec<Option<i32>> = vec![None; vertex_data.len()];
         let mut vertex_layouts = Vec::with_capacity(vertex_data.len());
-        for buffer in &vertex_data {
-            vertex_buffer_offsets.push(vertices.len());
-            vertex_layouts.push(buffer.layout.clone());
-            if buffer.stride == 0 {
-                return Err("vertex buffer has a zero-byte stride".into());
-            }
-            let vertex_count = buffer.bytes.len() / buffer.stride;
-            if vertex_count == 0 || buffer.bytes.len() % buffer.stride != 0 {
-                return Err("vertex buffer length is not a nonzero multiple of the stride".into());
-            }
-            for record in buffer.bytes.chunks_exact(buffer.stride) {
+        for (buffer_position, buffer) in vertex_data.iter().enumerate() {
+            let buffer_offset = vertices.len();
+            // Decode into a scratch buffer first: a broken buffer must not leave a partial
+            // vertex run behind, otherwise later batches would read half-written geometry.
+            let mut decoded = Vec::new();
+            let result = (|| -> Result<(), String> {
+                if buffer.stride == 0 {
+                    return Err("zero-byte stride".into());
+                }
+                let vertex_count = buffer.bytes.len() / buffer.stride;
+                if vertex_count == 0 || buffer.bytes.len() % buffer.stride != 0 {
+                    return Err("length is not a nonzero multiple of the stride".into());
+                }
+                for record in buffer.bytes.chunks_exact(buffer.stride) {
                 let position =
                     read_position(record, buffer.position_offset, buffer.position_format)?;
                 let normal = buffer
@@ -288,11 +293,25 @@ impl GeoModel {
                 {
                     return Err("vertex buffer contains non-finite values".into());
                 }
-                vertices.push(GeoVertex {
+                decoded.push(GeoVertex {
                     position,
                     normal,
                     uv,
                 });
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    vertices.extend(decoded);
+                    vertex_buffer_offsets[buffer_position] =
+                        i32::try_from(buffer_offset).ok();
+                    vertex_layouts.push(buffer.layout.clone());
+                }
+                Err(reason) => warn_parse_skip(format!(
+                    "skipping vertex buffer #{} ({}): {}",
+                    buffer.source_index, buffer.layout, reason,
+                )),
             }
         }
 
@@ -327,6 +346,7 @@ impl GeoModel {
         if has_batch_ranges {
             let source_vertices = vertices.clone();
             for batch in render_batches {
+                let result = (|| -> Result<(), String> {
                 let Some(end) = batch.first_index.checked_add(batch.index_count) else {
                     return Err("primitive batch index range overflows".into());
                 };
@@ -336,16 +356,15 @@ impl GeoModel {
                     .indices
                     .get(batch.first_index as usize..end as usize)
                     .ok_or("primitive batch index range is outside its index buffer")?;
-                let vertex_buffer_offset = *vertex_buffer_offsets
+                let vertex_buffer_offset = vertex_buffer_offsets
                     .get(
                         vertex_slots
                             .get(&batch.vertex_buffer_index)
                             .copied()
                             .ok_or("primitive batch references a missing vertex buffer")?,
                     )
-                    .ok_or("primitive batch references a missing vertex buffer")?;
-                let vertex_buffer_offset = i32::try_from(vertex_buffer_offset)
-                    .map_err(|_| "vertex buffer offset exceeds draw limits")?;
+                    .and_then(|offset| *offset)
+                    .ok_or("primitive batch references a vertex buffer that failed to decode")?;
                 let binding = batch
                     .material_reference
                     .and_then(|reference| material_bindings.get(&reference));
@@ -403,6 +422,19 @@ impl GeoModel {
                         vertex_buffer_offset,
                     )?;
                 }
+                Ok(())
+                })();
+                if let Err(reason) = result {
+                    warn_parse_skip(format!(
+                        "skipping primitive batch vertex_buffer={} index_buffer={} start={} count={} node={:?}: {}",
+                        batch.vertex_buffer_index,
+                        batch.index_buffer_index,
+                        batch.first_index,
+                        batch.index_count,
+                        batch.node_name,
+                        reason,
+                    ));
+                }
             }
         }
         if !has_batch_ranges && submeshes.is_empty() {
@@ -411,7 +443,7 @@ impl GeoModel {
                 primitive_type,
                 first_index_buffer.element_type,
             );
-            append_submesh(
+            if let Err(reason) = append_submesh(
                 &mut indices,
                 &mut submeshes,
                 triangles,
@@ -424,7 +456,9 @@ impl GeoModel {
                 0,
                 0,
                 vertices.len(),
-            )?;
+            ) {
+                warn_parse_skip(format!("skipping unnamed geometry batch: {reason}"));
+            }
         }
         if indices.is_empty() {
             return Err("index buffer contains no complete, valid triangles".into());
@@ -3588,6 +3622,31 @@ fn decode_indices(data: &[u8], width: usize) -> Result<Vec<u32>, String> {
         .collect())
 }
 
+/// Best-effort warning channel for recoverable per-buffer/per-batch parse failures.
+/// A single broken buffer must not abort the whole model, so the reason is logged and
+/// only the offending buffer or batch is skipped.
+fn warn_parse_skip(message: String) {
+    use std::io::Write;
+
+    eprintln!("[GeoPcDx] {message}");
+    let log_path = crate::settings::log_file();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(
+            file,
+            "{} [GeoPcDx] {}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+            message
+        );
+    }
+}
+
 pub(crate) fn log_parse_diagnostics(path: &Path, diagnostics: &GeoParseDiagnostics) {
     use std::io::Write;
 
@@ -5142,6 +5201,75 @@ mod tests {
         deduplicate_submeshes(&mut batches);
 
         assert_eq!(batches.len(), 3);
+    }
+
+    #[test]
+    fn skips_only_the_broken_vertex_buffer_and_its_batch() {
+        // Buffer #0 has a NaN position; buffer #1 is valid. The model must still load and
+        // render the batch that addresses buffer #1.
+        let mut broken = Vec::new();
+        for vertex in 0..3 {
+            for value in [
+                if vertex == 0 { f32::NAN } else { vertex as f32 },
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+            ] {
+                broken.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        assert_eq!(broken.len(), 96);
+        let broken_hex = broken.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let valid = triangle_vertices(3);
+        let valid_hex = valid.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let index_hex = [0u16, 1, 2]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .map(|b| format!("{b:02X}"))
+            .collect::<String>();
+        let source = format!(
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                    <VertexData><blob>{broken_hex}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                    <VertexData><blob>{valid_hex}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcIndexBuffer>
+                    <IndexSize d:type="sUInt32">2</IndexSize>
+                    <IndexData><blob>{index_hex}</blob></IndexData>
+                </cHcIndexBuffer>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                    <VertexBufferIndex d:type="sUInt32">0</VertexBufferIndex>
+                    <VertexIndexBase d:type="sUInt32">0</VertexIndexBase>
+                </cHcPrimitiveList>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                    <VertexBufferIndex d:type="sUInt32">1</VertexBufferIndex>
+                    <VertexIndexBase d:type="sUInt32">0</VertexIndexBase>
+                    <Transform d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</Transform>
+                </cHcPrimitiveList>
+                <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
+            </Root>"#
+        );
+        let model = GeoModel::parse(source.as_bytes()).unwrap();
+
+        assert_eq!(model.submeshes.len(), 1);
+        assert_eq!(model.indices.len(), 3);
+        assert!(model.vertices.iter().all(|vertex| {
+            vertex.position.iter().all(|value| value.is_finite())
+                && vertex.normal.iter().all(|value| value.is_finite())
+                && vertex.uv.iter().all(|value| value.is_finite())
+        }));
     }
 
     #[test]
