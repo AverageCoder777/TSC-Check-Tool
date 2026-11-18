@@ -223,39 +223,6 @@ impl GeoModel {
             &mut vertex_data,
             &mut index_data,
         );
-        // Resolve vertex_buffer_index for batches that reference vertex buffers via SERZ references.
-        // Batches store the target SERZ node ID in their vertex_buffer_index field as a sentinel
-        // (currently 0). We need to look up the reference from the geometry node that owns the batch.
-        // Since the batch doesn't carry the reference directly, we do a second pass: for each batch,
-        // if its vertex_buffer_index is 0 (unresolved), try to find a reference in its ancestor
-        // cHcGeometryNodeSameState / cHcPrimitiveSetDescDx to a vertex buffer node and resolve it.
-        // For now, use the fallback by vertex range as implemented in find_submeshes, but also
-        // check if we can resolve from the map using the batch's node_name or material as hints.
-        // The proper fix is to capture the vertex buffer reference during find_submeshes when
-        // traversing cHcGeometryNodeSameState. For now, apply the vertex range fallback which
-        // should work for int1/int2 (small vertex counts) vs chassis (large).
-        // Actually, the find_submeshes already has the vertex range fallback. The issue is that
-        // the vertex_data isn't available yet at that point. Let's do a post-pass here:
-        for batch in &mut raw_batches {
-            if batch.vertex_buffer_index == 0 {
-                // Try to infer from vertex range: int1/int2 have small vertex ranges that
-                // only fit in vb[1] (18758 vertices, stride 32) not vb[0] (80252 vertices, stride 52).
-                let batch_min = batch.base_vertex as i64;
-                let batch_max = batch_min + batch.max_local_vertex_ref.unwrap_or(0) as i64;
-                for (idx, vb) in vertex_data.iter().enumerate() {
-                    let vb_count = if vb.stride == 0 {
-                        0
-                    } else {
-                        vb.bytes.len() / vb.stride
-                    };
-                    if batch_min >= 0 && batch_max <= vb_count as i64 && vb_count < 50000 {
-                        // Prefer smaller buffers for interior geometry
-                        batch.vertex_buffer_index = idx as u32;
-                        break;
-                    }
-                }
-            }
-        }
         log_vertex_buffer_diagnostics(path, &vertex_data, &index_data);
 
         let first_vertex_buffer = vertex_data
@@ -2381,6 +2348,12 @@ fn find_material_bindings(
                     };
                 }
             }
+            // sunblend is a semi-transparent sun visor material in the cab. In TS it's defined
+            // by material Name="sunblend" with shader TrainBasicObjectDiffuse.fx, so we must
+            // check material_name, not shader_name.
+            if display_material_name.to_ascii_lowercase().contains("sunblend") {
+                render_mode = GeoRenderMode::Blended;
+            }
             bindings.insert(
                 *id,
                 MaterialBinding {
@@ -2707,6 +2680,15 @@ fn find_submeshes(
             let index_buffer_index = find_number(children, &["indexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
                 .unwrap_or(0);
+
+            // Debug logging for specific batches to understand SERZ structure
+            let node_name_lower = batch_node_name.to_ascii_lowercase();
+            if node_name_lower == "chassis" || node_name_lower == "int2" || node_name_lower.starts_with("sunblend") {
+                let xml = crate::serz::SerzReader::to_xml(node, 3, false);
+                eprintln!("[GeoPcDx DEBUG] Batch node_name={:?} clean_name={:?} vbuf_idx={} base_vertex={} xml=\n{}", 
+                    batch_node_name, clean_name, vertex_buffer_index, base_vertex, xml);
+            }
+
             output.push(RawSubmesh {
                 first_index,
                 index_count,
