@@ -2219,8 +2219,6 @@ fn find_material_bindings(
         if name.eq_ignore_ascii_case("cHcEffectMaterialDx")
             || name.eq_ignore_ascii_case("cHcExplicitStateMaterial")
         {
-            let material_index = *next_index;
-            *next_index = (*next_index).saturating_add(1);
             let mut texture_references = collect_text_values(children, &["texturebyname"], ids);
             let mut delta_strings = Vec::new();
             let mut reference_stack = HashSet::new();
@@ -2232,6 +2230,25 @@ fn find_material_bindings(
                     || value.contains('/')
                     || value.to_ascii_lowercase().contains(".tgpcdx")
             }));
+            let shader_name =
+                find_text(children, &["shadername", "effectname"], ids).unwrap_or_default();
+            let texture_is_shadow = texture_references
+                .iter()
+                .any(|texture| texture.to_ascii_lowercase().contains("shadow"));
+            let frame_alpha_mode = find_text(children, &["framealphamode"], ids)
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_uppercase();
+            let subtract_alpha = frame_alpha_mode == "ALPHA_MODE_SUBTRACT";
+            // Invisible/shadow/collision materials are stripped from the texture table by
+            // `auditor::filter_material_blocks`, so they must not consume a `material_index`
+            // slot here, otherwise `material_index` desynchronizes from `textures` and
+            // visible batches fall back to the wrong texture index.
+            let excluded = is_hidden_shader_name(&shader_name) || texture_is_shadow || subtract_alpha;
+            let material_index = *next_index;
+            if !excluded {
+                *next_index = (*next_index).saturating_add(1);
+            }
             let texture_index = texture_references
                 .iter()
                 .filter_map(|reference| {
@@ -2244,8 +2261,6 @@ fn find_material_bindings(
                 .min_by_key(|(_, priority)| *priority)
                 .map(|(index, _)| index)
                 .unwrap_or(0) as u32;
-            let shader_name =
-                find_text(children, &["shadername", "effectname"], ids).unwrap_or_default();
             let material_name =
                 find_text(children, &["name", "materialname"], ids).unwrap_or_default();
             let display_material_name = {
@@ -2256,14 +2271,6 @@ fn find_material_bindings(
                     trimmed.to_owned()
                 }
             };
-            let texture_is_shadow = texture_references
-                .iter()
-                .any(|texture| texture.to_ascii_lowercase().contains("shadow"));
-            let frame_alpha_mode = find_text(children, &["framealphamode"], ids)
-                .unwrap_or_default()
-                .trim()
-                .to_ascii_uppercase();
-            let subtract_alpha = frame_alpha_mode == "ALPHA_MODE_SUBTRACT";
             let alpha_test_type = find_text(children, &["alphatesttype"], ids)
                 .unwrap_or_default()
                 .trim()
@@ -2292,9 +2299,7 @@ fn find_material_bindings(
                     material_index,
                     texture_index,
                     render_mode,
-                    excluded: is_hidden_shader_name(shader_name)
-                        || texture_is_shadow
-                        || subtract_alpha,
+                    excluded,
                     material_name: display_material_name,
                     shader_name: shader_name.trim().to_owned(),
                     alpha_ref,
