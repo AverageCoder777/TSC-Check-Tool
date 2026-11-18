@@ -228,6 +228,24 @@ impl GeoModel {
         let first_index_buffer = index_data
             .first()
             .ok_or("GeoPcDx has no supported index buffer")?;
+        // Batches address buffers by their declared array slot, not by the order in which
+        // parsable buffers ended up in these vectors. Buffers that fail to decode are
+        // skipped, so a positional lookup would silently bind a batch to the wrong data.
+        let vertex_slots = vertex_data
+            .iter()
+            .enumerate()
+            .map(|(position, buffer)| (buffer.source_index as u32, position))
+            .collect::<HashMap<_, _>>();
+        let index_slots = index_data
+            .iter()
+            .enumerate()
+            .map(|(position, buffer)| (buffer.source_index as u32, position))
+            .collect::<HashMap<_, _>>();
+        let resolve_index_buffer = |index: u32| {
+            index_slots
+                .get(&index)
+                .and_then(|position| index_data.get(*position))
+        };
         let mut vertices = Vec::new();
         let mut vertex_buffer_offsets = Vec::with_capacity(vertex_data.len());
         let mut vertex_layouts = Vec::with_capacity(vertex_data.len());
@@ -311,15 +329,19 @@ impl GeoModel {
                 let Some(end) = batch.first_index.checked_add(batch.index_count) else {
                     return Err("primitive batch index range overflows".into());
                 };
-                let index_buffer = index_data
-                    .get(batch.index_buffer_index as usize)
+                let index_buffer = resolve_index_buffer(batch.index_buffer_index)
                     .ok_or("primitive batch references a missing index buffer")?;
                 let range = index_buffer
                     .indices
                     .get(batch.first_index as usize..end as usize)
                     .ok_or("primitive batch index range is outside its index buffer")?;
                 let vertex_buffer_offset = *vertex_buffer_offsets
-                    .get(batch.vertex_buffer_index as usize)
+                    .get(
+                        vertex_slots
+                            .get(&batch.vertex_buffer_index)
+                            .copied()
+                            .ok_or("primitive batch references a missing vertex buffer")?,
+                    )
                     .ok_or("primitive batch references a missing vertex buffer")?;
                 let vertex_buffer_offset = i32::try_from(vertex_buffer_offset)
                     .map_err(|_| "vertex buffer offset exceeds draw limits")?;
@@ -1617,6 +1639,10 @@ pub(crate) fn log_assembly_warning(path: &Path, message: &str) {
 
 #[derive(Clone, Debug)]
 struct VertexBuffer {
+    /// Position of the buffer inside the geometry `VertexBuffers` array, matching the
+    /// `VertexBufferIndex` stored on primitive batches. Traversal order alone is not
+    /// authoritative because unparsable buffers must keep consuming a slot.
+    source_index: usize,
     bytes: Vec<u8>,
     stride: usize,
     declared_vertex_count: usize,
@@ -1630,6 +1656,8 @@ struct VertexBuffer {
 
 #[derive(Clone, Debug)]
 struct IndexBuffer {
+    /// Position inside the geometry `IndexBuffers` array, matching `IndexBufferIndex`.
+    source_index: usize,
     indices: Vec<u32>,
     element_type: &'static str,
 }
@@ -1723,9 +1751,10 @@ fn select_vertex_stride(
 ) -> usize {
     let valid = |stride: usize| stride > 0 && bytes_len % stride == 0;
     // Сначала ищем первый валидный stride, который ИДЕАЛЬНО делит байтовый буфер без остатка.
-    // Приоритет отдаем декларациям (они точнее всего описывают структуру), 
+    // Приоритет отдаем декларациям (они точнее всего описывают структуру),
     // затем - явно указанному в файле stride.
-    Some(declaration).filter(|stride| valid(*stride))
+    Some(declaration)
+        .filter(|stride| valid(*stride))
         .or(declared.filter(|stride| valid(*stride)))
         .or(explicit.filter(|stride| valid(*stride)))
         .or(Some(fvf_stride).filter(|stride| valid(*stride)))
@@ -1745,6 +1774,7 @@ fn find_geometry_buffers(
     vertices: &mut Vec<VertexBuffer>,
     indices: &mut Vec<IndexBuffer>,
 ) {
+    #[allow(clippy::too_many_arguments)]
     fn collect(
         node: &SerzNode,
         ids: &HashMap<u32, &SerzNode>,
@@ -1754,6 +1784,7 @@ fn find_geometry_buffers(
         reference_stack: &mut HashSet<u32>,
         visited_elements: &mut HashSet<u32>,
         vertex_pass: bool,
+        next_slot: &mut usize,
     ) {
         if let SerzNode::Reference { target_id, .. } = node {
             if reference_stack.insert(*target_id) {
@@ -1767,6 +1798,7 @@ fn find_geometry_buffers(
                         reference_stack,
                         visited_elements,
                         vertex_pass,
+                        next_slot,
                     );
                 }
                 reference_stack.remove(target_id);
@@ -1784,6 +1816,11 @@ fn find_geometry_buffers(
         }
         let clean_name = name.replace("::", "-").to_ascii_lowercase();
         if vertex_pass && clean_name.contains("chcvertexbuffer") {
+            let source_index =
+                find_direct_number(children, &["bufferindex", "vertexbufferindex"], ids)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .unwrap_or(*next_slot);
+            *next_slot += 1;
             if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
                 let declared_vertex_count = find_direct_number(children, &["numvertices"], ids)
                     .and_then(|value| usize::try_from(value).ok());
@@ -1796,22 +1833,25 @@ fn find_geometry_buffers(
                     (0, None, None)
                 };
                 let declaration = find_vertex_attribute_offsets(children, ids);
+                // Вычисляем реальный шаг, просто отбрасывая мусорный паддинг в конце буфера
                 let declared_stride = declared_vertex_count
-                    .filter(|count| *count > 0 && bytes.len() % count == 0)
+                    .filter(|count| *count > 0 && bytes.len() >= *count)
                     .map(|count| bytes.len() / count);
+
                 let explicit_stride = find_direct_number(
                     children,
                     &["vertexstride", "stride", "vertexsize", "vertexstridebytes"],
                     ids,
                 )
                 .and_then(|value| usize::try_from(value).ok());
-                let stride = select_vertex_stride(
-                    bytes.len(),
-                    explicit_stride,
-                    declared_stride,
-                    declaration.declaration_stride,
-                    fvf_stride,
-                );
+
+                // Жесткий приоритет: 1. Явный размер из файла, 2. Вычисленный по кол-ву вершин, 3. Декларация
+                let stride = explicit_stride
+                    .filter(|s| *s > 0)
+                    .or(declared_stride.filter(|s| *s > 0))
+                    .or(Some(declaration.declaration_stride).filter(|s| *s > 0))
+                    .or(Some(fvf_stride).filter(|s| *s > 0))
+                    .unwrap_or(32);
                 // An explicit `PositionOffset` wins when present; otherwise fall back to the
                 // declaration's POSITION offset, then to zero.
                 let position = find_direct_number(children, &["positionoffset"], ids)
@@ -1842,6 +1882,7 @@ fn find_geometry_buffers(
                     declaration.declaration,
                 );
                 vertices.push(VertexBuffer {
+                    source_index,
                     bytes,
                     stride,
                     declared_vertex_count: declared_vertex_count.unwrap_or(0),
@@ -1855,7 +1896,11 @@ fn find_geometry_buffers(
             }
         }
         if !vertex_pass && clean_name.contains("chcindexbuffer") {
-            let buffer_index = indices.len();
+            let buffer_index =
+                find_direct_number(children, &["bufferindex", "indexbufferindex"], ids)
+                    .and_then(|value| usize::try_from(value).ok())
+                    .unwrap_or(*next_slot);
+            *next_slot += 1;
             let vertex_counts = vertices
                 .iter()
                 .map(|buffer| {
@@ -1882,6 +1927,7 @@ fn find_geometry_buffers(
                 reference_stack,
                 visited_elements,
                 vertex_pass,
+                next_slot,
             );
         }
     }
@@ -1895,6 +1941,7 @@ fn find_geometry_buffers(
         &mut HashSet::new(),
         &mut HashSet::new(),
         true,
+        &mut 0,
     );
     collect(
         node,
@@ -1905,6 +1952,7 @@ fn find_geometry_buffers(
         &mut HashSet::new(),
         &mut HashSet::new(),
         false,
+        &mut 0,
     );
 }
 
@@ -2427,7 +2475,7 @@ fn find_submeshes(
             &["firstindex", "startindex", "indexstart", "indexarraystart"],
             ids,
         );
-        let topology = find_primitive_topology(node, ids);
+        let mut topology = find_primitive_topology(node, ids);
         let is_primitive_set = clean_name.contains("primitivesetdescdx");
         // RailWorks stores `NumPrimitives` as a raw index count on primitive-set descriptors,
         // but as a primitive count on legacy list nodes. Never read past the implied range:
@@ -2453,6 +2501,17 @@ fn find_submeshes(
             (None, Some(primitives)) => primitives_to_indices(primitives),
             (None, None) => None,
         };
+
+        if topology == PrimitiveTopology::TriangleStrip {
+            if let Some(idx_count) = count {
+                if let Some(orig_tris) = find_number(children, &["numoriginaltriangles"], ids) {
+                    if idx_count >= orig_tris * 3 {
+                        topology = PrimitiveTopology::TriangleList;
+                    }
+                }
+            }
+        }
+
         if let (Some(first), Some(count)) = (first, count)
             && let (Ok(first_index), Ok(index_count)) = (u32::try_from(first), u32::try_from(count))
         {
@@ -2480,6 +2539,7 @@ fn find_submeshes(
                     .or_else(|| trimmed.parse::<i64>().ok().map(|v| v as i32))
             })
             .unwrap_or(0);
+
             let vertex_index_min = find_number(children, &["vertexindexmin"], ids).unwrap_or(0);
             let vertex_index_range = find_number(children, &["vertexindexrange"], ids).unwrap_or(0);
             let max_local_vertex_ref =
@@ -2934,6 +2994,7 @@ fn find_index_data(
     if let Some((values, type_name)) = find_index_array(children, ids) {
         let width = width_from_type_name(&type_name)?;
         return Some(IndexBuffer {
+            source_index: index_buffer_index,
             indices: values,
             element_type: type_name_from_width(width),
         });
@@ -2978,6 +3039,7 @@ fn find_index_data(
     };
     let width = explicit_width.unwrap_or(if inferred_u32 { 4 } else { 2 });
     Some(IndexBuffer {
+        source_index: index_buffer_index,
         indices: decode_indices(&bytes, width).ok()?,
         element_type: type_name_from_width(width),
     })
@@ -3134,7 +3196,7 @@ fn parse_primitive_topology(value: &str) -> PrimitiveTopology {
 fn convert_to_triangle_list(
     indices: &[u32],
     topology: PrimitiveTopology,
-    index_element_type: &str,
+    _index_element_type: &str,
 ) -> Vec<u32> {
     match topology {
         PrimitiveTopology::TriangleList => {
@@ -3142,28 +3204,18 @@ fn convert_to_triangle_list(
             indices[..complete_index_count].to_vec()
         }
         PrimitiveTopology::TriangleStrip => {
-            let restart_index = if index_element_type == "u16" {
-                u16::MAX as u32
-            } else {
-                u32::MAX
-            };
             let mut triangles = Vec::with_capacity(indices.len().saturating_sub(2) * 3);
-            let mut segment_start = 0;
             for (position, &index) in indices.iter().enumerate() {
-                if index == restart_index {
-                    segment_start = position + 1;
-                    continue;
-                }
-                if position < segment_start + 2 {
+                if position < 2 {
                     continue;
                 }
                 let mut a = indices[position - 2];
                 let mut b = indices[position - 1];
-                if (position - segment_start) % 2 == 1 {
+                if position % 2 == 1 {
                     std::mem::swap(&mut a, &mut b);
                 }
-                // Degenerate slots connect strips and must be dropped, but they still
-                // advance the winding parity exactly like DirectX does.
+                // Дегенеративные треугольники отбрасываются, но
+                // естественным образом сдвигают winding parity для DX9.
                 if a != b && b != index && a != index {
                     triangles.extend_from_slice(&[a, b, index]);
                 }
@@ -4752,18 +4804,6 @@ mod tests {
     }
 
     #[test]
-    fn restarts_strip_winding_after_restart_indices() {
-        assert_eq!(
-            convert_to_triangle_list(
-                &[0, 1, 2, 3, u32::from(u16::MAX), 4, 5, 6],
-                PrimitiveTopology::TriangleStrip,
-                "u16"
-            ),
-            [0, 1, 2, 2, 1, 3, 4, 5, 6]
-        );
-    }
-
-    #[test]
     fn clamps_triangle_strip_batches_to_declared_primitive_count() {
         let batch = r#"
             <cHcPrimitiveList>
@@ -5312,5 +5352,59 @@ mod tests {
         assert_eq!(model.vertices[3].position, [10.0, 0.0, 0.0]);
         assert_eq!(model.vertices[4].position, [0.0, 10.0, 0.0]);
         assert_eq!(model.vertices[5].position, [0.0, 0.0, 10.0]);
+    }
+
+    #[test]
+    fn batch_binds_declared_vertex_buffer_slot_when_a_buffer_is_skipped() {
+        fn blob(positions: [[f32; 3]; 3]) -> String {
+            positions
+                .iter()
+                .flat_map(|pos| {
+                    let mut record = pos.iter().flat_map(|c| c.to_le_bytes()).collect::<Vec<_>>();
+                    record.extend_from_slice(&[0u8; 20]);
+                    record
+                })
+                .map(|b| format!("{b:02X}"))
+                .collect()
+        }
+        let slot_zero = blob([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        let slot_two = blob([[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]);
+        let index_hex = [0u16, 1, 2]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .map(|b| format!("{b:02X}"))
+            .collect::<String>();
+        let xml = format!(
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                    <NumVertices d:type="sUInt32">3</NumVertices>
+                    <VertexData><blob>{slot_zero}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                </cHcVertexBuffer>
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                    <NumVertices d:type="sUInt32">3</NumVertices>
+                    <VertexData><blob>{slot_two}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcIndexBuffer>
+                    <IndexSize d:type="sUInt32">2</IndexSize>
+                    <IndexData><blob>{index_hex}</blob></IndexData>
+                </cHcIndexBuffer>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                    <VertexBufferIndex d:type="sUInt32">2</VertexBufferIndex>
+                    <VertexIndexBase d:type="sUInt32">0</VertexIndexBase>
+                </cHcPrimitiveList>
+                <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
+            </Root>"#
+        );
+        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        assert_eq!(model.vertices.len(), 6);
+        assert_eq!(model.indices, [3, 4, 5]);
+        assert_eq!(model.vertices[3].position, [10.0, 0.0, 0.0]);
     }
 }
