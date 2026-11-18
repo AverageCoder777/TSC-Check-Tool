@@ -38,7 +38,7 @@ pub struct GeoAssembly {
     pub has_blueprint_attachments: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GeoSubmesh {
     pub first_index: u32,
     pub index_count: u32,
@@ -48,6 +48,8 @@ pub struct GeoSubmesh {
     pub vertex_buffer_index: u32,
     pub base_vertex: i32,
     pub vertex_buffer_offset: i32,
+    /// Alpha cutout threshold (`AlphaRef / 255.0`), only honored for `Cutout` batches.
+    pub alpha_cutoff: f32,
     /// Draw flag only: buffers stay resident, so toggling never re-uploads geometry.
     pub visible: bool,
     pub node_name: String,
@@ -240,7 +242,7 @@ impl GeoModel {
                 return Err("vertex buffer length is not a nonzero multiple of the stride".into());
             }
             for record in buffer.bytes.chunks_exact(buffer.stride) {
-                let position = read_vec3(record, buffer.position_offset)?;
+                let position = read_position(record, buffer.position_offset, buffer.position_format)?;
                 let normal = buffer
                     .normal_offset
                     .filter(|offset| {
@@ -335,6 +337,7 @@ impl GeoModel {
                 let render_mode = binding
                     .map(|binding| binding.render_mode)
                     .unwrap_or_default();
+                let alpha_cutoff = binding.map(|binding| binding.alpha_ref).unwrap_or(0.5);
                 let triangles =
                     convert_to_triangle_list(range, batch.topology, index_buffer.element_type);
                 let info = BatchInfo {
@@ -351,6 +354,7 @@ impl GeoModel {
                         material_index,
                         texture_index,
                         render_mode,
+                        alpha_cutoff,
                         &info,
                         batch.vertex_buffer_index,
                         batch.base_vertex,
@@ -368,6 +372,7 @@ impl GeoModel {
                         material_index,
                         texture_index,
                         render_mode,
+                        alpha_cutoff,
                         &info,
                         batch.vertex_buffer_index,
                         batch.base_vertex,
@@ -389,6 +394,7 @@ impl GeoModel {
                 0,
                 0,
                 GeoRenderMode::Opaque,
+                0.5,
                 &BatchInfo::default(),
                 0,
                 0,
@@ -1615,6 +1621,7 @@ struct VertexBuffer {
     declared_vertex_count: usize,
     fvf: u32,
     position_offset: usize,
+    position_format: PositionFormat,
     normal_offset: Option<usize>,
     uv_offset: Option<usize>,
     layout: String,
@@ -1634,15 +1641,28 @@ struct MaterialBinding {
     excluded: bool,
     material_name: String,
     shader_name: String,
+    alpha_ref: f32,
 }
 
 #[derive(Clone, Debug)]
 struct VertexAttributeOffsets {
     position: Option<usize>,
+    position_format: PositionFormat,
     normal: Option<usize>,
     uv: Option<usize>,
     declaration_stride: usize,
     declaration: String,
+}
+
+fn position_format_from_type(type_name: &str) -> PositionFormat {
+    let type_name = type_name.to_ascii_lowercase();
+    if type_name.contains("float16") || type_name.contains("half") {
+        return PositionFormat::Float16_4;
+    }
+    if type_name.contains("short4n") {
+        return PositionFormat::Short4N;
+    }
+    PositionFormat::Float3
 }
 
 fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
@@ -1686,8 +1706,10 @@ fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
     (offset, normal_offset, uv_offset)
 }
 
-/// Picks a stride that actually divides the buffer. A wrong stride shifts every
-/// later position read into neighbouring attributes, scattering whole batches.
+/// Picks a stride that actually divides the buffer. An explicit `VertexStride` from the
+/// file is authoritative when present and valid; the parsed declaration is the fallback
+/// so per-batch layouts (e.g. `FLOAT16_4`/`SHORT4N` positions on interior meshes) are
+/// honored without guessing a file-wide stride by divisibility.
 fn select_vertex_stride(
     bytes_len: usize,
     explicit: Option<usize>,
@@ -1781,10 +1803,13 @@ fn find_geometry_buffers(node: &SerzNode,
                     declaration.declaration_stride,
                     fvf_stride,
                 );
+                // An explicit `PositionOffset` wins when present; otherwise fall back to the
+                // declaration's POSITION offset, then to zero.
                 let position = find_direct_number(children, &["positionoffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.position)
                     .unwrap_or(0);
+                let position_format = declaration.position_format;
                 let normal = find_direct_number(children, &["normaloffset"], ids)
                     .and_then(|value| usize::try_from(value).ok())
                     .or(declaration.normal)
@@ -1796,12 +1821,13 @@ fn find_geometry_buffers(node: &SerzNode,
                     .or(fvf_uv_offset)
                     .or_else(|| (stride >= 32).then_some(24));
                 let layout = format!(
-                    "VertexData/cHcGeometryVertexDataDx/VertexBuffer/cHcVertexBufferDx: vertices={} stride={} position={} normal={:?} texcoord0={:?} declaration=[{}]",
+                    "VertexData/cHcGeometryVertexDataDx/VertexBuffer/cHcVertexBufferDx: vertices={} stride={} position={}({:?}) normal={:?} texcoord0={:?} declaration=[{}]",
                     declared_vertex_count
                         .map(|count| count.to_string())
                         .unwrap_or_else(|| "?".into()),
                     stride,
                     position,
+                    position_format,
                     normal,
                     uv,
                     declaration.declaration,
@@ -1812,6 +1838,7 @@ fn find_geometry_buffers(node: &SerzNode,
                     declared_vertex_count: declared_vertex_count.unwrap_or(0),
                     fvf,
                     position_offset: position,
+                    position_format,
                     normal_offset: normal,
                     uv_offset: uv,
                     layout,
@@ -1924,6 +1951,7 @@ fn find_vertex_attribute_offsets(
                 let usage_lower = usage.to_ascii_lowercase();
                 if usage_lower.contains("position") && attributes.position.is_none() {
                     attributes.position = Some(offset);
+                    attributes.position_format = position_format_from_type(&type_name);
                 } else if usage_lower.contains("normal") && attributes.normal.is_none() {
                     attributes.normal = Some(offset);
                 } else if usage_lower.contains("texcoord")
@@ -1953,6 +1981,7 @@ fn find_vertex_attribute_offsets(
 
     let mut attributes = VertexAttributeOffsets {
         position: None,
+        position_format: PositionFormat::default(),
         normal: None,
         uv: None,
         declaration_stride: 0,
@@ -1979,6 +2008,15 @@ fn find_vertex_attribute_offsets(
 
 fn vertex_element_size(type_name: &str) -> Option<usize> {
     let type_name = type_name.to_ascii_lowercase();
+    if type_name.contains("float16") || type_name.contains("half") {
+        if type_name.contains("4") {
+            return Some(8);
+        }
+        if type_name.contains("2") {
+            return Some(4);
+        }
+        return Some(4);
+    }
     for components in 1..=4 {
         if type_name.contains(&format!("float{components}")) {
             return Some(components * 4);
@@ -2134,10 +2172,20 @@ fn find_material_bindings(
                 .trim()
                 .to_ascii_uppercase();
             let subtract_alpha = frame_alpha_mode == "ALPHA_MODE_SUBTRACT";
-            let alpha_test =
-                find_text(children, &["alphatesttype"], ids).is_some_and(is_alpha_test_enabled);
+            let alpha_test_type = find_text(children, &["alphatesttype"], ids)
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_uppercase();
+            // Only `HC_ALPHATEST_GREATER` enables alpha cutout. In Train Simulator the
+            // diffuse alpha channel is a specular/environment mask, not transparency, so
+            // `HC_ALPHATEST_ALWAYS` / missing must never discard fragments.
+            let alpha_test_greater = alpha_test_type == "HC_ALPHATEST_GREATER";
+            let alpha_ref = find_text(children, &["alpharef"], ids)
+                .and_then(|value| value.trim().parse::<f32>().ok())
+                .map(|value| (value / 255.0).clamp(0.0, 1.0))
+                .unwrap_or(0.5);
             let mut render_mode = classify_shader(shader_name);
-            if alpha_test && render_mode == GeoRenderMode::Opaque {
+            if alpha_test_greater && render_mode == GeoRenderMode::Opaque {
                 render_mode = GeoRenderMode::Cutout;
             } else if render_mode == GeoRenderMode::Opaque {
                 render_mode = match frame_alpha_mode.as_str() {
@@ -2158,6 +2206,7 @@ fn find_material_bindings(
                         || subtract_alpha,
                     material_name: display_material_name,
                     shader_name: shader_name.trim().to_owned(),
+                    alpha_ref,
                 },
             );
         }
@@ -2832,14 +2881,6 @@ fn classify_shader(shader_name: &str) -> GeoRenderMode {
     }
 }
 
-fn is_alpha_test_enabled(alpha_test_type: &str) -> bool {
-    let alpha_test_type = alpha_test_type.trim();
-    !alpha_test_type.is_empty()
-        && !["HC_ALPHATEST_ALWAYS", "HC_ALPHATEST_NEVER"]
-            .iter()
-            .any(|value| alpha_test_type.eq_ignore_ascii_case(value))
-}
-
 fn find_local_transform(children: &[SerzNode]) -> Mat4 {
     fn parse_matrix(node: &SerzNode) -> Option<Mat4> {
         matrix_from_values(&collect_float_values(node))
@@ -3121,6 +3162,7 @@ fn append_submesh(
     material_index: u32,
     texture_index: u32,
     render_mode: GeoRenderMode,
+    alpha_cutoff: f32,
     info: &BatchInfo,
     vertex_buffer_index: u32,
     base_vertex: i32,
@@ -3152,6 +3194,7 @@ fn append_submesh(
         material_index,
         texture_index,
         render_mode,
+        alpha_cutoff,
         vertex_buffer_index,
         base_vertex,
         vertex_buffer_offset,
@@ -3178,6 +3221,7 @@ fn append_transformed_submesh(
     material_index: u32,
     texture_index: u32,
     render_mode: GeoRenderMode,
+    alpha_cutoff: f32,
     info: &BatchInfo,
     vertex_buffer_index: u32,
     base_vertex: i32,
@@ -3239,6 +3283,7 @@ fn append_transformed_submesh(
         material_index,
         texture_index,
         render_mode,
+        alpha_cutoff,
         vertex_buffer_index,
         base_vertex,
         vertex_buffer_offset,
@@ -3554,6 +3599,78 @@ fn read_vec2(data: &[u8], offset: usize) -> Result<[f32; 2], String> {
         f32::from_le_bytes(bytes[0..4].try_into().unwrap()),
         f32::from_le_bytes(bytes[4..8].try_into().unwrap()),
     ])
+}
+
+/// Component-wise interpretation of a `POSITION` declaration element.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PositionFormat {
+    #[default]
+    Float3,
+    /// `D3DDECLTYPE_FLOAT16_4` / `D3DDECLTYPE_HALF4`: xyz of four half-precision floats.
+    Float16_4,
+    /// `D3DDECLTYPE_SHORT4N`: xyz of four signed, normalized shorts.
+    Short4N,
+}
+
+/// IEEE-754 binary16 (half) to f32.
+fn half_to_f32(bits: u16) -> f32 {
+    let sign = ((bits >> 15) & 1) as u32;
+    let exponent = ((bits >> 10) & 0x1F) as i32;
+    let mantissa = bits & 0x03FF;
+    match exponent {
+        0 => {
+            if mantissa == 0 {
+                return if sign == 0 { 0.0 } else { -0.0 };
+            }
+            // Denormal: mantissa * 2^-24
+            return (sign as f32 * 2.0 - 1.0) * (mantissa as f32) * 5.960464477539063e-8;
+        }
+        31 => {
+            if mantissa == 0 {
+                return if sign == 0 { f32::INFINITY } else { -f32::INFINITY };
+            }
+            return f32::NAN;
+        }
+        _ => {}
+    }
+    let exp = (exponent - 15 + 127) as u32;
+    let bits32 = (sign << 31) | (exp << 23) | ((mantissa as u32) << 13);
+    f32::from_bits(bits32)
+}
+
+fn read_position(
+    record: &[u8],
+    offset: usize,
+    format: PositionFormat,
+) -> Result<[f32; 3], String> {
+    match format {
+        PositionFormat::Float3 => read_vec3(record, offset),
+        PositionFormat::Float16_4 => {
+            let end = offset.checked_add(8).ok_or("vertex offset overflow")?;
+            let bytes = record.get(offset..end).ok_or("position outside vertex record")?;
+            Ok([
+                half_to_f32(u16::from_le_bytes([bytes[0], bytes[1]])),
+                half_to_f32(u16::from_le_bytes([bytes[2], bytes[3]])),
+                half_to_f32(u16::from_le_bytes([bytes[4], bytes[5]])),
+            ])
+        }
+        PositionFormat::Short4N => {
+            let end = offset.checked_add(8).ok_or("vertex offset overflow")?;
+            let bytes = record.get(offset..end).ok_or("position outside vertex record")?;
+            let to_f32 = |value: i16| {
+                if value == i16::MIN {
+                    -1.0
+                } else {
+                    value as f32 / 32767.0
+                }
+            };
+            Ok([
+                to_f32(i16::from_le_bytes([bytes[0], bytes[1]])),
+                to_f32(i16::from_le_bytes([bytes[2], bytes[3]])),
+                to_f32(i16::from_le_bytes([bytes[4], bytes[5]])),
+            ])
+        }
+    }
 }
 
 fn fill_missing_normals(vertices: &mut [GeoVertex], indices: &[u32]) {
@@ -3972,6 +4089,7 @@ mod tests {
                 material_index: 2,
                 texture_index: 0,
                 render_mode: GeoRenderMode::Opaque,
+                alpha_cutoff: 0.5,
                 vertex_buffer_index: 0,
                 base_vertex: 0,
                 vertex_buffer_offset: 0,
@@ -4964,5 +5082,207 @@ mod tests {
 
         assert_eq!(model.diagnostics.vertex_stride, 52);
         assert_eq!(model.diagnostics.vertex_count, 3);
+    }
+
+    #[test]
+    fn decodes_float16_4_position_from_vertex_type_declaration() {
+        let half = |v: f32| -> u16 {
+            match v {
+                1.0 => 0x3C00, 2.0 => 0x4000, 3.0 => 0x4200,
+                4.0 => 0x4400, 5.0 => 0x4500, 6.0 => 0x4600,
+                7.0 => 0x4700, 8.0 => 0x4800, 0.0 => 0x0000,
+                _ => 0,
+            }
+        };
+        let mut bytes = Vec::new();
+        for [x, y, z] in [[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 0.0]] {
+            bytes.extend_from_slice(&half(x).to_le_bytes());
+            bytes.extend_from_slice(&half(y).to_le_bytes());
+            bytes.extend_from_slice(&half(z).to_le_bytes());
+            bytes.extend_from_slice(&0u16.to_le_bytes());
+        }
+        let blob = bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let index_hex = [0u16, 1, 2]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .map(|b| format!("{b:02X}"))
+            .collect::<String>();
+        let xml = format!(
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcVertexBuffer>
+                    <cHcVertexTypeDeclarationDx>
+                        <ElementDecl>
+                            <Usage d:type="cDeltaString">POSITION</Usage>
+                            <Type d:type="cDeltaString">FLOAT16_4</Type>
+                            <StreamIndex d:type="sUInt32">0</StreamIndex>
+                            <Offset d:type="sUInt32">0</Offset>
+                        </ElementDecl>
+                    </cHcVertexTypeDeclarationDx>
+                    <VertexData><blob>{blob}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcIndexBuffer>
+                    <IndexSize d:type="sUInt32">2</IndexSize>
+                    <IndexData><blob>{index_hex}</blob></IndexData>
+                </cHcIndexBuffer>
+                <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
+            </Root>"#
+        );
+        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        assert_eq!(model.vertices.len(), 3);
+        assert_eq!(model.vertices[0].position, [1.0, 2.0, 3.0]);
+        assert_eq!(model.vertices[1].position, [4.0, 5.0, 6.0]);
+        assert_eq!(model.vertices[2].position, [7.0, 8.0, 0.0]);
+    }
+
+    #[test]
+    fn decodes_short4n_position_from_vertex_type_declaration() {
+        // short4n: value/32767, (-32768 -> -1.0)
+        let mut bytes = Vec::new();
+        for [x, y, z] in [
+            [32767i16, 0, -32768],
+            [0, 32767, -32767],
+            [-32768, 32767, 0],
+        ] {
+            bytes.extend_from_slice(&x.to_le_bytes());
+            bytes.extend_from_slice(&y.to_le_bytes());
+            bytes.extend_from_slice(&z.to_le_bytes());
+            bytes.extend_from_slice(&0i16.to_le_bytes());
+        }
+        let blob = bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let index_hex = [0u16, 1, 2]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .map(|b| format!("{b:02X}"))
+            .collect::<String>();
+        let xml = format!(
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcVertexBuffer>
+                    <cHcVertexTypeDeclarationDx>
+                        <ElementDecl>
+                            <Usage d:type="cDeltaString">POSITION</Usage>
+                            <Type d:type="cDeltaString">SHORT4N</Type>
+                            <StreamIndex d:type="sUInt32">0</StreamIndex>
+                            <Offset d:type="sUInt32">0</Offset>
+                        </ElementDecl>
+                    </cHcVertexTypeDeclarationDx>
+                    <VertexData><blob>{blob}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcIndexBuffer>
+                    <IndexSize d:type="sUInt32">2</IndexSize>
+                    <IndexData><blob>{index_hex}</blob></IndexData>
+                </cHcIndexBuffer>
+                <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
+            </Root>"#
+        );
+        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        assert_eq!(model.vertices.len(), 3);
+        assert_eq!(model.vertices[0].position, [1.0f32, 0.0, -1.0]);
+        assert!((model.vertices[1].position[0] - 0.0f32).abs() < 1e-5);
+        assert!((model.vertices[1].position[1] - 1.0f32).abs() < 1e-5);
+        assert!((model.vertices[1].position[2] + 1.0f32).abs() < 1e-5);
+        assert!((model.vertices[2].position[0] + 1.0f32).abs() < 1e-5);
+        assert!((model.vertices[2].position[1] - 1.0f32).abs() < 1e-5);
+        assert!((model.vertices[2].position[2] - 0.0f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn alpha_test_always_does_not_enable_cutout() {
+        let xml = r#"
+            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcEffectMaterialDx d:id="7">
+                    <ShaderName d:type="cDeltaString">TrainBumpSpec.fx</ShaderName>
+                    <AlphaTestType d:type="cDeltaString">HC_ALPHATEST_ALWAYS</AlphaTestType>
+                    <FrameAlphaMode d:type="cDeltaString">ALPHA_MODE_NONE</FrameAlphaMode>
+                    <TextureByName d:type="cDeltaString">Textures\body.TgPcDx</TextureByName>
+                </cHcEffectMaterialDx>
+            </Root>"#;
+        let root = SerzNode::from_xml_str(xml).unwrap().0;
+        let bindings = find_material_bindings(
+            &root,
+            &[r"Textures\body.TgPcDx".to_owned()],
+            &build_id_map(&root),
+        );
+        assert_eq!(bindings[&7].render_mode, GeoRenderMode::Opaque);
+        // Diffuse alpha is a specular/environment mask: no cutout threshold applied.
+        assert_eq!(bindings[&7].alpha_ref, 0.5);
+    }
+
+    #[test]
+    fn alpha_test_greater_enables_cutout_with_alpha_ref() {
+        let xml = r#"
+            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcEffectMaterialDx d:id="7">
+                    <ShaderName d:type="cDeltaString">TrainBasic.fx</ShaderName>
+                    <AlphaTestType d:type="cDeltaString">HC_ALPHATEST_GREATER</AlphaTestType>
+                    <AlphaRef d:type="sUInt32">128</AlphaRef>
+                    <TextureByName d:type="cDeltaString">Textures\body.TgPcDx</TextureByName>
+                </cHcEffectMaterialDx>
+            </Root>"#;
+        let root = SerzNode::from_xml_str(xml).unwrap().0;
+        let bindings = find_material_bindings(
+            &root,
+            &[r"Textures\body.TgPcDx".to_owned()],
+            &build_id_map(&root),
+        );
+        assert_eq!(bindings[&7].render_mode, GeoRenderMode::Cutout);
+        assert!((bindings[&7].alpha_ref - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn base_vertex_applies_to_the_batch_vertex_buffer_not_buffer_zero() {
+        let mut buf0 = Vec::new();
+        for pos in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+            for c in pos {
+                buf0.extend_from_slice(&c.to_le_bytes());
+            }
+            buf0.extend_from_slice(&[0u8; 20]);
+        }
+        assert_eq!(buf0.len(), 96);
+        let mut buf1 = Vec::new();
+        for pos in [[10.0f32, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]] {
+            for c in pos {
+                buf1.extend_from_slice(&c.to_le_bytes());
+            }
+            buf1.extend_from_slice(&[0u8; 20]);
+        }
+        assert_eq!(buf1.len(), 96);
+        let blob0 = buf0.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let blob1 = buf1.iter().map(|b| format!("{b:02X}")).collect::<String>();
+        let index_hex = [0u16, 1, 2]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .map(|b| format!("{b:02X}"))
+            .collect::<String>();
+        let xml = format!(
+            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                    <NumVertices d:type="sUInt32">3</NumVertices>
+                    <VertexData><blob>{blob0}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcVertexBuffer>
+                    <VertexStride d:type="sUInt32">32</VertexStride>
+                    <NumVertices d:type="sUInt32">2</NumVertices>
+                    <VertexData><blob>{blob1}</blob></VertexData>
+                </cHcVertexBuffer>
+                <cHcIndexBuffer>
+                    <IndexSize d:type="sUInt32">2</IndexSize>
+                    <IndexData><blob>{index_hex}</blob></IndexData>
+                </cHcIndexBuffer>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                    <VertexBufferIndex d:type="sUInt32">1</VertexBufferIndex>
+                    <VertexIndexBase d:type="sUInt32">0</VertexIndexBase>
+                </cHcPrimitiveList>
+                <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
+            </Root>"#
+        );
+        let model = GeoModel::parse(xml.as_bytes()).unwrap();
+        assert_eq!(model.vertices.len(), 6);
+        assert_eq!(model.indices, [3, 4, 5]);
+        assert_eq!(model.vertices[3].position, [10.0, 0.0, 0.0]);
+        assert_eq!(model.vertices[4].position, [0.0, 10.0, 0.0]);
+        assert_eq!(model.vertices[5].position, [0.0, 0.0, 10.0]);
     }
 }
