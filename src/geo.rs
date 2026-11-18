@@ -2257,8 +2257,7 @@ fn find_material_bindings(
                     material_index,
                     texture_index,
                     render_mode,
-                    excluded: is_helper_name(shader_name)
-                        || is_helper_name(material_name)
+                    excluded: is_hidden_shader_name(shader_name)
                         || texture_is_shadow
                         || subtract_alpha,
                     material_name: display_material_name,
@@ -2394,8 +2393,7 @@ fn find_submeshes(
     let excluded = inherited_excluded
         || lod.is_some_and(|level| level > 0)
         || has_lower_lod_name
-        || is_helper_name(name)
-        || is_helper_name(node_label)
+        || node_is_explicitly_hidden(children, ids)
         || material_reference
             .and_then(|reference| material_bindings.get(&reference))
             .is_some_and(|binding| binding.excluded);
@@ -2768,45 +2766,27 @@ fn lod_name_is_nonzero(name: &str) -> bool {
     false
 }
 
-fn is_helper_name(name: &str) -> bool {
+/// Explicit shader-level signals for geometry that must never be rendered as visible
+/// surface. Node and material *names* are deliberately not inspected: in rolling stock
+/// they carry variant/numbering suffixes (`body_b`, `cab_c`, `number_plate`, `decal_*`)
+/// that are real geometry, so substring heuristics erase half of a locomotive.
+fn is_hidden_shader_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    [
-        "schatten",
-        "shadow",
-        "stencil",
-        "occluder",
-        "volume",
-        "collision",
-        "occlusion",
-        "dummy",
-        "helper",
-        "proxy",
-        "pivot",
-        "bogie_ref",
-        "bogey_ref",
-        "_wi",
-        "_winter",
-        "winter_",
-        "snow",
-        "_au",
-        "_sp",
-        "summer_off",
-        "number",
-        "numbers",
-        "digit",
-        "digits",
-        "rvn",
-        "primarydigit",
-        "primarydigits",
-        "secondarydigit",
-        "secondarydigits",
-        "primarynumbers",
-        "decal_",
-        "_b",
-        "_c",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
+    ["stencil", "shadow", "invisible", "occluder", "occlusion"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+/// A node opts out only through the explicit `Visible` flag (0/false), not through its
+/// name. Collision subtrees are pruned separately by their `collisionroot` ancestor.
+fn node_is_explicitly_hidden(children: &[SerzNode], ids: &HashMap<u32, &SerzNode>) -> bool {
+    ["visible", "isvisible", "visibleflag"]
+        .iter()
+        .find_map(|field| direct_text(children, &[*field], ids))
+        .is_some_and(|value| {
+            let value = value.trim();
+            value == "0" || value.eq_ignore_ascii_case("false")
+        })
 }
 
 /// Auxiliary nodes (shadows, decals, running numbers) start hidden in the inspector.
@@ -4551,10 +4531,11 @@ mod tests {
         assert_eq!(classify_shader("BlendATexDiff"), GeoRenderMode::Cutout);
         assert_eq!(classify_shader("TrainDecal"), GeoRenderMode::Blended);
         assert_eq!(classify_shader("TrainStandard"), GeoRenderMode::Opaque);
-        assert!(is_helper_name("TrainShadowOnly"));
-        assert!(is_helper_name("Schatten"));
-        assert!(is_helper_name("StencilShadow"));
-        assert!(is_helper_name("DummyNode"));
+        assert!(is_hidden_shader_name("TrainShadowOnly"));
+        assert!(is_hidden_shader_name("StencilShadow"));
+        assert!(is_hidden_shader_name("Invisible"));
+        assert!(!is_hidden_shader_name("TrainDecal"));
+        assert!(!is_hidden_shader_name("number_plate"));
 
         let batches = r#"
             <cHcSGNodeMaterial>
@@ -5083,39 +5064,43 @@ mod tests {
     }
 
     #[test]
-    fn filters_lod0_winter_shadow_and_decal_batches() {
+    fn keeps_numbering_decal_and_suffix_named_geometry() {
+        // These are real surfaces on rolling stock: dynamic number plates, decal overlays,
+        // the second bogie/cab (`_b`/`_c`) and the second body shell. They must survive.
         let batches = r#"
-            <LOD0><cHcPrimitiveList>
-                <StartIndex d:type="sUInt32">0</StartIndex>
-                <IndexCount d:type="sUInt32">3</IndexCount>
-            </cHcPrimitiveList></LOD0>
-            <mesh_2_0500_><cHcPrimitiveList>
-                <StartIndex d:type="sUInt32">0</StartIndex>
-                <IndexCount d:type="sUInt32">3</IndexCount>
-            </cHcPrimitiveList></mesh_2_0500_>
-            <winter_body><cHcPrimitiveList>
-                <StartIndex d:type="sUInt32">0</StartIndex>
-                <IndexCount d:type="sUInt32">3</IndexCount>
-            </cHcPrimitiveList></winter_body>
-            <shadow><cHcPrimitiveList>
-                <StartIndex d:type="sUInt32">0</StartIndex>
-                <IndexCount d:type="sUInt32">3</IndexCount>
-            </cHcPrimitiveList></shadow>
-            <number_plate><cHcPrimitiveList>
-                <StartIndex d:type="sUInt32">0</StartIndex>
-                <IndexCount d:type="sUInt32">3</IndexCount>
-            </cHcPrimitiveList></number_plate>
-            <TrainDecalNode><cHcPrimitiveList>
-                <StartIndex d:type="sUInt32">0</StartIndex>
-                <IndexCount d:type="sUInt32">3</IndexCount>
-            </cHcPrimitiveList></TrainDecalNode>
+            <body_b><Transform d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 1 0 0 1</Transform>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList></body_b>
+            <cab_c><Transform d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 2 0 0 1</Transform>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList></cab_c>
+            <number_plate><Transform d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 3 0 0 1</Transform>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList></number_plate>
+            <TrainDecalNode><Transform d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 4 0 0 1</Transform>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList></TrainDecalNode>
+            <hidden_panel><Transform d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 5 0 0 1</Transform>
+                <Visible d:type="sUInt32">0</Visible>
+                <cHcPrimitiveList>
+                    <StartIndex d:type="sUInt32">0</StartIndex>
+                    <IndexCount d:type="sUInt32">3</IndexCount>
+                </cHcPrimitiveList></hidden_panel>
         "#;
         let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32)
             .replace("</Root>", &format!("{batches}</Root>"));
         let model = GeoModel::parse(source.as_bytes()).unwrap();
 
-        assert_eq!(model.submeshes.len(), 1);
-        assert_eq!(model.indices, [0, 1, 2]);
+        assert_eq!(model.submeshes.len(), 4);
+        assert_eq!(model.indices.len(), 12);
     }
 
     #[test]
