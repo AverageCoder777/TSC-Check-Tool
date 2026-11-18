@@ -197,6 +197,18 @@ impl GeoModel {
         let mut vertex_data = Vec::new();
         let (vb_id_to_index, prim_id_to_vbuf) = collect_vertex_buffers(&root, &id_map, &mut vertex_data);
 
+        // Build vertex buffer sizes array for range-based fallback
+        let vb_sizes: Vec<usize> = vertex_data
+            .iter()
+            .map(|buffer| {
+                if buffer.stride == 0 {
+                    0
+                } else {
+                    buffer.bytes.len() / buffer.stride
+                }
+            })
+            .collect();
+
         let context = NodeContext {
             material_bindings: &material_bindings,
             ids: &id_map,
@@ -204,6 +216,7 @@ impl GeoModel {
             transform_names: &transform_names,
             vb_id_to_index: &vb_id_to_index,
             prim_id_to_vbuf: &prim_id_to_vbuf,
+            vb_sizes: &vb_sizes,
         };
         let mut raw_batches = Vec::new();
         find_submeshes(
@@ -2707,6 +2720,8 @@ struct NodeContext<'a> {
     vb_id_to_index: &'a HashMap<u32, u32>,
     /// SERZ ID of cHcPrimitiveSetDescDx -> vertex buffer source_index (from References inside cHcGeometryVertexDataDx).
     prim_id_to_vbuf: &'a HashMap<u32, u32>,
+    /// Vertex buffer sizes: source_index -> vertex count (for range-based fallback).
+    vb_sizes: &'a [usize],
 }
 
 fn find_submeshes(
@@ -2729,6 +2744,7 @@ fn find_submeshes(
         transform_names,
         vb_id_to_index,
         prim_id_to_vbuf,
+        vb_sizes,
     } = context;
     if let SerzNode::Reference { name, target_id } = node {
         if name.eq_ignore_ascii_case("material") {
@@ -2991,6 +3007,24 @@ fn find_submeshes(
                 })
             })
             .or_else(|| inherited_vertex_buffer_index)
+            // Range-based fallback: if no explicit reference found, use vertex_index_min/vertex_index_range
+            // to determine which vertex buffer this batch belongs to.
+            .or_else(|| {
+                if vertex_index_min > 0 || vertex_index_range > 0 {
+                    let min_idx = vertex_index_min as usize;
+                    let max_idx = (vertex_index_min + vertex_index_range) as usize;
+                    // Find the vertex buffer that contains this range
+                    vb_sizes.iter().enumerate().find_map(|(idx, &size)| {
+                        if size > 0 && min_idx < size && max_idx <= size {
+                            Some(idx as u32)
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
             .unwrap_or(0);
             let index_buffer_index = find_number(children, &["indexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
@@ -3026,10 +3060,11 @@ fn find_submeshes(
     let is_lod_container =
         clean_name.contains("lodlist") || clean_name.contains("chcsgnodelodselector");
 
-    // If this is a cHcGeometryNodeSameState, try to extract vertex buffer index from it
-    // to inherit down to cHcPrimitiveSetDescDx children.
+    // Propagate vertex buffer index from parent containers.
+    // cHcGeometryVertexDataDx and cHcGeometryNodeSameState can carry vertex buffer references.
     let mut next_inherited_vbuf = inherited_vertex_buffer_index;
-    if clean_name.contains("geometrynodesamestate") {
+    if clean_name.contains("chcgeometryvertexdata") || clean_name.contains("geometrynodesamestate") {
+        // First try explicit numeric fields
         if let Some(vbuf_idx) = find_number(
             children,
             &["vertexbufferindex", "vertexdataindex", "bufferindex"],
@@ -3039,8 +3074,7 @@ fn find_submeshes(
         {
             next_inherited_vbuf = Some(vbuf_idx);
         } else {
-            // Check ALL direct children of cHcGeometryNodeSameState for References
-            // to known vertex buffer IDs (including nested References inside child Elements).
+            // Then check for References to known vertex buffer IDs
             next_inherited_vbuf = find_vbuf_ref_in_subtree(children, vb_id_to_index)
                 .or(next_inherited_vbuf);
         }
@@ -5367,6 +5401,7 @@ mod tests {
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
             prim_id_to_vbuf: &empty_vb_map,
+            vb_sizes: &[],
         };
         find_submeshes(
             &root,
@@ -5423,6 +5458,7 @@ mod tests {
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
             prim_id_to_vbuf: &empty_vb_map,
+            vb_sizes: &[],
         };
         find_submeshes(
             &root,
@@ -5669,6 +5705,7 @@ mod tests {
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
             prim_id_to_vbuf: &empty_vb_map,
+            vb_sizes: &[],
         };
         find_submeshes(
             &root,
