@@ -98,7 +98,7 @@ impl LoadedModel {
         let resolved = texture_sources
             .iter()
             .map(|(geo_path, name)| {
-                crate::geo::resolve_texture_data(geo_path, name, &mut archive_toc_cache)
+                crate::geo::texture::resolve_texture_data(geo_path, name, &mut archive_toc_cache)
             })
             .collect::<Vec<_>>();
         let mut unique_resolved = HashMap::<PathBuf, (String, Vec<u8>)>::new();
@@ -475,9 +475,13 @@ fn batch_entries(model: &GeoModel, filter: &str) -> Vec<crate::BatchEntry> {
         .enumerate()
         .filter(|(_, submesh)| {
             needle.is_empty()
-                || [&submesh.node_name, &submesh.material_name, &submesh.shader_name]
-                    .iter()
-                    .any(|value| value.to_ascii_lowercase().contains(&needle))
+                || [
+                    &submesh.node_name,
+                    &submesh.material_name,
+                    &submesh.shader_name,
+                ]
+                .iter()
+                .any(|value| value.to_ascii_lowercase().contains(&needle))
         })
         .map(|(index, submesh)| crate::BatchEntry {
             index: index as i32,
@@ -566,18 +570,15 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
             height,
         ));
     }
-    let ordered_submeshes = model
-        .model
-        .submeshes
-        .iter()
-        .filter(|submesh| submesh.visible && submesh.render_mode != GeoRenderMode::Blended)
-        .chain(
-            model
-                .model
-                .submeshes
-                .iter()
-                .filter(|submesh| submesh.visible && submesh.render_mode == GeoRenderMode::Blended),
-        );
+    let ordered_submeshes =
+        model
+            .model
+            .submeshes
+            .iter()
+            .filter(|submesh| submesh.visible && submesh.render_mode != GeoRenderMode::Blended)
+            .chain(model.model.submeshes.iter().filter(|submesh| {
+                submesh.visible && submesh.render_mode == GeoRenderMode::Blended
+            }));
     for submesh in ordered_submeshes {
         let start = submesh.first_index as usize;
         let end = start + submesh.index_count as usize;

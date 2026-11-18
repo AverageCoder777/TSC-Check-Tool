@@ -605,12 +605,8 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
         // Dynamic near plane: near = max(distance * 0.01, 0.05) avoids z-fighting on
         // large models while keeping close geometry visible.
         let near = (distance * 0.01).max(0.05);
-        let projection = Mat4::perspective_rh(
-            45.0f32.to_radians(),
-            aspect,
-            near,
-            distance + radius * 4.0,
-        );
+        let projection =
+            Mat4::perspective_rh(45.0f32.to_radians(), aspect, near, distance + radius * 4.0);
         let view_projection = projection * view;
         // Train Simulator (DirectX 9) uses Left-Handed coordinates; wgpu uses Right-Handed.
         // Flip X to convert LH -> RH, which mirrors the model horizontally.
@@ -625,16 +621,14 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 contents: bytemuck::cast_slice(&[camera_uniform]),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-        let camera_bind_group = self
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("GeoPcDx frame camera bindings"),
-                layout: &self.camera_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform.as_entire_binding(),
-                }],
-            });
+        let camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GeoPcDx frame camera bindings"),
+            layout: &self.camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            }],
+        });
 
         let bytes_per_row = width * 4;
         let padded_bytes_per_row = bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
@@ -687,10 +681,8 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 wgpu::IndexFormat::Uint32,
             );
             pass.set_bind_group(0, &camera_bind_group, &[]);
-            let (opaque, blended): (Vec<usize>, Vec<usize>) =
-                (0..self.submeshes.len()).partition(|&index| {
-                    self.submeshes[index].render_mode != GeoRenderMode::Blended
-                });
+            let (opaque, blended): (Vec<usize>, Vec<usize>) = (0..self.submeshes.len())
+                .partition(|&index| self.submeshes[index].render_mode != GeoRenderMode::Blended);
             for index in opaque.into_iter().chain(blended) {
                 if !self.visible.get(index).copied().unwrap_or(true) {
                     continue;
@@ -723,8 +715,8 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                     }
                 };
                 pass.set_pipeline(pipeline);
-                let texture_index =
-                    (submesh.texture_index as usize).min(self.texture_bind_groups.len().saturating_sub(1));
+                let texture_index = (submesh.texture_index as usize)
+                    .min(self.texture_bind_groups.len().saturating_sub(1));
                 pass.set_bind_group(1, &self.texture_bind_groups[texture_index], &[]);
                 pass.set_bind_group(2, &self.material_bind_groups[index], &[]);
                 let start = if camera.wireframe {
