@@ -1831,6 +1831,7 @@ fn collect_vertex_buffers(
         visited_elements: &mut HashSet<u32>,
         next_slot: &mut usize,
         vertex_buffer_id_map: &mut HashMap<u32, u32>,
+        ancestor_ids: &mut Vec<u32>,
     ) {
         if let SerzNode::Reference { target_id, .. } = node {
             if reference_stack.insert(*target_id) {
@@ -1843,6 +1844,7 @@ fn collect_vertex_buffers(
                         visited_elements,
                         next_slot,
                         vertex_buffer_id_map,
+                        ancestor_ids,
                     );
                 }
                 reference_stack.remove(target_id);
@@ -1859,6 +1861,19 @@ fn collect_vertex_buffers(
             return;
         }
         let clean_name = name.replace("::", "-").to_ascii_lowercase();
+        
+        // Push this element's ID to ancestor stack if it's a container we care about
+        // Only track cHcGeometryVertexDataDx and cHcVertexBufferDx — NOT the generic
+        // root <VertexData> tag which is a common ancestor for ALL vertex buffers.
+        let is_vertex_data_container = clean_name.contains("chcgeometryvertexdata")
+            || clean_name.contains("chcvertexbuffer");
+        let pushed = if is_vertex_data_container && *id != 0 {
+            ancestor_ids.push(*id);
+            true
+        } else {
+            false
+        };
+        
         if clean_name.contains("chcvertexbuffer") {
             let source_index =
                 find_direct_number(children, &["bufferindex", "vertexbufferindex"], ids)
@@ -1867,17 +1882,9 @@ fn collect_vertex_buffers(
             *next_slot += 1;
             // Record this vertex buffer's SERZ ID -> source_index mapping
             vertex_buffer_id_map.insert(*id, source_index as u32);
-            // Also record the parent cHcGeometryVertexDataDx ID (if any)
-            if let SerzNode::Element { id: parent_id, .. } = find_parent_geometry_vertex_data(node, ids) {
-                if *parent_id != 0 {
-                    vertex_buffer_id_map.insert(*parent_id, source_index as u32);
-                }
-            }
-            // Also record the VertexData array element ID (if any) - look for parent Element with name containing "vertexdata" that has an id
-            if let SerzNode::Element { id: vdata_id, .. } = find_parent_vertex_data_element(node, ids) {
-                if *vdata_id != 0 {
-                    vertex_buffer_id_map.insert(*vdata_id, source_index as u32);
-                }
+            // Also record ALL ancestor IDs in the stack (intermediate containers)
+            for &ancestor_id in ancestor_ids.iter() {
+                vertex_buffer_id_map.insert(ancestor_id, source_index as u32);
             }
             if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
                 let declared_vertex_count = find_direct_number(children, &["numvertices"], ids)
@@ -1962,7 +1969,12 @@ fn collect_vertex_buffers(
                 visited_elements,
                 next_slot,
                 vertex_buffer_id_map,
+                ancestor_ids,
             );
+        }
+        // Pop ancestor ID when backtracking
+        if pushed {
+            ancestor_ids.pop();
         }
     }
 
@@ -1974,6 +1986,7 @@ fn collect_vertex_buffers(
         &mut HashSet::new(),
         &mut 0,
         &mut vertex_buffer_id_map,
+        &mut Vec::new(),
     );
 
     vertex_buffer_id_map
@@ -2907,6 +2920,41 @@ fn find_submeshes(
     // to inherit down to cHcPrimitiveSetDescDx children.
     let mut next_inherited_vbuf = inherited_vertex_buffer_index;
     if clean_name.contains("geometrynodesamestate") {
+        // Debug logging for first two cHcGeometryNodeSameState nodes that have
+        // "chassis" or "int2" children — write full XML to app.log.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static LOGGED_SAME_STATE_COUNT: AtomicU32 = AtomicU32::new(0);
+        let node_name_lower = batch_node_name.to_ascii_lowercase();
+        let has_target_child = node_name_lower == "chassis" || node_name_lower == "int2";
+        if has_target_child {
+            let count = LOGGED_SAME_STATE_COUNT.fetch_add(1, Ordering::Relaxed);
+            if count < 2 {
+                let xml = crate::serz::SerzReader::to_xml(node, 2, false);
+                let msg = format!(
+                    "[GeoPcDx DEBUG] cHcGeometryNodeSameState #{} node_name={:?} xml=\n{}",
+                    count, batch_node_name, xml
+                );
+                eprintln!("{msg}");
+                let log_path = crate::settings::log_file();
+                if let Some(parent) = log_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)
+                {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        file,
+                        "{} {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                        msg
+                    );
+                }
+            }
+        }
+
         if let Some(vbuf_idx) = find_number(
             children,
             &["vertexbufferindex", "vertexdataindex", "bufferindex"],
@@ -2916,8 +2964,8 @@ fn find_submeshes(
         {
             next_inherited_vbuf = Some(vbuf_idx);
         } else {
-            // Recursively search for SerzNode::Reference children pointing to known vertex buffer IDs
-            // (the reference might be nested inside named elements like GeometryVertexData/VertexBuffer)
+            // Check ALL direct children of cHcGeometryNodeSameState for References
+            // to known vertex buffer IDs (including nested References inside child Elements).
             next_inherited_vbuf = find_vbuf_ref_in_subtree(children, vb_id_to_index)
                 .or(next_inherited_vbuf);
         }
