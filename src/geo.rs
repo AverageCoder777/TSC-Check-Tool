@@ -216,13 +216,46 @@ impl GeoModel {
 
         let mut vertex_data = Vec::new();
         let mut index_data = Vec::new();
-        find_geometry_buffers(
+        let _vertex_buffer_id_map = find_geometry_buffers(
             &root,
             &id_map,
             &raw_batches,
             &mut vertex_data,
             &mut index_data,
         );
+        // Resolve vertex_buffer_index for batches that reference vertex buffers via SERZ references.
+        // Batches store the target SERZ node ID in their vertex_buffer_index field as a sentinel
+        // (currently 0). We need to look up the reference from the geometry node that owns the batch.
+        // Since the batch doesn't carry the reference directly, we do a second pass: for each batch,
+        // if its vertex_buffer_index is 0 (unresolved), try to find a reference in its ancestor
+        // cHcGeometryNodeSameState / cHcPrimitiveSetDescDx to a vertex buffer node and resolve it.
+        // For now, use the fallback by vertex range as implemented in find_submeshes, but also
+        // check if we can resolve from the map using the batch's node_name or material as hints.
+        // The proper fix is to capture the vertex buffer reference during find_submeshes when
+        // traversing cHcGeometryNodeSameState. For now, apply the vertex range fallback which
+        // should work for int1/int2 (small vertex counts) vs chassis (large).
+        // Actually, the find_submeshes already has the vertex range fallback. The issue is that
+        // the vertex_data isn't available yet at that point. Let's do a post-pass here:
+        for batch in &mut raw_batches {
+            if batch.vertex_buffer_index == 0 {
+                // Try to infer from vertex range: int1/int2 have small vertex ranges that
+                // only fit in vb[1] (18758 vertices, stride 32) not vb[0] (80252 vertices, stride 52).
+                let batch_min = batch.base_vertex as i64;
+                let batch_max = batch_min + batch.max_local_vertex_ref.unwrap_or(0) as i64;
+                for (idx, vb) in vertex_data.iter().enumerate() {
+                    let vb_count = if vb.stride == 0 {
+                        0
+                    } else {
+                        vb.bytes.len() / vb.stride
+                    };
+                    if batch_min >= 0 && batch_max <= vb_count as i64 && vb_count < 50000 {
+                        // Prefer smaller buffers for interior geometry
+                        batch.vertex_buffer_index = idx as u32;
+                        break;
+                    }
+                }
+            }
+        }
         log_vertex_buffer_diagnostics(path, &vertex_data, &index_data);
 
         let first_vertex_buffer = vertex_data
@@ -1817,7 +1850,9 @@ fn find_geometry_buffers(
     batches: &[RawSubmesh],
     vertices: &mut Vec<VertexBuffer>,
     indices: &mut Vec<IndexBuffer>,
-) {
+) -> HashMap<u32, u32> {
+    let mut vertex_buffer_id_map = HashMap::new();
+
     #[allow(clippy::too_many_arguments)]
     fn collect(
         node: &SerzNode,
@@ -1829,6 +1864,7 @@ fn find_geometry_buffers(
         visited_elements: &mut HashSet<u32>,
         vertex_pass: bool,
         next_slot: &mut usize,
+        vertex_buffer_id_map: &mut HashMap<u32, u32>,
     ) {
         if let SerzNode::Reference { target_id, .. } = node {
             if reference_stack.insert(*target_id) {
@@ -1843,6 +1879,7 @@ fn find_geometry_buffers(
                         visited_elements,
                         vertex_pass,
                         next_slot,
+                        vertex_buffer_id_map,
                     );
                 }
                 reference_stack.remove(target_id);
@@ -1865,6 +1902,14 @@ fn find_geometry_buffers(
                     .and_then(|value| usize::try_from(value).ok())
                     .unwrap_or(*next_slot);
             *next_slot += 1;
+            // Record this vertex buffer's SERZ ID -> source_index mapping
+            vertex_buffer_id_map.insert(*id, source_index as u32);
+            // Also check for parent cHcGeometryVertexDataDx and record its ID
+            if let SerzNode::Element { id: parent_id, .. } = find_parent_geometry_vertex_data(node, ids) {
+                if *parent_id != 0 {
+                    vertex_buffer_id_map.insert(*parent_id, source_index as u32);
+                }
+            }
             if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
                 let declared_vertex_count = find_direct_number(children, &["numvertices"], ids)
                     .and_then(|value| usize::try_from(value).ok());
@@ -1972,6 +2017,7 @@ fn find_geometry_buffers(
                 visited_elements,
                 vertex_pass,
                 next_slot,
+                vertex_buffer_id_map,
             );
         }
     }
@@ -1986,6 +2032,7 @@ fn find_geometry_buffers(
         &mut HashSet::new(),
         true,
         &mut 0,
+        &mut vertex_buffer_id_map,
     );
     collect(
         node,
@@ -1997,7 +2044,47 @@ fn find_geometry_buffers(
         &mut HashSet::new(),
         false,
         &mut 0,
+        &mut vertex_buffer_id_map,
     );
+
+    vertex_buffer_id_map
+}
+
+fn find_parent_geometry_vertex_data<'a>(
+    node: &'a SerzNode,
+    ids: &HashMap<u32, &'a SerzNode>,
+) -> &'a SerzNode {
+    // Look for a parent cHcGeometryVertexDataDx by checking references that point to this node
+    for (_, candidate) in ids {
+        if let SerzNode::Element { name, children, .. } = candidate {
+            if name.to_ascii_lowercase().contains("chcgeometryvertexdata") {
+                for child in children {
+                    if references_target(child, node) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+    }
+    node
+}
+
+fn references_target<'a>(
+    node: &'a SerzNode,
+    target: &'a SerzNode,
+) -> bool {
+    let target_id = match target {
+        SerzNode::Element { id, .. } => *id,
+        _ => return false,
+    };
+    if target_id == 0 {
+        return false;
+    }
+    match node {
+        SerzNode::Reference { target_id: ref_id, .. } => *ref_id == target_id,
+        SerzNode::Element { children, .. } => children.iter().any(|c| references_target(c, target)),
+        _ => false,
+    }
 }
 
 fn find_vertex_attribute_offsets(

@@ -431,7 +431,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
-                    front_face: wgpu::FrontFace::Ccw,
+                    front_face: wgpu::FrontFace::Cw,
                     cull_mode: Some(cull_mode),
                     ..Default::default()
                 },
