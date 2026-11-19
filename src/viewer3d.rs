@@ -3,10 +3,9 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slint::ComponentHandle;
 use std::collections::HashMap;
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Camera {
@@ -15,16 +14,17 @@ pub(crate) struct Camera {
     pub(crate) distance: f32,
     pub(crate) pan_x: f32,
     pub(crate) pan_y: f32,
+    /// World-space orbit pivot in model-centered RH coordinates.
+    pub(crate) target: Vec3,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) wireframe: bool,
 }
 
-enum ViewCommand {
-    Camera(Camera),
-    ToggleBatch { index: usize, visible: bool },
-    Preset(String),
-    Filter(String),
+pub(crate) struct CameraMatrices {
+    pub(crate) eye: Vec3,
+    pub(crate) view: Mat4,
+    pub(crate) view_projection: Mat4,
 }
 
 impl Default for Camera {
@@ -35,11 +35,53 @@ impl Default for Camera {
             distance: 4.0,
             pan_x: 0.0,
             pan_y: 0.0,
+            target: Vec3::ZERO,
             width: 900,
             height: 560,
             wireframe: false,
         }
     }
+}
+
+impl Camera {
+    /// Orthonormal camera basis `(direction_to_eye, screen_right, screen_up)` in RH space.
+    pub(crate) fn basis(&self) -> (Vec3, Vec3, Vec3) {
+        let pitch = self.pitch.clamp(-1.56, 1.56);
+        let direction = Vec3::new(
+            self.yaw.sin() * pitch.cos(),
+            pitch.sin(),
+            self.yaw.cos() * pitch.cos(),
+        );
+        let forward = -direction;
+        let right = forward.cross(Vec3::Y).normalize_or_zero();
+        let up = right.cross(forward).normalize_or_zero();
+        (direction, right, up)
+    }
+
+    /// Computes view/projection matrices allowing close-up inspection down to millimeters/centimeters.
+    pub(crate) fn compute_matrices(&self, aspect: f32, radius: f32) -> CameraMatrices {
+        let safe_radius = radius.max(0.01);
+        let min_distance = (safe_radius * 0.002).clamp(0.005, 0.05);
+        let distance = self.distance.max(min_distance);
+        let (direction, _, _) = self.basis();
+        let eye = self.target + direction * distance;
+        let view = Mat4::look_at_rh(eye, self.target, Vec3::Y);
+        let near = (distance * 0.01).clamp(0.001, 0.5);
+        let far = (distance + safe_radius * 4.0 + self.target.length() * 2.0).max(near + 1.0);
+        let projection = Mat4::perspective_rh(45.0_f32.to_radians(), aspect, near, far);
+        CameraMatrices {
+            eye,
+            view,
+            view_projection: projection * view,
+        }
+    }
+}
+
+enum ViewCommand {
+    Camera(Camera),
+    ToggleBatch { index: usize, visible: bool },
+    Preset(String),
+    Filter(String),
 }
 
 #[derive(Clone)]
@@ -61,11 +103,25 @@ impl Texture {
     }
 
     fn sample(&self, uv: [f32; 2]) -> [u8; 4] {
-        let u = uv[0].rem_euclid(1.0);
-        let v = uv[1].rem_euclid(1.0);
-        let x = (u * self.width as f32).floor() as u32 % self.width;
-        let y = (v * self.height as f32).floor() as u32 % self.height;
+        if self.width == 0 || self.height == 0 {
+            return [255, 0, 255, 255];
+        }
+        let u = if uv[0].is_finite() {
+            uv[0].rem_euclid(1.0)
+        } else {
+            0.0
+        };
+        let v = if uv[1].is_finite() {
+            uv[1].rem_euclid(1.0)
+        } else {
+            0.0
+        };
+        let x = ((u * self.width as f32).floor() as u32).min(self.width - 1);
+        let y = ((v * self.height as f32).floor() as u32).min(self.height - 1);
         let offset = ((y * self.width + x) * 4) as usize;
+        if offset + 4 > self.pixels.len() {
+            return [255, 0, 255, 255];
+        }
         [
             self.pixels[offset],
             self.pixels[offset + 1],
@@ -103,13 +159,13 @@ impl LoadedModel {
             .collect::<Vec<_>>();
         let mut unique_resolved = HashMap::<PathBuf, (String, Vec<u8>)>::new();
         let resolved_paths = resolved
-            .iter()
+            .into_iter()
             .map(|entry| {
-                entry.as_ref().map(|(resolved_path, bytes)| {
-                    let key = PathBuf::from(resolved_path);
+                entry.map(|(resolved_path, bytes)| {
+                    let key = PathBuf::from(&resolved_path);
                     unique_resolved
                         .entry(key.clone())
-                        .or_insert_with(|| (resolved_path.clone(), bytes.clone()));
+                        .or_insert((resolved_path, bytes));
                     key
                 })
             })
@@ -158,9 +214,11 @@ impl LoadedModel {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for &index in &self.model.indices {
-            let position = Vec3::from_array(self.model.vertices[index as usize].position);
-            min = min.min(position);
-            max = max.max(position);
+            if let Some(vertex) = self.model.vertices.get(index as usize) {
+                let position = Vec3::from_array(vertex.position);
+                min = min.min(position);
+                max = max.max(position);
+            }
         }
         if min.is_finite() && max.is_finite() {
             self.center = (min + max) * 0.5;
@@ -283,6 +341,7 @@ fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
                 distance,
                 pan_x,
                 pan_y,
+                target: Vec3::ZERO,
                 width: width.max(1.0) as u32,
                 height: height.max(1.0) as u32,
                 wireframe,
@@ -310,8 +369,27 @@ fn bind_batch_panel(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>
     });
 }
 
+fn push_frame(
+    window: &slint::Weak<crate::GeoViewerWindow>,
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+) {
+    let weak = window.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = weak.upgrade() {
+            let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+                bytemuck::cast_slice(&pixels),
+                width,
+                height,
+            );
+            window.set_frame(slint::Image::from_rgba8(buffer));
+        }
+    });
+}
+
 fn render_worker(
-    path: std::path::PathBuf,
+    path: PathBuf,
     window: slint::Weak<crate::GeoViewerWindow>,
     receiver: Receiver<ViewCommand>,
 ) {
@@ -347,9 +425,8 @@ fn render_worker(
         distance: initial_distance,
         ..Camera::default()
     };
-    let frame = render_frame(&loaded, gpu.as_mut(), camera);
-    let (width, height, pixels) = match frame {
-        Ok(frame) => frame,
+    match render_frame(&loaded, gpu.as_mut(), camera) {
+        Ok((width, height, pixels)) => push_frame(&window, width, height, pixels),
         Err(error) => {
             let weak = window.clone();
             let _ = slint::invoke_from_event_loop(move || {
@@ -359,18 +436,8 @@ fn render_worker(
             });
             return;
         }
-    };
-    let first_frame_window = window.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(window) = first_frame_window.upgrade() {
-            let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                bytemuck::cast_slice(&pixels),
-                width,
-                height,
-            );
-            window.set_frame(slint::Image::from_rgba8(buffer));
-        }
-    });
+    }
+
     let mut filter = String::new();
     while let Ok(command) = receiver.recv() {
         let mut need_render = false;
@@ -378,7 +445,23 @@ fn render_worker(
         let mut pending = Some(command);
         while let Some(current) = pending.take() {
             match current {
-                ViewCommand::Camera(next) => {
+                ViewCommand::Camera(mut next) => {
+                    // Convert incoming pan deltas into world-space target translation along the
+                    // current camera's screen-right and screen-up axes so orbiting stays centered
+                    // on the panned spot. Resetting pan_x/pan_y to (0, 0) re-centers on the model.
+                    if next.pan_x == 0.0
+                        && next.pan_y == 0.0
+                        && (camera.pan_x != 0.0 || camera.pan_y != 0.0)
+                    {
+                        next.target = Vec3::ZERO;
+                    } else {
+                        let dx = next.pan_x - camera.pan_x;
+                        let dy = next.pan_y - camera.pan_y;
+                        let (_, right, up) = next.basis();
+                        let max_pan = loaded.radius * 4.0;
+                        next.target = (camera.target + right * dx + up * dy)
+                            .clamp(Vec3::splat(-max_pan), Vec3::splat(max_pan));
+                    }
                     camera = next;
                     need_render = true;
                 }
@@ -413,8 +496,8 @@ fn render_worker(
         if !need_render {
             continue;
         }
-        let (width, height, pixels) = match render_frame(&loaded, gpu.as_mut(), camera) {
-            Ok(frame) => frame,
+        match render_frame(&loaded, gpu.as_mut(), camera) {
+            Ok((width, height, pixels)) => push_frame(&window, width, height, pixels),
             Err(error) => {
                 let weak = window.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -422,20 +505,8 @@ fn render_worker(
                         window.set_status_text(format!("Render failed: {error}").into());
                     }
                 });
-                continue;
             }
-        };
-        let weak = window.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(window) = weak.upgrade() {
-                let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-                    bytemuck::cast_slice(&pixels),
-                    width,
-                    height,
-                );
-                window.set_frame(slint::Image::from_rgba8(buffer));
-            }
-        });
+        }
     }
 }
 
@@ -517,17 +588,14 @@ fn render_frame(
     camera: Camera,
 ) -> Result<(u32, u32, Vec<u8>), String> {
     if let Some(gpu) = gpu {
-        match gpu.render(camera, model.radius) {
-            Ok(frame) => return Ok(frame),
-            Err(error) => {
-                return Err(format!("offscreen GPU render failed: {error}"));
-            }
-        }
+        return gpu
+            .render(camera, model.radius)
+            .map_err(|error| format!("offscreen GPU render failed: {error}"));
     }
-    Ok(render(model, camera))
+    Ok(render_cpu(model, camera))
 }
 
-fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
+fn render_cpu(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
     const MAX_DIMENSION: u32 = 1200;
     let width = camera.width.clamp(1, MAX_DIMENSION);
     let height = camera.height.clamp(1, MAX_DIMENSION);
@@ -537,59 +605,47 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
     }
     let mut depth = vec![f32::INFINITY; (width * height) as usize];
     let aspect = width as f32 / height as f32;
-    let radius = model.radius.max(0.01);
-    let distance = camera.distance.max(radius * 1.05);
-    let eye_offset = Vec3::new(
-        camera.yaw.sin() * camera.pitch.cos(),
-        camera.pitch.sin(),
-        camera.yaw.cos() * camera.pitch.cos(),
-    ) * distance;
-    let eye = model.center + eye_offset;
-    let forward = (model.center - eye).normalize();
-    let right = forward.cross(Vec3::Y).normalize_or_zero();
-    let up = right.cross(forward).normalize_or_zero();
-    let target = model.center + right * camera.pan_x + up * camera.pan_y;
-    let view = Mat4::look_at_rh(
-        eye + right * camera.pan_x + up * camera.pan_y,
-        target,
-        Vec3::Y,
-    );
-    let projection =
-        Mat4::perspective_rh(45.0f32.to_radians(), aspect, 0.01, distance + radius * 4.0);
-    let transform = projection * view;
-    // Train Simulator (DirectX 9) uses Left-Handed coordinates; wgpu/cpu uses Right-Handed.
-    // Flip X to convert LH -> RH, which mirrors the model horizontally.
-    let transform = transform * Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
+    let matrices = camera.compute_matrices(aspect, model.radius);
+
     let mut projected = Vec::with_capacity(model.model.vertices.len());
     for vertex in &model.model.vertices {
         projected.push(project_vertex(
             vertex,
-            transform,
+            matrices.view_projection,
             model.center,
             width,
             height,
         ));
     }
-    let ordered_submeshes =
-        model
-            .model
-            .submeshes
-            .iter()
-            .filter(|submesh| submesh.visible && submesh.render_mode != GeoRenderMode::Blended)
-            .chain(model.model.submeshes.iter().filter(|submesh| {
-                submesh.visible && submesh.render_mode == GeoRenderMode::Blended
-            }));
+
+    let total_indices = model.model.indices.len();
+    let ordered_submeshes = model
+        .model
+        .submeshes
+        .iter()
+        .filter(|submesh| submesh.visible && submesh.render_mode != GeoRenderMode::Blended)
+        .chain(
+            model
+                .model
+                .submeshes
+                .iter()
+                .filter(|submesh| submesh.visible && submesh.render_mode == GeoRenderMode::Blended),
+        );
+
     for submesh in ordered_submeshes {
-        let start = submesh.first_index as usize;
-        let end = start + submesh.index_count as usize;
+        let start = (submesh.first_index as usize).min(total_indices);
+        let end = start
+            .saturating_add(submesh.index_count as usize)
+            .min(total_indices);
         let texture = model
             .textures
             .get(submesh.texture_index as usize)
             .unwrap_or(&model.texture);
+        let alpha_cutoff = (submesh.alpha_cutoff.clamp(0.0, 1.0) * 255.0) as u8;
         for triangle in model.model.indices[start..end].chunks_exact(3) {
-            let a = projected[triangle[0] as usize];
-            let b = projected[triangle[1] as usize];
-            let c = projected[triangle[2] as usize];
+            let a = projected.get(triangle[0] as usize).copied().flatten();
+            let b = projected.get(triangle[1] as usize).copied().flatten();
+            let c = projected.get(triangle[2] as usize).copied().flatten();
             let (Some(a), Some(b), Some(c)) = (a, b, c) else {
                 continue;
             };
@@ -605,8 +661,9 @@ fn render(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
                     height,
                     [a, b, c],
                     texture,
-                    view,
+                    matrices.view,
                     submesh.render_mode,
+                    alpha_cutoff,
                 );
             }
         }
@@ -623,13 +680,15 @@ struct ProjectedVertex {
 
 fn project_vertex(
     vertex: &GeoVertex,
-    transform: Mat4,
+    view_projection: Mat4,
     center: Vec3,
     width: u32,
     height: u32,
 ) -> Option<ProjectedVertex> {
-    let world = Vec3::from_array(vertex.position) - center;
-    let clip = transform * Vec4::new(world.x, world.y, world.z, 1.0);
+    // Convert Train Simulator LH coordinates to RH by flipping X on both position and normal.
+    let centered = Vec3::from_array(vertex.position) - center;
+    let world = Vec3::new(-centered.x, centered.y, centered.z);
+    let clip = view_projection * Vec4::new(world.x, world.y, world.z, 1.0);
     if clip.w <= f32::EPSILON {
         return None;
     }
@@ -637,17 +696,20 @@ fn project_vertex(
     if !ndc.is_finite() {
         return None;
     }
+    let normal = Vec3::new(-vertex.normal[0], vertex.normal[1], vertex.normal[2])
+        .normalize_or_zero();
     Some(ProjectedVertex {
         position: Vec3::new(
             (ndc.x * 0.5 + 0.5) * width as f32,
             (0.5 - ndc.y * 0.5) * height as f32,
             ndc.z,
         ),
-        normal: Vec3::from_array(vertex.normal).normalize_or_zero(),
+        normal,
         uv: Vec2::from_array(vertex.uv),
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn raster_triangle(
     pixels: &mut [u8],
     depth: &mut [f32],
@@ -657,6 +719,7 @@ fn raster_triangle(
     texture: &Texture,
     view: Mat4,
     render_mode: GeoRenderMode,
+    alpha_cutoff: u8,
 ) {
     let [a, b, c] = vertices;
     let edge1 = b.position.truncate() - a.position.truncate();
@@ -665,34 +728,21 @@ fn raster_triangle(
     if area.abs() < f32::EPSILON {
         return;
     }
-    let min_x = a
-        .position
-        .x
-        .min(b.position.x)
-        .min(c.position.x)
-        .floor()
-        .max(0.0) as u32;
-    let max_x = a
-        .position
-        .x
-        .max(b.position.x)
-        .max(c.position.x)
-        .ceil()
-        .min(width as f32 - 1.0) as u32;
-    let min_y = a
-        .position
-        .y
-        .min(b.position.y)
-        .min(c.position.y)
-        .floor()
-        .max(0.0) as u32;
-    let max_y = a
-        .position
-        .y
-        .max(b.position.y)
-        .max(c.position.y)
-        .ceil()
-        .min(height as f32 - 1.0) as u32;
+    let raw_min_x = a.position.x.min(b.position.x).min(c.position.x);
+    let raw_max_x = a.position.x.max(b.position.x).max(c.position.x);
+    let raw_min_y = a.position.y.min(b.position.y).min(c.position.y);
+    let raw_max_y = a.position.y.max(b.position.y).max(c.position.y);
+    if raw_max_x < 0.0
+        || raw_max_y < 0.0
+        || raw_min_x >= width as f32
+        || raw_min_y >= height as f32
+    {
+        return;
+    }
+    let min_x = raw_min_x.floor().max(0.0) as u32;
+    let max_x = raw_max_x.ceil().min(width as f32 - 1.0) as u32;
+    let min_y = raw_min_y.floor().max(0.0) as u32;
+    let max_y = raw_max_y.ceil().min(height as f32 - 1.0) as u32;
     for y in min_y..=max_y {
         for x in min_x..=max_x {
             let point = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
@@ -703,14 +753,17 @@ fn raster_triangle(
                 continue;
             }
             let z = a.position.z * w0 + b.position.z * w1 + c.position.z * w2;
+            if !(0.0..=1.0).contains(&z) {
+                continue;
+            }
             let offset = (y * width + x) as usize;
             if z >= depth[offset] {
                 continue;
             }
             let uv = a.uv * w0 + b.uv * w1 + c.uv * w2;
             let texel = texture.sample(uv.to_array());
-            if (render_mode == GeoRenderMode::Cutout && texel[3] < 128)
-                || (render_mode == GeoRenderMode::Blended && texel[3] == 0)
+            if (render_mode == GeoRenderMode::Cutout && texel[3] < alpha_cutoff)
+                || (render_mode == GeoRenderMode::Blended && texel[3] < 5)
             {
                 continue;
             }

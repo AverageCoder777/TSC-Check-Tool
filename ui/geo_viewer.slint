@@ -38,6 +38,29 @@ export component GeoViewerWindow inherits Window {
     callback toggle-batch(int, bool);
     callback apply-batch-preset(string);
     callback filter-batches(string);
+
+    function emit-camera() {
+        root.camera-changed(
+            root.yaw,
+            root.pitch,
+            root.distance,
+            root.pan-x,
+            root.pan-y,
+            viewport.width / 1px,
+            viewport.height / 1px,
+            root.wireframe
+        );
+    }
+
+    function reset-camera() {
+        root.yaw = 0.7;
+        root.pitch = 0.25;
+        root.distance = root.initial-distance;
+        root.pan-x = 0.0;
+        root.pan-y = 0.0;
+        root.emit-camera();
+    }
+
     VerticalBox {
         spacing: 6px;
         padding: 8px;
@@ -52,19 +75,12 @@ export component GeoViewerWindow inherits Window {
                 text: root.wireframe ? "Solid" : "Wireframe";
                 clicked => {
                     root.wireframe = !root.wireframe;
-                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe);
+                    root.emit-camera();
                 }
             }
             Button {
                 text: "Reset camera";
-                clicked => {
-                    root.yaw = 0.7;
-                    root.pitch = 0.25;
-                    root.distance = root.initial-distance;
-                    root.pan-x = 0.0;
-                    root.pan-y = 0.0;
-                    root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, viewport.width / 1px, viewport.height / 1px, root.wireframe);
-                }
+                clicked => { root.reset-camera(); }
             }
             Button {
                 text: root.batches-expanded ? "Hide batches" : "Batches";
@@ -86,44 +102,95 @@ export component GeoViewerWindow inherits Window {
                     height: parent.height;
                     image-fit: contain;
                 }
-                TouchArea {
+                viewport-focus := FocusScope {
                     width: 100%;
                     height: 100%;
-                    property <float> last-x: 0;
-                    property <float> last-y: 0;
-                    property <bool> panning: false;
 
-                    pointer-event(event) => {
-                        if (event.kind == PointerEventKind.down) {
-                            last-x = self.mouse-x / 1px;
-                            last-y = self.mouse-y / 1px;
-                            panning = event.button == PointerEventButton.right;
+                    key-pressed(event) => {
+                        let step = Math.max(0.01, root.distance * 0.08);
+                        if (event.text == Key.LeftArrow || event.text == "a" || event.text == "A" || event.text == "ф" || event.text == "Ф") {
+                            root.pan-x -= step;
+                            root.emit-camera();
+                            return accept;
                         }
-                    }
-                    moved => {
-                        if (self.pressed) {
-                            let dx = self.mouse-x / 1px - last-x;
-                            let dy = self.mouse-y / 1px - last-y;
-                            if (panning) {
-                                root.pan-x += dx * root.distance * 0.002;
-                                root.pan-y -= dy * root.distance * 0.002;
-                            } else {
-                                root.yaw += dx * 0.01;
-                                root.pitch = Math.max(-1.45, Math.min(1.45, root.pitch + dy * 0.01));
-                            }
-                            last-x = self.mouse-x / 1px;
-                            last-y = self.mouse-y / 1px;
-                            root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
+                        if (event.text == Key.RightArrow || event.text == "d" || event.text == "D" || event.text == "в" || event.text == "В") {
+                            root.pan-x += step;
+                            root.emit-camera();
+                            return accept;
                         }
-                    }
-                    scroll-event(event) => {
-                        if (event.delta-y > 0) {
-                            root.distance = Math.max(0.1, root.distance / 1.12);
-                        } else if (event.delta-y < 0) {
+                        if (event.text == Key.UpArrow || event.text == "e" || event.text == "E" || event.text == "у" || event.text == "У") {
+                            root.pan-y += step;
+                            root.emit-camera();
+                            return accept;
+                        }
+                        if (event.text == Key.DownArrow || event.text == "q" || event.text == "Q" || event.text == "й" || event.text == "Й") {
+                            root.pan-y -= step;
+                            root.emit-camera();
+                            return accept;
+                        }
+                        if (event.text == "w" || event.text == "W" || event.text == "ц" || event.text == "Ц" || event.text == "+" || event.text == "=") {
+                            root.distance = Math.max(0.01, root.distance / 1.12);
+                            root.emit-camera();
+                            return accept;
+                        }
+                        if (event.text == "s" || event.text == "S" || event.text == "ы" || event.text == "Ы" || event.text == "-") {
                             root.distance = Math.min(500.0, root.distance * 1.12);
+                            root.emit-camera();
+                            return accept;
                         }
-                        root.camera-changed(root.yaw, root.pitch, root.distance, root.pan-x, root.pan-y, self.width / 1px, self.height / 1px, root.wireframe);
-                        accept
+                        if (event.text == "r" || event.text == "R" || event.text == "к" || event.text == "К") {
+                            root.reset-camera();
+                            return accept;
+                        }
+                        reject
+                    }
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        property <float> last-x: 0;
+                        property <float> last-y: 0;
+                        property <bool> dragging: false;
+                        property <bool> panning: false;
+
+                        pointer-event(event) => {
+                            if (event.kind == PointerEventKind.down) {
+                                viewport-focus.focus();
+                                last-x = self.mouse-x / 1px;
+                                last-y = self.mouse-y / 1px;
+                                dragging = true;
+                                panning = event.button == PointerEventButton.right
+                                    || event.button == PointerEventButton.middle;
+                            } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                                dragging = false;
+                                panning = false;
+                            }
+                        }
+                        moved => {
+                            if (dragging) {
+                                let dx = self.mouse-x / 1px - last-x;
+                                let dy = self.mouse-y / 1px - last-y;
+                                if (panning) {
+                                    root.pan-x -= dx * root.distance * 0.002;
+                                    root.pan-y += dy * root.distance * 0.002;
+                                } else {
+                                    root.yaw += dx * 0.01;
+                                    root.pitch = Math.max(-1.55, Math.min(1.55, root.pitch + dy * 0.01));
+                                }
+                                last-x = self.mouse-x / 1px;
+                                last-y = self.mouse-y / 1px;
+                                root.emit-camera();
+                            }
+                        }
+                        scroll-event(event) => {
+                            if (event.delta-y > 0) {
+                                root.distance = Math.max(0.01, root.distance / 1.12);
+                            } else if (event.delta-y < 0) {
+                                root.distance = Math.min(500.0, root.distance * 1.12);
+                            }
+                            root.emit-camera();
+                            accept
+                        }
                     }
                 }
                 if root.status-text != "" : Rectangle {
@@ -250,7 +317,7 @@ export component GeoViewerWindow inherits Window {
             }
         }
         Text {
-            text: "Left drag: orbit    Right drag: pan    Wheel: zoom";
+            text: "Left drag: orbit    Right/Middle drag: pan    Wheel: zoom    Arrows/WASD/QE: move    R: reset";
             color: #8993a2;
             font-size: 11px;
         }

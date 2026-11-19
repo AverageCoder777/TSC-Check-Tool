@@ -702,26 +702,10 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
         let readback_buffer = self.readback_buffer.as_ref().unwrap();
 
         let aspect = width as f32 / height as f32;
-        let safe_radius = radius.max(0.01);
-        let distance = camera.distance.max(safe_radius * 1.05).max(0.05);
-        // Clamp pitch strictly below +-90 degrees to avoid gimbal lock / NaN in look_at_rh.
-        let pitch = camera.pitch.clamp(-1.56, 1.56);
-        let direction = Vec3::new(
-            camera.yaw.sin() * pitch.cos(),
-            pitch.sin(),
-            camera.yaw.cos() * pitch.cos(),
-        );
-        let right = direction.cross(Vec3::Y).normalize_or_zero();
-        let up = right.cross(direction).normalize_or_zero();
-        let target = right * camera.pan_x + up * camera.pan_y;
-        let eye = target + direction * distance;
-        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-        let near = (distance * 0.01).max(0.05);
-        let far = (distance + safe_radius * 4.0).max(near + 1.0);
-        let projection = Mat4::perspective_rh(45.0f32.to_radians(), aspect, near, far);
-        let view_projection = projection * view;
+        let matrices = camera.compute_matrices(aspect, radius);
+        let eye = matrices.eye;
         let camera_uniform = CameraUniform {
-            view_projection: view_projection.to_cols_array(),
+            view_projection: matrices.view_projection.to_cols_array(),
         };
         self.queue.write_buffer(
             &self.camera_buffer,
