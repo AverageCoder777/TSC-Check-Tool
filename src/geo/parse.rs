@@ -628,7 +628,7 @@ pub(crate) fn find_submeshes(
             &["firstindex", "startindex", "indexstart", "indexarraystart"],
             ids,
         );
-        let mut topology = find_primitive_topology(node, ids);
+        let topology = find_primitive_topology(node, ids);
         let is_primitive_set = clean_name.contains("primitivesetdescdx");
         // RailWorks stores `NumPrimitives` as a raw index count on primitive-set descriptors,
         // but as a primitive count on legacy list nodes. Never read past the implied range:
@@ -654,16 +654,6 @@ pub(crate) fn find_submeshes(
             (None, Some(primitives)) => primitives_to_indices(primitives),
             (None, None) => None,
         };
-
-        if topology == PrimitiveTopology::TriangleStrip {
-            if let Some(idx_count) = count {
-                if let Some(orig_tris) = find_number(children, &["numoriginaltriangles"], ids) {
-                    if idx_count >= orig_tris * 3 {
-                        topology = PrimitiveTopology::TriangleList;
-                    }
-                }
-            }
-        }
 
         if let (Some(first), Some(count)) = (first, count)
             && let (Ok(first_index), Ok(index_count)) = (u32::try_from(first), u32::try_from(count))
