@@ -29,14 +29,17 @@ struct MaterialUniform {
 pub(crate) struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    max_render_dimension: u32,
     opaque_pipeline_cw: wgpu::RenderPipeline,
     opaque_pipeline_ccw: wgpu::RenderPipeline,
     cutout_pipeline_cw: wgpu::RenderPipeline,
     cutout_pipeline_ccw: wgpu::RenderPipeline,
-    alpha_pipeline: wgpu::RenderPipeline,
+    alpha_pipeline_cw: wgpu::RenderPipeline,
+    alpha_pipeline_ccw: wgpu::RenderPipeline,
     wire_pipeline: wgpu::RenderPipeline,
-    /// Group 0: per-frame camera uniform.
-    camera_bind_group_layout: wgpu::BindGroupLayout,
+    /// Group 0: persistent camera uniform buffer + bind group, updated via `write_buffer`.
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
     /// One bind group per texture (group 1), built at load time.
     texture_bind_groups: Vec<wgpu::BindGroup>,
     /// Group 2: per-batch material uniform (alpha_cutoff), one per submesh.
@@ -45,13 +48,20 @@ pub(crate) struct GpuRenderer {
     triangle_indices: wgpu::Buffer,
     wire_indices: wgpu::Buffer,
     submeshes: Vec<GeoSubmesh>,
+    /// Safe clamped (start, count) index ranges per submesh for triangle and wireframe draws.
+    triangle_ranges: Vec<(u32, u32)>,
+    wire_ranges: Vec<(u32, u32)>,
+    /// Centroid of each submesh in RH space, used to sort blended submeshes back-to-front.
+    submesh_centers: Vec<Vec3>,
     /// Per-batch draw flags, kept separate so toggling never touches GPU buffers.
     visible: Vec<bool>,
-    /// Cached render targets, recreated only when the window size changes.
+    /// Cached render targets and CPU readback buffer, recreated only when the size changes.
     color_texture: Option<wgpu::Texture>,
     color_view: Option<wgpu::TextureView>,
     depth_texture: Option<wgpu::Texture>,
     depth_view: Option<wgpu::TextureView>,
+    readback_buffer: Option<wgpu::Buffer>,
+    padded_bytes_per_row: u32,
     last_size: Option<(u32, u32)>,
 }
 
@@ -102,13 +112,20 @@ impl GpuRenderer {
             .await
             .map_err(|error| format!("Failed to create GPU device: {error}"))?;
         let max_texture_dimension = device.limits().max_texture_dimension_2d;
+        let max_render_dimension = max_texture_dimension.min(4096);
 
+        // Train Simulator (DirectX 9) uses Left-Handed coordinates; wgpu uses Right-Handed.
+        // Flip X on both positions and normals at load time so world_position, normals,
+        // lighting, and screen-space derivatives stay consistent in RH space.
         let packed_vertices = vertices
             .iter()
-            .map(|vertex| GpuVertex {
-                position: (Vec3::from_array(vertex.position) - center).to_array(),
-                normal: vertex.normal,
-                uv: vertex.uv,
+            .map(|vertex| {
+                let pos = Vec3::from_array(vertex.position) - center;
+                GpuVertex {
+                    position: [-pos.x, pos.y, pos.z],
+                    normal: [-vertex.normal[0], vertex.normal[1], vertex.normal[2]],
+                    uv: vertex.uv,
+                }
             })
             .collect::<Vec<_>>();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -121,22 +138,55 @@ impl GpuRenderer {
             contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let lines = indices
-            .chunks_exact(3)
-            .flat_map(|triangle| {
-                [
+
+        // Build wireframe indices and bounding centroids per submesh so non-multiple-of-3
+        // offsets or truncated submesh ranges can never read past the index buffer.
+        let mut wire_lines = Vec::with_capacity(indices.len() * 2);
+        let mut triangle_ranges = Vec::with_capacity(submeshes.len());
+        let mut wire_ranges = Vec::with_capacity(submeshes.len());
+        let mut submesh_centers = Vec::with_capacity(submeshes.len());
+        let total_indices = indices.len();
+        for submesh in submeshes {
+            let start = (submesh.first_index as usize).min(total_indices);
+            let end = start
+                .saturating_add(submesh.index_count as usize)
+                .min(total_indices);
+            let slice = &indices[start..end];
+            let tri_count = (slice.len() / 3) * 3;
+            triangle_ranges.push((start as u32, tri_count as u32));
+
+            let wire_start = wire_lines.len() as u32;
+            let mut min_pt = Vec3::splat(f32::INFINITY);
+            let mut max_pt = Vec3::splat(f32::NEG_INFINITY);
+            for triangle in slice.chunks_exact(3) {
+                wire_lines.extend_from_slice(&[
                     triangle[0],
                     triangle[1],
                     triangle[1],
                     triangle[2],
                     triangle[2],
                     triangle[0],
-                ]
-            })
-            .collect::<Vec<_>>();
+                ]);
+                for &idx in triangle {
+                    if let Some(v) = packed_vertices.get(idx as usize) {
+                        let p = Vec3::from_array(v.position);
+                        min_pt = min_pt.min(p);
+                        max_pt = max_pt.max(p);
+                    }
+                }
+            }
+            let wire_count = (wire_lines.len() as u32) - wire_start;
+            wire_ranges.push((wire_start, wire_count));
+            let centroid = if min_pt.x.is_finite() {
+                (min_pt + max_pt) * 0.5
+            } else {
+                Vec3::ZERO
+            };
+            submesh_centers.push(centroid);
+        }
         let wire_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("GeoPcDx wireframe indices"),
-            contents: bytemuck::cast_slice(&lines),
+            contents: bytemuck::cast_slice(&wire_lines),
             usage: wgpu::BufferUsages::INDEX,
         });
 
@@ -170,6 +220,7 @@ impl GpuRenderer {
                     Cow::Borrowed(texture_data.pixels.as_slice()),
                 )
             };
+            let mip_levels = mip_level_count(width, height);
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("GeoPcDx albedo"),
                 size: wgpu::Extent3d {
@@ -177,32 +228,44 @@ impl GpuRenderer {
                     height,
                     depth_or_array_layers: 1,
                 },
-                mip_level_count: 1,
+                mip_level_count: mip_levels,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                pixels.as_ref(),
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(width * 4),
-                    rows_per_image: Some(height),
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
+            let mut mip_w = width;
+            let mut mip_h = height;
+            let mut mip_data = pixels;
+            for level in 0..mip_levels {
+                queue.write_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &texture,
+                        mip_level: level,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    mip_data.as_ref(),
+                    wgpu::ImageDataLayout {
+                        offset: 0,
+                        bytes_per_row: Some(mip_w * 4),
+                        rows_per_image: Some(mip_h),
+                    },
+                    wgpu::Extent3d {
+                        width: mip_w,
+                        height: mip_h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                if level + 1 < mip_levels {
+                    let (next_w, next_h, next_pixels) =
+                        downsample_mip_rgba(mip_w, mip_h, mip_data.as_ref());
+                    mip_w = next_w;
+                    mip_h = next_h;
+                    mip_data = Cow::Owned(next_pixels);
+                }
+            }
             texture_views.push(texture.create_view(&wgpu::TextureViewDescriptor::default()));
         }
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -210,10 +273,11 @@ impl GpuRenderer {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
-        // Group 0: per-frame camera uniform.
+        // Group 0: persistent camera uniform buffer + bind group.
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("GeoPcDx camera bindings"),
@@ -228,6 +292,23 @@ impl GpuRenderer {
                     count: None,
                 }],
             });
+        let initial_camera = CameraUniform {
+            view_projection: Mat4::IDENTITY.to_cols_array(),
+        };
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("GeoPcDx camera uniform"),
+            contents: bytemuck::cast_slice(&[initial_camera]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GeoPcDx frame camera bindings"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
         // Group 1: per-texture texture + sampler.
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -252,8 +333,6 @@ impl GpuRenderer {
                 ],
             });
 
-        // Pre-build one texture bind group per texture (group 1). These never change after
-        // load time, so they are moved out of the per-frame render path.
         let texture_bind_groups = texture_views
             .iter()
             .map(|texture_view| {
@@ -274,8 +353,7 @@ impl GpuRenderer {
             })
             .collect::<Vec<_>>();
 
-        // Group 2: per-batch material uniform (alpha_cutoff). One small uniform
-        // buffer + bind group per submesh, created at load time.
+        // Group 2: per-batch material uniform (alpha_cutoff).
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("GeoPcDx material bindings"),
@@ -348,45 +426,49 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.world_position = input.position;
     return output;
 }
-fn shade(input: VertexOutput) -> vec4<f32> {
-    let color = textureSample(albedo, albedo_sampler, input.uv);
+fn shade_sample(input: VertexOutput, color: vec4<f32>, face_normal: vec3<f32>) -> vec4<f32> {
     var normal = input.normal;
     if dot(normal, normal) < 1e-10 {
-        normal = cross(dpdx(input.world_position), dpdy(input.world_position));
+        normal = face_normal;
         if dot(normal, normal) < 1e-10 {
             normal = vec3<f32>(0.0, 1.0, 0.0);
         }
     }
     normal = normalize(normal);
     let up = vec3<f32>(0.0, 1.0, 0.0);
-    let hemisphere = mix(0.58, 0.82, clamp(dot(normal, up) * 0.5 + 0.5, 0.0, 1.0));
-    let key = abs(dot(normal, normalize(vec3<f32>(-0.45, 0.72, 0.52)))) * 0.32;
+    let hemisphere = mix(0.28, 0.62, clamp(dot(normal, up) * 0.5 + 0.5, 0.0, 1.0));
+    let key = abs(dot(normal, normalize(vec3<f32>(-0.45, 0.72, 0.52)))) * 0.36;
     let fill = abs(dot(normal, normalize(vec3<f32>(0.55, 0.2, -0.65)))) * 0.14;
     let rim_direction = normalize(vec3<f32>(0.35, 0.45, -0.82));
     let rim = pow(1.0 - max(dot(normal, rim_direction), 0.0), 2.0) * 0.10;
-    let light = clamp(max(0.55, hemisphere + key + fill + rim), 0.55, 1.2);
+    let light = clamp(max(0.25, hemisphere + key + fill + rim), 0.25, 1.25);
     return vec4<f32>(color.rgb * light, color.a);
 }
 @fragment
 fn fs_opaque(input: VertexOutput) -> @location(0) vec4<f32> {
-    let color = shade(input);
+    let sample = textureSample(albedo, albedo_sampler, input.uv);
+    let face_normal = cross(dpdy(input.world_position), dpdx(input.world_position));
+    let color = shade_sample(input, sample, face_normal);
     return vec4<f32>(color.rgb, 1.0);
 }
 @fragment
 fn fs_cutout(input: VertexOutput) -> @location(0) vec4<f32> {
-    if textureSample(albedo, albedo_sampler, input.uv).a < material.alpha_cutoff {
+    let sample = textureSample(albedo, albedo_sampler, input.uv);
+    let face_normal = cross(dpdy(input.world_position), dpdx(input.world_position));
+    if sample.a < material.alpha_cutoff {
         discard;
     }
-    let color = shade(input);
+    let color = shade_sample(input, sample, face_normal);
     return vec4<f32>(color.rgb, 1.0);
 }
 @fragment
 fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
-    let color = shade(input);
-    if color.a < 0.02 {
+    let sample = textureSample(albedo, albedo_sampler, input.uv);
+    let face_normal = cross(dpdy(input.world_position), dpdx(input.world_position));
+    if sample.a < 0.02 {
         discard;
     }
-    return color;
+    return shade_sample(input, sample, face_normal);
 }
 "#
                 .into(),
@@ -411,7 +493,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                              fragment_entry_point: &'static str,
                              blend: Option<wgpu::BlendState>,
                              depth_write_enabled: bool,
-                             cull_mode: wgpu::Face| {
+                             cull_mode: Option<wgpu::Face>| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -432,7 +514,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 primitive: wgpu::PrimitiveState {
                     topology,
                     front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(cull_mode),
+                    cull_mode,
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
@@ -447,12 +529,12 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             })
         };
         let opaque_pipeline_cw = make_pipeline(
-            "GeoPcDx opaque pipeline CW",
+            "GeoPcDx opaque pipeline Front",
             wgpu::PrimitiveTopology::TriangleList,
             "fs_opaque",
             Some(wgpu::BlendState::REPLACE),
             true,
-            wgpu::Face::Front,
+            Some(wgpu::Face::Front),
         );
         let opaque_pipeline_ccw = make_pipeline(
             "GeoPcDx opaque pipeline Back",
@@ -460,7 +542,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_opaque",
             Some(wgpu::BlendState::REPLACE),
             true,
-            wgpu::Face::Back,
+            Some(wgpu::Face::Back),
         );
         let cutout_pipeline_cw = make_pipeline(
             "GeoPcDx cutout pipeline Front",
@@ -468,7 +550,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_cutout",
             Some(wgpu::BlendState::REPLACE),
             true,
-            wgpu::Face::Front,
+            Some(wgpu::Face::Front),
         );
         let cutout_pipeline_ccw = make_pipeline(
             "GeoPcDx cutout pipeline Back",
@@ -476,15 +558,23 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_cutout",
             Some(wgpu::BlendState::REPLACE),
             true,
-            wgpu::Face::Back,
+            Some(wgpu::Face::Back),
         );
-        let alpha_pipeline = make_pipeline(
-            "GeoPcDx alpha pipeline",
+        let alpha_pipeline_cw = make_pipeline(
+            "GeoPcDx alpha pipeline Front",
             wgpu::PrimitiveTopology::TriangleList,
             "fs_blended",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
-            wgpu::Face::Back,
+            Some(wgpu::Face::Front),
+        );
+        let alpha_pipeline_ccw = make_pipeline(
+            "GeoPcDx alpha pipeline Back",
+            wgpu::PrimitiveTopology::TriangleList,
+            "fs_blended",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+            Some(wgpu::Face::Back),
         );
         let wire_pipeline = make_pipeline(
             "GeoPcDx wireframe pipeline",
@@ -492,28 +582,36 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             "fs_opaque",
             Some(wgpu::BlendState::REPLACE),
             true,
-            wgpu::Face::Back,
+            None,
         );
         Ok(Self {
             device,
             queue,
+            max_render_dimension,
             opaque_pipeline_cw,
             opaque_pipeline_ccw,
             cutout_pipeline_cw,
             cutout_pipeline_ccw,
-            alpha_pipeline,
+            alpha_pipeline_cw,
+            alpha_pipeline_ccw,
             wire_pipeline,
-            camera_bind_group_layout,
+            camera_buffer,
+            camera_bind_group,
             vertex_buffer,
             triangle_indices,
             wire_indices,
             submeshes: submeshes.to_vec(),
+            triangle_ranges,
+            wire_ranges,
+            submesh_centers,
             visible: submeshes.iter().map(|submesh| submesh.visible).collect(),
             texture_bind_groups,
             color_texture: None,
             color_view: None,
             depth_texture: None,
             depth_view: None,
+            readback_buffer: None,
+            padded_bytes_per_row: 0,
             last_size: None,
             material_bind_groups,
         })
@@ -534,11 +632,12 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             .collect();
     }
 
-    /// Ensure render targets exist for `size`, recreating them only when the size changes.
+    /// Ensure render targets and readback buffer exist for `size`, recreating only on resize.
     fn ensure_render_targets(&mut self, width: u32, height: u32) {
         if self.last_size == Some((width, height))
             && self.color_view.is_some()
             && self.depth_view.is_some()
+            && self.readback_buffer.is_some()
         {
             return;
         }
@@ -572,10 +671,21 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             view_formats: &[],
         });
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let bytes_per_row = width * 4;
+        let padded_bytes_per_row = bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let readback_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GeoPcDx CPU readback"),
+            size: (padded_bytes_per_row * height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
         self.color_texture = Some(color);
         self.color_view = Some(color_view);
         self.depth_texture = Some(depth);
         self.depth_view = Some(depth_view);
+        self.readback_buffer = Some(readback_buffer);
+        self.padded_bytes_per_row = padded_bytes_per_row;
         self.last_size = Some((width, height));
     }
 
@@ -584,61 +694,43 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
         camera: super::viewer3d::Camera,
         radius: f32,
     ) -> Result<(u32, u32, Vec<u8>), String> {
-        let width = camera.width.clamp(1, 1200);
-        let height = camera.height.clamp(1, 1200);
+        let width = camera.width.clamp(1, self.max_render_dimension);
+        let height = camera.height.clamp(1, self.max_render_dimension);
         self.ensure_render_targets(width, height);
         let color_view = self.color_view.as_ref().unwrap();
         let depth_view = self.depth_view.as_ref().unwrap();
+        let readback_buffer = self.readback_buffer.as_ref().unwrap();
 
         let aspect = width as f32 / height as f32;
-        let distance = camera.distance.max(radius * 1.05);
+        let safe_radius = radius.max(0.01);
+        let distance = camera.distance.max(safe_radius * 1.05).max(0.05);
+        // Clamp pitch strictly below +-90 degrees to avoid gimbal lock / NaN in look_at_rh.
+        let pitch = camera.pitch.clamp(-1.56, 1.56);
         let direction = Vec3::new(
-            camera.yaw.sin() * camera.pitch.cos(),
-            camera.pitch.sin(),
-            camera.yaw.cos() * camera.pitch.cos(),
+            camera.yaw.sin() * pitch.cos(),
+            pitch.sin(),
+            camera.yaw.cos() * pitch.cos(),
         );
         let right = direction.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(direction).normalize_or_zero();
         let target = right * camera.pan_x + up * camera.pan_y;
         let eye = target + direction * distance;
         let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-        // Dynamic near plane: near = max(distance * 0.01, 0.05) avoids z-fighting on
-        // large models while keeping close geometry visible.
         let near = (distance * 0.01).max(0.05);
-        let projection =
-            Mat4::perspective_rh(45.0f32.to_radians(), aspect, near, distance + radius * 4.0);
+        let far = (distance + safe_radius * 4.0).max(near + 1.0);
+        let projection = Mat4::perspective_rh(45.0f32.to_radians(), aspect, near, far);
         let view_projection = projection * view;
-        // Train Simulator (DirectX 9) uses Left-Handed coordinates; wgpu uses Right-Handed.
-        // Flip X to convert LH -> RH, which mirrors the model horizontally.
-        let view_projection = view_projection * Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0));
         let camera_uniform = CameraUniform {
             view_projection: view_projection.to_cols_array(),
         };
-        let uniform = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("GeoPcDx camera uniform"),
-                contents: bytemuck::cast_slice(&[camera_uniform]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-        let camera_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GeoPcDx frame camera bindings"),
-            layout: &self.camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform.as_entire_binding(),
-            }],
-        });
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[camera_uniform]),
+        );
 
         let bytes_per_row = width * 4;
-        let padded_bytes_per_row = bytes_per_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let output = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("GeoPcDx CPU readback"),
-            size: (padded_bytes_per_row * height) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let padded_bytes_per_row = self.padded_bytes_per_row;
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -651,10 +743,11 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                     view: color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
+                        // Linear RGB corresponding to sRGB #1C2028.
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.11,
-                            g: 0.125,
-                            b: 0.157,
+                            r: 0.0116,
+                            g: 0.0144,
+                            b: 0.0212,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -680,38 +773,54 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 },
                 wgpu::IndexFormat::Uint32,
             );
-            pass.set_bind_group(0, &camera_bind_group, &[]);
-            let (opaque, blended): (Vec<usize>, Vec<usize>) = (0..self.submeshes.len())
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            let (opaque, mut blended): (Vec<usize>, Vec<usize>) = (0..self.submeshes.len())
                 .partition(|&index| self.submeshes[index].render_mode != GeoRenderMode::Blended);
+            // Sort blended submeshes back-to-front relative to the camera.
+            blended.sort_by(|&a, &b| {
+                let da = (self.submesh_centers[a] - eye).length_squared();
+                let db = (self.submesh_centers[b] - eye).length_squared();
+                db.total_cmp(&da)
+            });
             for index in opaque.into_iter().chain(blended) {
                 if !self.visible.get(index).copied().unwrap_or(true) {
+                    continue;
+                }
+                let (start, count) = if camera.wireframe {
+                    self.wire_ranges[index]
+                } else {
+                    self.triangle_ranges[index]
+                };
+                if count == 0 {
                     continue;
                 }
                 let submesh = &self.submeshes[index];
                 let pipeline = if camera.wireframe {
                     &self.wire_pipeline
                 } else {
-                    let cull_face = if submesh.mirrored {
-                        wgpu::Face::Front
-                    } else {
-                        wgpu::Face::Back
-                    };
+                    let front_cull = submesh.mirrored;
                     match submesh.render_mode {
                         GeoRenderMode::Opaque => {
-                            if cull_face == wgpu::Face::Front {
+                            if front_cull {
                                 &self.opaque_pipeline_cw
                             } else {
                                 &self.opaque_pipeline_ccw
                             }
                         }
                         GeoRenderMode::Cutout => {
-                            if cull_face == wgpu::Face::Front {
+                            if front_cull {
                                 &self.cutout_pipeline_cw
                             } else {
                                 &self.cutout_pipeline_ccw
                             }
                         }
-                        GeoRenderMode::Blended => &self.alpha_pipeline,
+                        GeoRenderMode::Blended => {
+                            if front_cull {
+                                &self.alpha_pipeline_cw
+                            } else {
+                                &self.alpha_pipeline_ccw
+                            }
+                        }
                     }
                 };
                 pass.set_pipeline(pipeline);
@@ -719,16 +828,6 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                     .min(self.texture_bind_groups.len().saturating_sub(1));
                 pass.set_bind_group(1, &self.texture_bind_groups[texture_index], &[]);
                 pass.set_bind_group(2, &self.material_bind_groups[index], &[]);
-                let start = if camera.wireframe {
-                    submesh.first_index * 2
-                } else {
-                    submesh.first_index
-                };
-                let count = if camera.wireframe {
-                    submesh.index_count * 2
-                } else {
-                    submesh.index_count
-                };
                 pass.draw_indexed(start..start + count, 0, 0..1);
             }
         }
@@ -740,7 +839,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::ImageCopyBuffer {
-                buffer: &output,
+                buffer: readback_buffer,
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
@@ -754,7 +853,7 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             },
         );
         self.queue.submit(Some(encoder.finish()));
-        let slice = output.slice(..);
+        let slice = readback_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -773,9 +872,40 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
                 .copy_from_slice(&mapped[source..source + bytes_per_row as usize]);
         }
         drop(mapped);
-        output.unmap();
+        readback_buffer.unmap();
         Ok((width, height, pixels))
     }
+}
+
+fn mip_level_count(width: u32, height: u32) -> u32 {
+    32 - width.max(height).leading_zeros()
+}
+
+fn downsample_mip_rgba(src_w: u32, src_h: u32, src: &[u8]) -> (u32, u32, Vec<u8>) {
+    let dst_w = (src_w / 2).max(1);
+    let dst_h = (src_h / 2).max(1);
+    let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
+    for y in 0..dst_h {
+        let sy0 = (y * 2).min(src_h - 1);
+        let sy1 = (sy0 + 1).min(src_h - 1);
+        for x in 0..dst_w {
+            let sx0 = (x * 2).min(src_w - 1);
+            let sx1 = (sx0 + 1).min(src_w - 1);
+            let i00 = ((sy0 * src_w + sx0) * 4) as usize;
+            let i10 = ((sy0 * src_w + sx1) * 4) as usize;
+            let i01 = ((sy1 * src_w + sx0) * 4) as usize;
+            let i11 = ((sy1 * src_w + sx1) * 4) as usize;
+            let out = ((y * dst_w + x) * 4) as usize;
+            for c in 0..4 {
+                let sum = src[i00 + c] as u32
+                    + src[i10 + c] as u32
+                    + src[i01 + c] as u32
+                    + src[i11 + c] as u32;
+                dst[out + c] = ((sum + 2) / 4) as u8;
+            }
+        }
+    }
+    (dst_w, dst_h, dst)
 }
 
 fn downscale_rgba(
