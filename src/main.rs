@@ -19,7 +19,7 @@ use zip::ZipArchive;
 
 mod analysis_cache;
 mod ap_picker_controller;
-mod app;
+mod app_controller;
 mod archive;
 mod assets;
 mod auditor;
@@ -48,7 +48,6 @@ mod texture_controller;
 mod translit;
 mod viewer3d;
 mod windows;
-mod xml_scan;
 
 pub(crate) use route_icon_cache::{
     clear_route_icon_cache, request_route_icon_load, try_get_route_icon,
@@ -56,7 +55,7 @@ pub(crate) use route_icon_cache::{
 
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
-static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
+static APP: OnceLock<Arc<Mutex<app_controller::CheckerApp>>> = OnceLock::new();
 
 thread_local! {
     static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = const { RefCell::new(None) };
@@ -81,11 +80,11 @@ pub(crate) fn schedule_ui_sync() {
     });
 }
 
-fn app_state() -> Arc<Mutex<app::CheckerApp>> {
+fn app_state() -> Arc<Mutex<app_controller::CheckerApp>> {
     APP.get().cloned().expect("app state not initialized")
 }
 
-pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app::LogLevel) {
+pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app_controller::LogLevel) {
     if let Ok(mut app) = app_state().lock() {
         app.status = message.to_owned();
         app.log_event(message.to_owned(), level);
@@ -95,9 +94,9 @@ pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app::LogLe
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    crate::app::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
-                    crate::app::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
-                    crate::app::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
+                    crate::app_controller::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
+                    crate::app_controller::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
+                    crate::app_controller::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
                     _ => slint::Color::from_rgb_u8(204, 204, 204),
                 },
             })
@@ -248,9 +247,9 @@ fn sync_ui(ui: &MainWindow) {
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    crate::app::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
-                    crate::app::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
-                    crate::app::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
+                    crate::app_controller::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
+                    crate::app_controller::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
+                    crate::app_controller::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
                     _ => slint::Color::from_rgb_u8(204, 204, 204),
                 },
             })
@@ -445,7 +444,7 @@ fn main() {
     handle_cli_args();
 
     // Фоновый поток записи полного лога на диск (AppData\TSC Check Tool\app.log).
-    let (log_tx, log_rx) = mpsc::channel::<crate::app::LogEntry>();
+    let (log_tx, log_rx) = mpsc::channel::<crate::app_controller::LogEntry>();
     let log_path = crate::settings::log_file();
     thread::spawn(move || {
         if let Some(parent) = log_path.parent() {
@@ -470,7 +469,7 @@ fn main() {
 
     route_icon_cache::init();
 
-    let mut app = app::CheckerApp::default();
+    let mut app = app_controller::CheckerApp::default();
     app.log_tx = Some(log_tx);
     let app = Arc::new(Mutex::new(app));
     let _ = APP.set(app.clone());
@@ -618,7 +617,7 @@ fn main() {
                 crate::log_event(
                     &ui,
                     &format!("Открыта папка в проводнике: {}.", path.display()),
-                    crate::app::LogLevel::Info,
+                    crate::app_controller::LogLevel::Info,
                 );
             }
         }
@@ -660,7 +659,7 @@ fn main() {
             crate::log_event(
                 &ui,
                 &format!("GUID скопирован в буфер обмена: {guid}"),
-                crate::app::LogLevel::Info,
+                crate::app_controller::LogLevel::Info,
             );
         }
     });

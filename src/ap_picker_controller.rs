@@ -18,12 +18,12 @@ pub struct ApPickerState {
 pub struct ApPickerController {
     pub window: ApAssetPickerWindow,
     pub weak: Weak<ApAssetPickerWindow>,
-    pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
     pub state: Arc<Mutex<Option<ApPickerState>>>,
 }
 
 impl ApPickerController {
-    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
         let window = ApAssetPickerWindow::new().unwrap();
         let weak = window.as_weak();
         let state = Arc::new(Mutex::new(None::<ApPickerState>));
@@ -109,7 +109,7 @@ impl ApPickerController {
                 let app_t = app.clone();
                 let entry = selected_entry;
                 std::thread::spawn(move || {
-                    let assets_path = crate::app::clean_rw_path(&rw_path).join("Assets");
+                    let assets_path = crate::app_controller::clean_rw_path(&rw_path).join("Assets");
                     let target_file_path =
                         resolve_extraction_path(&assets_path, &archive_path, &entry);
                     let extract_result = crate::archive::extract_archive_member(
@@ -144,7 +144,7 @@ impl ApPickerController {
                             if let Ok(mut app) = app_t.lock() {
                                 app.log_event(
                                     format!("Ошибка распаковки: {err}"),
-                                    crate::app::LogLevel::Error,
+                                    crate::app_controller::LogLevel::Error,
                                 );
                                 crate::schedule_ui_sync();
                             }

@@ -135,7 +135,7 @@ impl TextureController {
                     &editor_weak,
                     &editor_ui_weak,
                     &message,
-                    crate::app::LogLevel::Warning,
+                    crate::app_controller::LogLevel::Warning,
                 );
                 return;
             };
@@ -176,7 +176,7 @@ impl TextureController {
                                     &callback_viewer,
                                     &callback_ui,
                                     &message,
-                                    crate::app::LogLevel::Info,
+                                    crate::app_controller::LogLevel::Info,
                                 );
                                 let viewer = callback_viewer.clone();
                                 let _ = slint::invoke_from_event_loop(move || {
@@ -208,7 +208,7 @@ impl TextureController {
                                     &callback_viewer,
                                     &callback_ui,
                                     &message,
-                                    crate::app::LogLevel::Error,
+                                    crate::app_controller::LogLevel::Error,
                                 );
                             }
                         }
@@ -219,7 +219,7 @@ impl TextureController {
                             &callback_viewer,
                             &callback_ui,
                             &message,
-                            crate::app::LogLevel::Error,
+                            crate::app_controller::LogLevel::Error,
                         );
                     }
                 })
@@ -229,7 +229,7 @@ impl TextureController {
                     &editor_weak,
                     &editor_ui_weak,
                     &message,
-                    crate::app::LogLevel::Error,
+                    crate::app_controller::LogLevel::Error,
                 );
             }
         });
@@ -281,7 +281,7 @@ impl TextureController {
                     &viewer_weak_export,
                     &ui_weak_export,
                     &msg,
-                    crate::app::LogLevel::Warning,
+                    crate::app_controller::LogLevel::Warning,
                 );
                 return;
             };
@@ -303,11 +303,11 @@ impl TextureController {
                 let (msg, level) = match res {
                     Ok(()) => (
                         format!("Экспортировано DDS: {}", out.display()),
-                        crate::app::LogLevel::Success,
+                        crate::app_controller::LogLevel::Success,
                     ),
                     Err(e) => (
                         format!("Ошибка экспорта DDS: {e}"),
-                        crate::app::LogLevel::Error,
+                        crate::app_controller::LogLevel::Error,
                     ),
                 };
                 notify(&viewer_weak, &ui_weak, &msg, level);
@@ -325,7 +325,7 @@ impl TextureController {
                 .and_then(|g| g.as_ref().map(|(_, _, _, p)| p.clone()));
             let Some(path) = path else {
                 let msg = "Нет загруженной текстуры для замены".to_string();
-                notify(&viewer_weak_replace, &ui_weak_replace, &msg, crate::app::LogLevel::Warning);
+                notify(&viewer_weak_replace, &ui_weak_replace, &msg, crate::app_controller::LogLevel::Warning);
                 return;
             };
 
@@ -337,7 +337,7 @@ impl TextureController {
                     "Файл доступен только для чтения (возможно, внутри .ap-архива): {}. Распакуйте перед заменой.",
                     path.display()
                 );
-                notify(&viewer_weak_replace, &ui_weak_replace, &msg, crate::app::LogLevel::Warning);
+                notify(&viewer_weak_replace, &ui_weak_replace, &msg, crate::app_controller::LogLevel::Warning);
                 return;
             }
 
@@ -352,7 +352,7 @@ impl TextureController {
             std::thread::spawn(move || {
                 if let Err(e) = crate::external_editor::create_backup_file(&path) {
                     let msg = format!("Не удалось создать резервную копию: {e}");
-                    notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Error);
+                    notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Error);
                     return;
                 }
 
@@ -362,11 +362,11 @@ impl TextureController {
                             "Импорт DDS выполнен: формат {}, мипмапов {}, всего {} байт",
                             report.dds_format, report.mip_count, report.total_bytes
                         );
-                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Success);
                     }
                     Err(e) => {
                         let msg = format!("Ошибка замены из DDS: {e}");
-                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Error);
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Error);
                         return;
                     }
                 }
@@ -401,10 +401,10 @@ impl TextureController {
                                 }
                             });
                             let msg = format!("Текстура заменена из DDS: {}", path.display());
-                            notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
+                            notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Success);
                 } else {
                     let msg = "Не удалось перезагрузить превью после замены".to_string();
-                    notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Warning);
+                    notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Warning);
                 }
             });
         });
@@ -449,11 +449,11 @@ impl TextureController {
                             });
                         }
                         let msg = format!("Внутреннее имя текстуры сохранено: {}", path.display());
-                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Success);
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Success);
                     }
                     Err(e) => {
                         let msg = format!("Ошибка сохранения имени: {e}");
-                        notify(&viewer_weak, &ui_weak, &msg, crate::app::LogLevel::Error);
+                        notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Error);
                     }
                 }
             });
@@ -499,7 +499,7 @@ fn notify(
     viewer_weak: &Weak<TextureViewerWindow>,
     ui_weak: &Option<Weak<crate::MainWindow>>,
     msg: &str,
-    level: crate::app::LogLevel,
+    level: crate::app_controller::LogLevel,
 ) {
     let msg_v = msg.to_string();
     let vw = viewer_weak.clone();

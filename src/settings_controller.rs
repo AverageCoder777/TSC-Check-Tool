@@ -9,13 +9,13 @@ use crate::SettingsWindow;
 pub struct SettingsController {
     pub window: SettingsWindow,
     pub weak: Weak<SettingsWindow>,
-    pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
 }
 
 /// Сохраняет текущие значения из окна настроек в конфиг и состояние приложения.
 /// Вызывается и при нажатии «Сохранить», и при закрытии окна крестиком.
 fn save_ui_settings(
-    app: Arc<Mutex<crate::app::CheckerApp>>,
+    app: Arc<Mutex<crate::app_controller::CheckerApp>>,
     weak: slint::Weak<SettingsWindow>,
 ) -> Result<(), String> {
     let sw = weak
@@ -54,7 +54,7 @@ fn save_ui_settings(
         crate::settings::apply_saved_language(&language);
         app.log_event(
             "Настройки сохранены.".to_owned(),
-            crate::app::LogLevel::Info,
+            crate::app_controller::LogLevel::Info,
         );
         if path_changed {
             app.start_route_scan();
@@ -65,7 +65,7 @@ fn save_ui_settings(
 }
 
 impl SettingsController {
-    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
         let window = SettingsWindow::new().unwrap();
         let weak = window.as_weak();
         Self { window, weak, app }

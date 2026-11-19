@@ -10,18 +10,18 @@ use std::time::{Duration, Instant};
 pub struct InventoryController {
     pub window: AssetInventoryWindow,
     pub weak: Weak<AssetInventoryWindow>,
-    pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
 }
 
 impl InventoryController {
-    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
         let window = AssetInventoryWindow::new().unwrap();
         let weak = window.as_weak();
         Self { window, weak, app }
     }
     pub(crate) fn update_inventory_view(
         inv: &AssetInventoryWindow,
-        state: &mut crate::app::AssetInventoryWindowState,
+        state: &mut crate::app_controller::AssetInventoryWindowState,
     ) {
         let show_missing = inv.get_show_missing_only();
         let (rows, safe, delete_flags, filtered_indices) =
@@ -189,8 +189,8 @@ impl InventoryController {
                         crate::external_editor::open_and_sync_with_vscode(&full, move |result| {
                             if let Ok(mut app) = app_for_status.lock() {
                                 let (msg, level) = match result {
-                                    Ok(msg) => (msg, crate::app::LogLevel::Info),
-                                    Err(err) => (format!("✗ {err}"), crate::app::LogLevel::Error),
+                                    Ok(msg) => (msg, crate::app_controller::LogLevel::Info),
+                                    Err(err) => (format!("✗ {err}"), crate::app_controller::LogLevel::Error),
                                 };
                                 app.log_event(msg, level);
                                 crate::schedule_ui_sync();
@@ -246,7 +246,7 @@ impl InventoryController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
-                            crate::app::LogLevel::Warning,
+                            crate::app_controller::LogLevel::Warning,
                         );
                         crate::schedule_ui_sync();
                     }
@@ -292,7 +292,7 @@ impl InventoryController {
                                     "Для объекта {} не найдено подходящих тайлов для удаления.",
                                     asset.path
                                 ),
-                                crate::app::LogLevel::Warning,
+                                crate::app_controller::LogLevel::Warning,
                             );
                             crate::schedule_ui_sync();
                         }
@@ -353,7 +353,7 @@ impl InventoryController {
                                 "Удален объект {} из {} тайлов ({} вхождений)",
                                 asset.path, total_tiles, total_occurrences
                             ),
-                            crate::app::LogLevel::Info,
+                            crate::app_controller::LogLevel::Info,
                         );
                         if !untouched_files.is_empty() {
                             app.log_event(
@@ -362,12 +362,12 @@ impl InventoryController {
                                     asset.path,
                                     untouched_files.join(", ")
                                 ),
-                                crate::app::LogLevel::Warning,
+                                crate::app_controller::LogLevel::Warning,
                             );
                         }
                     } else {
                         for error in &errors {
-                            app.log_event(error.clone(), crate::app::LogLevel::Error);
+                            app.log_event(error.clone(), crate::app_controller::LogLevel::Error);
                         }
                     }
                     crate::schedule_ui_sync();
@@ -421,7 +421,7 @@ impl InventoryController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Замена этого ассета запрещена (путевая инфраструктура).".to_owned(),
-                            crate::app::LogLevel::Warning,
+                            crate::app_controller::LogLevel::Warning,
                         );
                         crate::schedule_ui_sync();
                     }

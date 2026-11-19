@@ -42,7 +42,7 @@ pub(crate) fn existing_directory_upwards(path: &Path) -> Option<PathBuf> {
 }
 
 pub fn build_inventory_rows(
-    state: &crate::app::AssetInventoryWindowState,
+    state: &crate::app_controller::AssetInventoryWindowState,
     show_missing: bool,
 ) -> (
     Vec<slint::ModelRc<slint::StandardListViewItem>>,

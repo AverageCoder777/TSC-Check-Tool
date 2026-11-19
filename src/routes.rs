@@ -1,7 +1,7 @@
 //! crate::domain::Route discovery, structure reports, names, icons, and route-scan caching.
 
 use super::*;
-use crate::app::{LogEntry, LogLevel};
+use crate::app_controller::{LogEntry, LogLevel};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 use std::sync::mpsc;

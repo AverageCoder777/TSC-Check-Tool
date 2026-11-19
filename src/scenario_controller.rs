@@ -9,12 +9,12 @@ use crate::ScenarioWindow;
 pub struct ScenarioController {
     pub window: ScenarioWindow,
     pub weak: Weak<ScenarioWindow>,
-    pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
     pub scenario_generation: Arc<AtomicU64>,
 }
 
 impl ScenarioController {
-    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
         let window = ScenarioWindow::new().unwrap();
         let weak = window.as_weak();
         Self {
@@ -351,7 +351,7 @@ impl ScenarioController {
                             "Открыта папка сценария в Проводнике: {}.",
                             scenario.path.display()
                         ),
-                        crate::app::LogLevel::Info,
+                        crate::app_controller::LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                     crate::windows::open_in_file_explorer(&scenario.path);
@@ -401,7 +401,7 @@ impl ScenarioController {
                 if path.is_empty() {
                     app.log_event(
                         "Locoswap не настроен: укажите путь к Locoswap в настройках.".to_owned(),
-                        crate::app::LogLevel::Warning,
+                        crate::app_controller::LogLevel::Warning,
                     );
                     crate::schedule_ui_sync();
                     return;
@@ -409,7 +409,7 @@ impl ScenarioController {
                 if !Path::new(&path).is_file() {
                     app.log_event(
                         format!("Locoswap не найден по пути: {}.", path),
-                        crate::app::LogLevel::Error,
+                        crate::app_controller::LogLevel::Error,
                     );
                     crate::schedule_ui_sync();
                     return;
@@ -425,7 +425,7 @@ impl ScenarioController {
                     let scenario_name = scenario.name.clone();
                     app.log_event(
                         format!("Запущен Locoswap для сценария: {}.", scenario_name),
-                        crate::app::LogLevel::Info,
+                        crate::app_controller::LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                 }
@@ -602,7 +602,7 @@ impl ScenarioController {
                 if let Some(path) = resolved {
                     app.log_event(
                         format!("Открыт путь объекта в Проводнике: {}.", path.display()),
-                        crate::app::LogLevel::Info,
+                        crate::app_controller::LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                     if path.is_file() {
@@ -625,7 +625,7 @@ impl ScenarioController {
                             "Не удалось найти блюпринт объекта в маршруте: {}/{}.",
                             provider, product
                         ),
-                        crate::app::LogLevel::Error,
+                        crate::app_controller::LogLevel::Error,
                     );
                     crate::schedule_ui_sync();
                 }
@@ -674,7 +674,7 @@ impl ScenarioController {
                             "Открыт путь транспортного средства в Проводнике: {}.",
                             path.display()
                         ),
-                        crate::app::LogLevel::Info,
+                        crate::app_controller::LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                     if path.is_file() {
@@ -699,7 +699,7 @@ impl ScenarioController {
                             "Не удалось найти блюпринт транспортного средства: {}/{}.",
                             provider, product
                         ),
-                        crate::app::LogLevel::Error,
+                        crate::app_controller::LogLevel::Error,
                     );
                     crate::schedule_ui_sync();
                 }

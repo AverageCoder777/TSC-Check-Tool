@@ -41,13 +41,13 @@ pub struct AuditorController {
     pub window: FolderAuditorWindow,
     pub state: Arc<Mutex<AuditorState>>,
     pub weak: Weak<FolderAuditorWindow>,
-    pub app: Arc<Mutex<crate::app::CheckerApp>>,
+    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
     pub audit_generation: Arc<AtomicU64>,
     pub is_busy: Arc<AtomicBool>,
 }
 
 impl AuditorController {
-    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
         let window = FolderAuditorWindow::new().unwrap();
         let weak = window.as_weak();
         let state = Arc::new(Mutex::new(AuditorState::default()));
@@ -555,7 +555,7 @@ impl AuditorController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             format!("Открыта папка цели в Проводнике: {}.", path.display()),
-                            crate::app::LogLevel::Info,
+                            crate::app_controller::LogLevel::Info,
                         );
                         crate::schedule_ui_sync();
                     }
@@ -587,7 +587,7 @@ impl AuditorController {
                                         "Открыта родительская папка цели в Проводнике: {}.",
                                         d.display()
                                     ),
-                                    crate::app::LogLevel::Info,
+                                    crate::app_controller::LogLevel::Info,
                                 );
                                 crate::schedule_ui_sync();
                             }

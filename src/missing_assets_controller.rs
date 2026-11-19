@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::MissingAssetsWindow;
-use crate::app::CheckerApp;
+use crate::app_controller::CheckerApp;
 
 pub struct MissingAssetsController {
     pub window: MissingAssetsWindow,
@@ -185,7 +185,7 @@ impl MissingAssetsController {
                     );
                     app.log_event(
                         format!("Починен путь {} -> {}.", corrupted, clean_repair),
-                        crate::app::LogLevel::Info,
+                        crate::app_controller::LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                 }
@@ -223,7 +223,7 @@ impl MissingAssetsController {
                         "Массовая починка путей: исправлено {} объектов.",
                         repairable_count
                     ),
-                    crate::app::LogLevel::Info,
+                    crate::app_controller::LogLevel::Info,
                 );
                 app.start_next_asset_replacement();
             });
@@ -317,7 +317,7 @@ impl MissingAssetsController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Замена путевых объектов заблокирована для предотвращения повреждения маршрута.".to_owned(),
-                            crate::app::LogLevel::Warning,
+                            crate::app_controller::LogLevel::Warning,
                         );
                         crate::schedule_ui_sync();
                     }
@@ -463,7 +463,7 @@ impl MissingAssetsController {
                                     "Удален объект {} из {} тайлов ({} вхождений).",
                                     selected_path, files, occurrences
                                 ),
-                                crate::app::LogLevel::Info,
+                                crate::app_controller::LogLevel::Info,
                             );
                             if !untouched.is_empty() {
                                 app.log_event(
@@ -472,7 +472,7 @@ impl MissingAssetsController {
                                         selected_path,
                                         untouched.join(", ")
                                     ),
-                                    crate::app::LogLevel::Warning,
+                                    crate::app_controller::LogLevel::Warning,
                                 );
                             }
                             let remaining: Vec<String> = app
@@ -495,7 +495,7 @@ impl MissingAssetsController {
                     }
                     Err(error) => {
                         if let Ok(mut app) = app.lock() {
-                            app.log_event(error, crate::app::LogLevel::Error);
+                            app.log_event(error, crate::app_controller::LogLevel::Error);
                             crate::schedule_ui_sync();
                         }
                     }
