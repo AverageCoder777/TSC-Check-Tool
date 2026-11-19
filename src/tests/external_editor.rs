@@ -65,8 +65,7 @@ fn texture_editor_xml_round_trip_preserves_binary_blob() {
         val: 0x1234_5678,
     };
     let original =
-        crate::serz::encode_tgpcdx_to_vec(&texture_node(blob.clone()), Some(&preamble))
-            .unwrap();
+        crate::serz::encode_tgpcdx_to_vec(&texture_node(blob.clone()), Some(&preamble)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let target = directory.path().join("texture.TgPcDx");
     let temp_xml = generate_temp_xml_path(&target);

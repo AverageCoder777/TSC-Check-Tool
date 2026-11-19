@@ -449,11 +449,21 @@ impl TextureController {
                             });
                         }
                         let msg = format!("Внутреннее имя текстуры сохранено: {}", path.display());
-                        notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Success);
+                        notify(
+                            &viewer_weak,
+                            &ui_weak,
+                            &msg,
+                            crate::app_controller::LogLevel::Success,
+                        );
                     }
                     Err(e) => {
                         let msg = format!("Ошибка сохранения имени: {e}");
-                        notify(&viewer_weak, &ui_weak, &msg, crate::app_controller::LogLevel::Error);
+                        notify(
+                            &viewer_weak,
+                            &ui_weak,
+                            &msg,
+                            crate::app_controller::LogLevel::Error,
+                        );
                     }
                 }
             });

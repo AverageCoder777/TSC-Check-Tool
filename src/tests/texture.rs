@@ -58,9 +58,7 @@ fn round_trip_tgpcdx_dds() {
 
     let data = fs::read(&tg_path).unwrap();
     let xml = serz_bytes_to_xml(&data).unwrap();
-    assert!(
-        xml.contains(r#"<Name d:type="cDeltaString">TrainSimContent\Textures\Sample</Name>"#)
-    );
+    assert!(xml.contains(r#"<Name d:type="cDeltaString">TrainSimContent\Textures\Sample</Name>"#));
     assert!(xml.contains("HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA"));
 
     let blocks = all_image_blocks(&xml);
@@ -248,9 +246,7 @@ fn test_mip_chain_sizes_dxt1_dxt5_1024_to_1() {
 #[test]
 fn test_validate_dds_rejects_invalid_chains() {
     // Обрезанный буфер данных.
-    assert!(
-        validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 11, 100, Some(11)).is_err()
-    );
+    assert!(validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 11, 100, Some(11)).is_err());
     // Лишние данные после цепочки мипмапов.
     assert!(
         validate_dds_mip_chain(1024, 1024, DdsCompression::Dxt1, 11, 699_064 + 1, Some(11),)
@@ -345,7 +341,9 @@ fn test_texture_info_text_renders_chain() {
     let text = texture_info_text(&info, Path::new("x\\y\\tex.TgPcDx"), false);
     assert!(text.contains("Внутреннее имя (Name): TrainSimContent\\Textures\\Sample"));
     assert!(text.contains("Разрешение: 1024×1024 px | Текстур в группе: 1 | Мипмапов: 1"));
-    assert!(text.contains("Формат: DXT5 (BC3, плавная альфа) [HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA] | DDS: DXT5"));
+    assert!(text.contains(
+        "Формат: DXT5 (BC3, плавная альфа) [HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA] | DDS: DXT5"
+    ));
     assert!(text.contains("IsSwizzled: 0"));
     assert!(text.contains("Flags(u16): 0"));
     assert!(text.contains(
@@ -451,8 +449,7 @@ fn update_tgpcdx_internal_name_preserves_metadata_and_blob() {
     let orig_blob = first_blob(&orig_bytes);
 
     // Длиннее.
-    update_tgpcdx_internal_name(&tg_path, "Провайдер\\Продукт\\Folder\\LongerTextureName")
-        .unwrap();
+    update_tgpcdx_internal_name(&tg_path, "Провайдер\\Продукт\\Folder\\LongerTextureName").unwrap();
     let long_bytes = fs::read(&tg_path).unwrap();
     let long_info = inspect_tgpcdx_with_path(&long_bytes, Some(&tg_path)).unwrap();
     assert_eq!(
@@ -496,9 +493,7 @@ fn save_button_preserves_binary_blob_and_serz_markers() {
     fn markers(bytes: &[u8]) -> Vec<[u8; 2]> {
         bytes
             .windows(2)
-            .filter(|pair| {
-                pair[0] == 0xFF && matches!(pair[1], 0x42 | 0x43 | 0x50 | 0x56 | 0x70)
-            })
+            .filter(|pair| pair[0] == 0xFF && matches!(pair[1], 0x42 | 0x43 | 0x50 | 0x56 | 0x70))
             .map(|pair| [pair[0], pair[1]])
             .collect()
     }

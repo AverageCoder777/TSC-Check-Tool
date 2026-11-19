@@ -149,7 +149,10 @@ fn update_window(
 
 /// Проверяет, безопасно ли удалять директорию: путь должен находиться
 /// внутри `<game_path>/Content/Routes` и не быть самой этой папкой.
-fn validate_delete_path(path: &Path, app: &crate::app_controller::CheckerApp) -> Result<(), String> {
+fn validate_delete_path(
+    path: &Path,
+    app: &crate::app_controller::CheckerApp,
+) -> Result<(), String> {
     if path.as_os_str().is_empty() {
         return Err("Путь к удалению пустой.".to_owned());
     }

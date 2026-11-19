@@ -94,9 +94,15 @@ pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app_contro
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    crate::app_controller::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
-                    crate::app_controller::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
-                    crate::app_controller::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
+                    crate::app_controller::LogLevel::Error => {
+                        slint::Color::from_rgb_u8(239, 68, 68)
+                    }
+                    crate::app_controller::LogLevel::Warning => {
+                        slint::Color::from_rgb_u8(245, 158, 11)
+                    }
+                    crate::app_controller::LogLevel::Success => {
+                        slint::Color::from_rgb_u8(34, 197, 94)
+                    }
                     _ => slint::Color::from_rgb_u8(204, 204, 204),
                 },
             })
@@ -247,9 +253,15 @@ fn sync_ui(ui: &MainWindow) {
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    crate::app_controller::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
-                    crate::app_controller::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
-                    crate::app_controller::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
+                    crate::app_controller::LogLevel::Error => {
+                        slint::Color::from_rgb_u8(239, 68, 68)
+                    }
+                    crate::app_controller::LogLevel::Warning => {
+                        slint::Color::from_rgb_u8(245, 158, 11)
+                    }
+                    crate::app_controller::LogLevel::Success => {
+                        slint::Color::from_rgb_u8(34, 197, 94)
+                    }
                     _ => slint::Color::from_rgb_u8(204, 204, 204),
                 },
             })

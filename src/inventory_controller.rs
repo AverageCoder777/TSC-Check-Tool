@@ -190,7 +190,9 @@ impl InventoryController {
                             if let Ok(mut app) = app_for_status.lock() {
                                 let (msg, level) = match result {
                                     Ok(msg) => (msg, crate::app_controller::LogLevel::Info),
-                                    Err(err) => (format!("✗ {err}"), crate::app_controller::LogLevel::Error),
+                                    Err(err) => {
+                                        (format!("✗ {err}"), crate::app_controller::LogLevel::Error)
+                                    }
                                 };
                                 app.log_event(msg, level);
                                 crate::schedule_ui_sync();

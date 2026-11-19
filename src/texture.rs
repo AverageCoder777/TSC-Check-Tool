@@ -1794,4 +1794,3 @@ fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
 #[cfg(test)]
 #[path = "tests/texture.rs"]
 mod tests;
-
