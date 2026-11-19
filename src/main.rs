@@ -51,11 +51,7 @@ mod xml_scan;
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
-
-/// Канал запросов на асинхронную загрузку иконок (UI → фоновый поток).
 static ICON_LOAD_TX: OnceLock<mpsc::Sender<PathBuf>> = OnceLock::new();
-/// Канал результатов загрузки иконок (фоновый поток → UI): (путь, сырые байты файла).
-/// Receiver обёрнут в Arc<Mutex> для безопасного хранения в OnceLock (статик).
 static ICON_RESULT_RX: OnceLock<Arc<Mutex<mpsc::Receiver<(PathBuf, Vec<u8>)>>>> = OnceLock::new();
 
 thread_local! {
@@ -329,7 +325,6 @@ fn sync_ui(ui: &MainWindow) {
             if app.route_thumbnails_enabled {
                 for route in &app.routes {
                     if let Some(path) = &route.icon_path {
-                        // Пытаемся получить иконку из кэша; если нет — запрашиваем фоновую загрузку.
                         if try_get_route_icon(path).is_none() {
                             request_route_icon_load(path);
                         }
@@ -656,8 +651,6 @@ fn main() {
             let _ = writeln!(writer, "{}", line);
         }
     });
-
-    // Фоновый поток асинхронной загрузки иконок маршрутов.
     let (icon_load_tx, icon_load_rx) = mpsc::channel::<PathBuf>();
     let (icon_result_tx, icon_result_rx) = mpsc::channel::<(PathBuf, Vec<u8>)>();
     ICON_LOAD_TX.set(icon_load_tx).ok();
@@ -667,7 +660,9 @@ fn main() {
     thread::spawn(move || {
         while let Ok(path) = icon_load_rx.recv() {
             if let Ok(data) = std::fs::read(&path) {
-                let _ = icon_result_tx.send((path, data));
+                if icon_result_tx.send((path, data)).is_ok() {
+                    schedule_ui_sync();
+                }
             }
         }
     });
