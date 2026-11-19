@@ -9,7 +9,7 @@ pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String>
 }
 
 pub fn decode_tgpcdx_for_viewer(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
-    decode_tgpcdx_with_max_dimension(data, Some(1024))
+    decode_tgpcdx_with_max_dimension(data, None)
 }
 
 fn decode_tgpcdx_with_max_dimension(
@@ -1796,36 +1796,6 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Cursor;
-
-    #[test]
-    fn viewer_decoder_selects_the_largest_mipmap_at_or_below_1024() {
-        let pixels = vec![0x7f; 2 * 2 * 4];
-        let hex = pixels
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>();
-        let xml = format!(
-            r#"<Root>
-                <cHcImageDx>
-                    <Format d:type="cDeltaString">RGBA</Format>
-                    <Width d:type="sUInt32">2048</Width>
-                    <Height d:type="sUInt32">2048</Height>
-                </cHcImageDx>
-                <cHcImageDx>
-                    <Format d:type="cDeltaString">RGBA</Format>
-                    <Width d:type="sUInt32">2</Width>
-                    <Height d:type="sUInt32">2</Height>
-                    <d:blob d:size="{}">{hex}</d:blob>
-                </cHcImageDx>
-            </Root>"#,
-            hex.len() / 2
-        );
-
-        let (width, height, decoded) = decode_tgpcdx_for_viewer(xml.as_bytes()).unwrap();
-
-        assert_eq!((width, height), (2, 2));
-        assert_eq!(decoded, pixels);
-    }
 
     #[test]
     fn round_trip_tgpcdx_dds() {

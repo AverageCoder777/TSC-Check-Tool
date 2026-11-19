@@ -333,8 +333,13 @@ pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
 }
 
 fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
+    let weak = window.as_weak();
     window.on_camera_changed(
         move |yaw, pitch, distance, pan_x, pan_y, width, height, wireframe| {
+            let scale = weak
+                .upgrade()
+                .map(|w| w.window().scale_factor())
+                .unwrap_or(1.0);
             let _ = sender.send(ViewCommand::Camera(Camera {
                 yaw,
                 pitch,
@@ -342,8 +347,8 @@ fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
                 pan_x,
                 pan_y,
                 target: Vec3::ZERO,
-                width: width.max(1.0) as u32,
-                height: height.max(1.0) as u32,
+                width: (width * scale).round().max(1.0) as u32,
+                height: (height * scale).round().max(1.0) as u32,
                 wireframe,
             }));
         },
