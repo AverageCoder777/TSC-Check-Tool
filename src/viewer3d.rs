@@ -4,8 +4,8 @@ use rayon::prelude::*;
 use slint::ComponentHandle;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Camera {
@@ -624,18 +624,15 @@ fn render_cpu(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
     }
 
     let total_indices = model.model.indices.len();
-    let ordered_submeshes = model
-        .model
-        .submeshes
-        .iter()
-        .filter(|submesh| submesh.visible && submesh.render_mode != GeoRenderMode::Blended)
-        .chain(
-            model
-                .model
-                .submeshes
-                .iter()
-                .filter(|submesh| submesh.visible && submesh.render_mode == GeoRenderMode::Blended),
-        );
+    let ordered_submeshes =
+        model
+            .model
+            .submeshes
+            .iter()
+            .filter(|submesh| submesh.visible && submesh.render_mode != GeoRenderMode::Blended)
+            .chain(model.model.submeshes.iter().filter(|submesh| {
+                submesh.visible && submesh.render_mode == GeoRenderMode::Blended
+            }));
 
     for submesh in ordered_submeshes {
         let start = (submesh.first_index as usize).min(total_indices);
@@ -701,8 +698,8 @@ fn project_vertex(
     if !ndc.is_finite() {
         return None;
     }
-    let normal = Vec3::new(-vertex.normal[0], vertex.normal[1], vertex.normal[2])
-        .normalize_or_zero();
+    let normal =
+        Vec3::new(-vertex.normal[0], vertex.normal[1], vertex.normal[2]).normalize_or_zero();
     Some(ProjectedVertex {
         position: Vec3::new(
             (ndc.x * 0.5 + 0.5) * width as f32,
@@ -737,10 +734,7 @@ fn raster_triangle(
     let raw_max_x = a.position.x.max(b.position.x).max(c.position.x);
     let raw_min_y = a.position.y.min(b.position.y).min(c.position.y);
     let raw_max_y = a.position.y.max(b.position.y).max(c.position.y);
-    if raw_max_x < 0.0
-        || raw_max_y < 0.0
-        || raw_min_x >= width as f32
-        || raw_min_y >= height as f32
+    if raw_max_x < 0.0 || raw_max_y < 0.0 || raw_min_x >= width as f32 || raw_min_y >= height as f32
     {
         return;
     }
