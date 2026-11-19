@@ -166,6 +166,7 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
         &mut raw_batches,
     );
     deduplicate_submeshes(&mut raw_batches);
+    resolve_implicit_vertex_buffers(&mut raw_batches, &vertex_data);
     log_batch_diagnostics(path, &raw_batches);
 
     // Now collect index buffers (requires batches for vertex count inference)
@@ -749,24 +750,6 @@ pub(crate) fn find_submeshes(
                 })
             })
             .or_else(|| inherited_vertex_buffer_index)
-            // Range-based fallback: if no explicit reference found, use vertex_index_min/vertex_index_range
-            // to determine which vertex buffer this batch belongs to.
-            .or_else(|| {
-                if vertex_index_min > 0 || vertex_index_range > 0 {
-                    let min_idx = vertex_index_min as usize;
-                    let max_idx = (vertex_index_min + vertex_index_range) as usize;
-                    // Find the vertex buffer that contains this range
-                    vb_sizes.iter().enumerate().find_map(|(idx, &size)| {
-                        if size > 0 && min_idx < size && max_idx <= size {
-                            Some(idx as u32)
-                        } else {
-                            None
-                        }
-                    })
-                } else {
-                    None
-                }
-            })
             .unwrap_or(0);
             let index_buffer_index = find_number(children, &["indexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
@@ -927,6 +910,86 @@ pub(crate) fn find_local_transform(children: &[crate::serz::SerzNode]) -> Mat4 {
         }
     }
     Mat4::IDENTITY
+}
+
+fn resolve_implicit_vertex_buffers(batches: &mut [RawSubmesh], vertex_data: &[VertexBuffer]) {
+    if vertex_data.len() <= 1 || batches.iter().any(|batch| batch.vertex_buffer_index != 0) {
+        return;
+    }
+
+    let vb_sizes: Vec<usize> = vertex_data
+        .iter()
+        .map(|buffer| {
+            if buffer.stride == 0 {
+                0
+            } else {
+                buffer.bytes.len() / buffer.stride
+            }
+        })
+        .collect();
+
+    let mut cursors = vec![0usize; vertex_data.len()];
+    let mut started = vec![false; vertex_data.len()];
+    let mut material_to_slot: HashMap<u32, usize> = HashMap::new();
+    let mut shader_to_slot: HashMap<String, usize> = HashMap::new();
+
+    for batch in batches.iter_mut() {
+        let base = usize::try_from(batch.base_vertex).unwrap_or(0);
+        let range = batch
+            .max_local_vertex_ref
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0);
+        let end = base.saturating_add(range);
+        let fits = |slot: usize| vb_sizes[slot] > 0 && end <= vb_sizes[slot];
+
+        let mat_slot = batch
+            .material_reference
+            .and_then(|reference| material_to_slot.get(&reference).copied());
+        let shader_key = batch.shader_name.trim().to_ascii_lowercase();
+        let shader_slot = (!shader_key.is_empty())
+            .then(|| shader_to_slot.get(&shader_key).copied())
+            .flatten();
+
+        let chosen_slot = if base > 0 {
+            let exact: Vec<usize> = (0..vertex_data.len())
+                .filter(|&slot| started[slot] && cursors[slot] == base && fits(slot))
+                .collect();
+            if exact.len() == 1 {
+                exact[0]
+            } else if exact.len() > 1 {
+                mat_slot
+                    .filter(|slot| exact.contains(slot))
+                    .or_else(|| shader_slot.filter(|slot| exact.contains(slot)))
+                    .unwrap_or(exact[0])
+            } else {
+                mat_slot
+                    .filter(|&slot| fits(slot) && cursors[slot] <= base)
+                    .or_else(|| shader_slot.filter(|&slot| fits(slot) && cursors[slot] <= base))
+                    .or_else(|| {
+                        (0..vertex_data.len())
+                            .filter(|&slot| fits(slot) && cursors[slot] <= base)
+                            .min_by_key(|&slot| (base - cursors[slot], vb_sizes[slot]))
+                    })
+                    .unwrap_or(0)
+            }
+        } else {
+            mat_slot
+                .filter(|&slot| fits(slot))
+                .or_else(|| (0..vertex_data.len()).find(|&slot| !started[slot] && fits(slot)))
+                .or_else(|| shader_slot.filter(|&slot| fits(slot)))
+                .unwrap_or(0)
+        };
+
+        started[chosen_slot] = true;
+        cursors[chosen_slot] = cursors[chosen_slot].max(end);
+        if let Some(reference) = batch.material_reference {
+            material_to_slot.entry(reference).or_insert(chosen_slot);
+        }
+        if !shader_key.is_empty() {
+            shader_to_slot.entry(shader_key).or_insert(chosen_slot);
+        }
+        batch.vertex_buffer_index = vertex_data[chosen_slot].source_index as u32;
+    }
 }
 
 pub(crate) fn find_index_data(
