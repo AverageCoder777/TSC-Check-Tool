@@ -2165,8 +2165,6 @@ pub(crate) fn find_material_bindings(
                     | "HC_ALPHATEST_LESSEQUAL"
                     | "HC_ALPHATEST_NOTEQUAL"
             );
-            let alpha_test_disabled =
-                alpha_test_type == "HC_ALPHATEST_ALWAYS" || frame_alpha_mode == "ALPHA_MODE_NONE";
             let alpha_ref = find_text(children, &["alpharef"], ids)
                 .and_then(|value| value.trim().parse::<f32>().ok())
                 .map(|value| (value / 255.0).clamp(0.0, 1.0))
@@ -2175,16 +2173,12 @@ pub(crate) fn find_material_bindings(
             // Shader classification gives a baseline. Material settings can only
             // *upgrade* Opaque -> Cutout/Blended, never downgrade Cutout/Blended -> Opaque.
             if render_mode == GeoRenderMode::Opaque {
-                if alpha_test_disabled {
-                    render_mode = GeoRenderMode::Opaque;
-                } else if alpha_test_enabled || frame_alpha_mode == "ALPHA_MODE_TEST" {
-                    render_mode = GeoRenderMode::Cutout;
-                } else {
-                    render_mode = match frame_alpha_mode.as_str() {
-                        "ALPHA_MODE_BLEND" | "ALPHA_MODE_ADD" => GeoRenderMode::Blended,
-                        _ => GeoRenderMode::Opaque,
-                    };
-                }
+                render_mode = match frame_alpha_mode.as_str() {
+                    "ALPHA_MODE_BLEND" | "ALPHA_MODE_ADD" => GeoRenderMode::Blended,
+                    "ALPHA_MODE_TEST" => GeoRenderMode::Cutout,
+                    _ if alpha_test_enabled => GeoRenderMode::Cutout,
+                    _ => GeoRenderMode::Opaque,
+                };
             }
             // sunblend is a semi-transparent sun visor material in the cab. In TS it's defined
             // by material Name="sunblend" with shader TrainBasicObjectDiffuse.fx, so we must
