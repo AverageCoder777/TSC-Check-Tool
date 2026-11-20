@@ -1,7 +1,7 @@
 use super::{
-    ScenarioClueCollection, check_route, decode_xml_text,
-    extract_scenario_clues, inspect_route_folder, is_skipped_route_scan_directory,
-    parse_route_name, read_route_name, scan_routes, scan_routes_with_ignored,
+    ScenarioClueCollection, check_route, decode_xml_text, extract_scenario_clues,
+    inspect_route_folder, is_skipped_route_scan_directory, parse_route_name, read_route_name,
+    scan_routes, scan_routes_with_ignored,
 };
 use std::collections::HashSet;
 use std::fs;

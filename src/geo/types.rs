@@ -108,4 +108,3 @@ impl GeoModel {
         parse_model(path, data)
     }
 }
-
