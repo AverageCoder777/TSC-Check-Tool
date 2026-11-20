@@ -3,15 +3,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::serz::SerzNode;
 use super::format::{
-    format_label_and_dds_name, mip_level_bytes, tgpcdx_dds_compression, DdsCompression,
+    DdsCompression, format_label_and_dds_name, mip_level_bytes, tgpcdx_dds_compression,
 };
 use super::serz_parse::{
-    all_image_blocks, count_c_hc_textures, extract_blob,
-    extract_blob_size, extract_format, extract_tag, extract_unnamed_u16, hex_decode,
-    image_mips_from_bytes, parse_bool_tag, serz_bytes_to_metadata_xml,
+    all_image_blocks, count_c_hc_textures, extract_blob, extract_blob_size, extract_format,
+    extract_tag, extract_unnamed_u16, hex_decode, image_mips_from_bytes, parse_bool_tag,
+    serz_bytes_to_metadata_xml,
 };
+use crate::serz::SerzNode;
 
 /// Экстрагированные метаданные тектуры .TgPcDx для панели информации.
 #[derive(Debug, Clone)]
@@ -325,7 +325,10 @@ pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     if bytes.starts_with(b"SERZ") {
         crate::serz::validate_tgpcdx_binary(bytes, None)?;
     }
-    let tmp = output.with_extension(format!("{}.tmp", output.extension().and_then(|e| e.to_str()).unwrap_or("tmp")));
+    let tmp = output.with_extension(format!(
+        "{}.tmp",
+        output.extension().and_then(|e| e.to_str()).unwrap_or("tmp")
+    ));
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
     if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
         let _ = fs::remove_file(&tmp);

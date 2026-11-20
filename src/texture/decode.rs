@@ -1,5 +1,5 @@
 //! TgPcDx texture decoding to RGBA and UI conversion.
-use super::serz_parse::{image_mips_from_bytes};
+use super::serz_parse::image_mips_from_bytes;
 
 /// Основная функция декодирования TgPcDx в RGBA с опциональным ограничением размера.
 pub fn decode_tgpcdx_with_max_dimension(
@@ -34,7 +34,9 @@ pub fn decode_tgpcdx_with_max_dimension(
     let is_bc2 = format_upper.contains("EXPL_ALPHA")
         || format_upper.contains("BC2")
         || format_upper.contains("DXT3");
-    let is_bc1 = (format_upper.contains("COMPRESSED") || format_upper.contains("BC1") || format_upper.contains("DXT1"))
+    let is_bc1 = (format_upper.contains("COMPRESSED")
+        || format_upper.contains("BC1")
+        || format_upper.contains("DXT1"))
         && !is_bc3
         && !is_bc2;
     let is_uncompressed = format_upper.contains("RGBA")

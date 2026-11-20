@@ -260,10 +260,7 @@ pub fn collect_serz_image_mips(node: &SerzNode, mips: &mut Vec<ImageMip>) -> Res
 }
 
 /// Находит элемент по имени в SERZ дереве (mut).
-pub fn find_element_mut<'a>(
-    node: &'a mut SerzNode,
-    name: &str,
-) -> Option<&'a mut SerzNode> {
+pub fn find_element_mut<'a>(node: &'a mut SerzNode, name: &str) -> Option<&'a mut SerzNode> {
     if let SerzNode::Element { name: n, .. } = &*node
         && n == name
     {
@@ -280,10 +277,7 @@ pub fn find_element_mut<'a>(
 }
 
 /// Находит все элементы по имени в SERZ дереве.
-pub fn find_all_elements<'a>(
-    node: &'a SerzNode,
-    name: &str,
-) -> Vec<&'a SerzNode> {
+pub fn find_all_elements<'a>(node: &'a SerzNode, name: &str) -> Vec<&'a SerzNode> {
     let mut out = Vec::new();
     if let SerzNode::Element {
         name: n, children, ..
@@ -309,9 +303,10 @@ pub fn set_or_insert_property(
     let SerzNode::Element { children, .. } = elem else {
         return Err(format!("cannot set {name} on a non-element node"));
     };
-    if let Some(SerzNode::Property { value: current, .. }) = children.iter_mut().find(
-        |child| matches!(child, SerzNode::Property { name: prop, .. } if prop == name),
-    ) {
+    if let Some(SerzNode::Property { value: current, .. }) = children
+        .iter_mut()
+        .find(|child| matches!(child, SerzNode::Property { name: prop, .. } if prop == name))
+    {
         *current = value.to_string();
     } else {
         children.push(SerzNode::Property {

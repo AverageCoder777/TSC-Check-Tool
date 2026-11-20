@@ -175,7 +175,11 @@ pub fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
         if s.contains("BC1") {
             return "HC_IMAGE_FORMAT_COMPRESSED".into();
         }
-        if s.contains("R8G8B8A8") || s.contains("B8G8R8A8") || s.contains("R8G8B8X8") || s.contains("B8G8R8X8") {
+        if s.contains("R8G8B8A8")
+            || s.contains("B8G8R8A8")
+            || s.contains("R8G8B8X8")
+            || s.contains("B8G8R8X8")
+        {
             return "HC_IMAGE_FORMAT_8888".into();
         }
         if s.contains("A8_UNORM") {

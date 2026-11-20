@@ -173,15 +173,14 @@ impl LoadedModel {
         let decoded = unique_resolved
             .into_par_iter()
             .map(|(key, (resolved_path, bytes))| {
-                let result = crate::texture::decode_tgpcdx_to_rgba(&bytes).map(
-                    |(width, height, pixels)| {
+                let result =
+                    crate::texture::decode_tgpcdx_to_rgba(&bytes).map(|(width, height, pixels)| {
                         Arc::new(Texture {
                             width,
                             height,
                             pixels,
                         })
-                    },
-                );
+                    });
                 (key, (resolved_path, result))
             })
             .collect::<HashMap<_, _>>();

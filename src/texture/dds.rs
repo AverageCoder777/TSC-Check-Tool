@@ -4,15 +4,15 @@ use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::serz::SerzNode;
 use super::format::{
-    dds_compression_of, dds_format_to_tgpcdx, expected_mip_size, tgpcdx_format_to_d3d,
-    validate_dds_mip_chain, ImportReport,
+    ImportReport, dds_compression_of, dds_format_to_tgpcdx, expected_mip_size,
+    tgpcdx_format_to_d3d, validate_dds_mip_chain,
 };
 use super::serz_parse::{
-    find_all_elements, find_element_mut, find_texture_dimensions, set_blob_data,
-    set_or_insert_property, image_mips_from_bytes, collect_serz_image_mips,
+    collect_serz_image_mips, find_all_elements, find_element_mut, find_texture_dimensions,
+    image_mips_from_bytes, set_blob_data, set_or_insert_property,
 };
+use crate::serz::SerzNode;
 
 /// Converts DDS file to TgPcDx.
 pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<ImportReport, String> {
@@ -257,7 +257,10 @@ fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
         crate::serz::validate_tgpcdx_binary(bytes, None)?;
     }
     // Use unique temp name to avoid conflicts and preserve original extension.
-    let tmp = output.with_extension(format!("{}.tmp", output.extension().and_then(|e| e.to_str()).unwrap_or("tmp")));
+    let tmp = output.with_extension(format!(
+        "{}.tmp",
+        output.extension().and_then(|e| e.to_str()).unwrap_or("tmp")
+    ));
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
     if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
         let _ = fs::remove_file(&tmp);
