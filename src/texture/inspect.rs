@@ -253,18 +253,6 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
         return Err("TgPcDx save requires a binary SERZ file".into());
     }
 
-    // Резервная копия <путь>.TgPcDx.bak, если её ещё нет.
-    let bak_path = PathBuf::from(format!("{}.bak", tgpcdx_path.display()));
-    if !bak_path.exists() {
-        std::fs::copy(tgpcdx_path, &bak_path).map_err(|e| {
-            format!(
-                "Не удалось создать резервную копию {}: {e}",
-                bak_path.display()
-            )
-        })?;
-        append_tgpcdx_log(&format!("Создана резервная копия: {}", bak_path.display()));
-    }
-
     let mut reader = crate::serz::SerzReader::new(&data);
     let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
     let preamble = reader.preamble.clone();
@@ -280,6 +268,18 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
 
     if out_bytes.is_empty() {
         return Err("Пустой результат сериализации".into());
+    }
+
+    // Резервная копия <путь>.TgPcDx.bak создаём ТОЛЬКО перед записью, после успешного парсинга/кодирования.
+    let bak_path = PathBuf::from(format!("{}.bak", tgpcdx_path.display()));
+    if !bak_path.exists() {
+        std::fs::copy(tgpcdx_path, &bak_path).map_err(|e| {
+            format!(
+                "Не удалось создать резервную копию {}: {e}",
+                bak_path.display()
+            )
+        })?;
+        append_tgpcdx_log(&format!("Создана резервная копия: {}", bak_path.display()));
     }
 
     write_output_bytes(tgpcdx_path, &out_bytes)?;
@@ -334,11 +334,24 @@ pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         return Err("empty staged file".into());
     }
-    let _ = fs::remove_file(output);
+    // Атомарная запись: переименовываем исходный файл в .old, затем tmp -> output.
+    // Если rename(tmp, output) упадёт, .old остаётся как бэкап, а .tmp — как восстановление.
+    let old = output.with_extension(format!(
+        "{}.old",
+        output.extension().and_then(|e| e.to_str()).unwrap_or("old")
+    ));
+    if output.exists() {
+        // На Windows rename падает, если целевой файл уже существует — чистим за прошлыми запусками.
+        let _ = fs::remove_file(&old);
+        fs::rename(output, &old).map_err(|e| e.to_string())?;
+    }
     fs::rename(&tmp, output).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
+        // Пытаемся откатить: если output не создался, возвращаем .old обратно.
+        let _ = fs::rename(&old, output);
         e.to_string()
     })?;
+    // Успешно записали — удаляем .old.
+    let _ = fs::remove_file(&old);
     Ok(())
 }
 
