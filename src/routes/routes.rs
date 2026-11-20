@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 use zip::ZipArchive;
 
 use crate::common::domain::{
-    Route, RouteScanCache, RouteScanItem, RouteScanOutcome, RouteScanResult, IncompleteRouteFolder,
+    IncompleteRouteFolder, Route, RouteScanCache, RouteScanItem, RouteScanOutcome, RouteScanResult,
 };
 use crate::common::translit::decode_xml_text;
 

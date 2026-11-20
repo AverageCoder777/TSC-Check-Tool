@@ -5,7 +5,13 @@ fn file_with_uses(stamp: FileStamp, uses: &[(&str, u32)]) -> CachedFile {
         stamp,
         uses: uses
             .iter()
-            .map(|(path, count)| (path.to_string(), *count, crate::common::domain::AssetKind::Other))
+            .map(|(path, count)| {
+                (
+                    path.to_string(),
+                    *count,
+                    crate::common::domain::AssetKind::Other,
+                )
+            })
             .collect(),
     }
 }

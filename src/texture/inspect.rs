@@ -7,8 +7,8 @@ use super::format::{
     DdsCompression, format_label_and_dds_name, mip_level_bytes, tgpcdx_dds_compression,
 };
 use super::serz_parse::{
-    all_image_blocks, count_c_hc_textures, extract_blob, extract_blob_size, extract_format,
-    extract_tag, extract_unnamed_u16, hex_decode, parse_bool_tag, ImageMip,
+    ImageMip, all_image_blocks, count_c_hc_textures, extract_blob, extract_blob_size,
+    extract_format, extract_tag, extract_unnamed_u16, hex_decode, parse_bool_tag,
 };
 use crate::common::serz::SerzNode;
 
@@ -41,10 +41,10 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
         // Single SERZ parse: get XML for metadata and blob sizes before clearing.
         let mut reader = crate::common::serz::SerzReader::new(data);
         let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
-        
+
         // Collect blob sizes BEFORE clearing blobs for XML generation.
         let total_blob_bytes = collect_blob_bytes_and_clear(&mut root);
-        
+
         let xml = crate::common::serz::SerzReader::to_xml(&root, 0, true);
         (xml, total_blob_bytes)
     } else {
@@ -53,7 +53,8 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
         let mips = blocks
             .into_iter()
             .map(|block| -> Result<ImageMip, String> {
-                let (width, height) = super::serz_parse::image_dimensions(block).ok_or("invalid mip dimensions")?;
+                let (width, height) =
+                    super::serz_parse::image_dimensions(block).ok_or("invalid mip dimensions")?;
                 let bytes = extract_blob(block)
                     .map(|blob| hex_decode(&blob))
                     .unwrap_or_default();
@@ -256,7 +257,10 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
     }
 
     // Проверка на спецсимволы, которые могут сломать парсинг.
-    if normalized.chars().any(|c| c.is_control() || c == '"' || c == '<' || c == '>') {
+    if normalized
+        .chars()
+        .any(|c| c.is_control() || c == '"' || c == '<' || c == '>')
+    {
         return Err("Внутреннее имя содержит недопустимые символы".into());
     }
 
@@ -405,26 +409,26 @@ fn update_c_hc_texture_names_with_prefix(
                 } = child
                     && prop_name == "Name"
                     && type_name == "cDeltaString"
-{
-                        // Ищем индекс этого имени в current_names.
-                        if let Some(idx) = current_names.iter().position(|n| n == value) {
-                            let old_name = &current_names[idx];
-                            let suffix = if old_name.len() > common_prefix.len() {
-                                &old_name[common_prefix.len()..]
-                            } else {
-                                ""
-                            };
-                            // Склеиваем через \ (если оба непустые), чтобы не потерять разделитель.
-                            *value = if new_prefix.is_empty() {
-                                suffix.to_string()
-                            } else if suffix.is_empty() {
-                                new_prefix.to_string()
-                            } else {
-                                format!("{}\\{}", new_prefix, suffix.trim_start_matches('\\'))
-                            };
-                        }
-                        break;
+                {
+                    // Ищем индекс этого имени в current_names.
+                    if let Some(idx) = current_names.iter().position(|n| n == value) {
+                        let old_name = &current_names[idx];
+                        let suffix = if old_name.len() > common_prefix.len() {
+                            &old_name[common_prefix.len()..]
+                        } else {
+                            ""
+                        };
+                        // Склеиваем через \ (если оба непустые), чтобы не потерять разделитель.
+                        *value = if new_prefix.is_empty() {
+                            suffix.to_string()
+                        } else if suffix.is_empty() {
+                            new_prefix.to_string()
+                        } else {
+                            format!("{}\\{}", new_prefix, suffix.trim_start_matches('\\'))
+                        };
                     }
+                    break;
+                }
             }
         }
         for child in children.iter_mut() {

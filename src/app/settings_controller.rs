@@ -54,10 +54,7 @@ fn save_ui_settings(
         app.language = language.clone();
 
         apply_saved_language(&language);
-        app.log_event(
-            "Настройки сохранены.".to_owned(),
-            LogLevel::Info,
-        );
+        app.log_event("Настройки сохранены.".to_owned(), LogLevel::Info);
         if path_changed {
             app.start_route_scan();
         }

@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::common::serz::SerzNode;
     use crate::geo::assembly::{
         collect_blueprint_attachments, find_geometry_blueprint, matching_geometry_blueprint,
         resolve_asset_path,
@@ -16,7 +17,6 @@ mod tests {
     use crate::geo::texture::{classify_shader, is_hidden_shader_name, resolve_texture_data};
     use crate::geo::types::PrimitiveTopology;
     use crate::geo::{GeoAssembly, GeoAssemblyPart, GeoModel, GeoRenderMode, GeoSubmesh};
-    use crate::common::serz::SerzNode;
     use glam::{Mat4, Vec3};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};

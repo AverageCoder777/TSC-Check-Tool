@@ -1,7 +1,7 @@
 use super::*;
+use crate::common::serz::*;
 use std::fs;
 use tempfile;
-use crate::common::serz::*;
 
 #[test]
 fn save_button_preserves_binary_blob_and_serz_markers() {

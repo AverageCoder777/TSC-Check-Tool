@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use slint::ComponentHandle;
 
-use crate::{IncompleteFolderItem, IncompleteFoldersWindow};
 use crate::app::app_controller::{CheckerApp, LogLevel};
 use crate::common::domain::IncompleteRouteFolder;
+use crate::{IncompleteFolderItem, IncompleteFoldersWindow};
 
 pub(crate) struct IncompleteFoldersController {
     app: Arc<Mutex<CheckerApp>>,
@@ -131,10 +131,7 @@ impl IncompleteFoldersController {
     }
 }
 
-fn update_window(
-    window: &IncompleteFoldersWindow,
-    folders: &[IncompleteRouteFolder],
-) {
+fn update_window(window: &IncompleteFoldersWindow, folders: &[IncompleteRouteFolder]) {
     let items = build_incomplete_folder_items(folders);
     let total_bytes: u64 = folders.iter().map(|f| f.total_size_bytes).sum();
     let count = folders.len();
@@ -151,10 +148,7 @@ fn update_window(
 
 /// Проверяет, безопасно ли удалять директорию: путь должен находиться
 /// внутри `<game_path>/Content/Routes` и не быть самой этой папкой.
-fn validate_delete_path(
-    path: &Path,
-    app: &CheckerApp,
-) -> Result<(), String> {
+fn validate_delete_path(path: &Path, app: &CheckerApp) -> Result<(), String> {
     if path.as_os_str().is_empty() {
         return Err("Путь к удалению пустой.".to_owned());
     }
@@ -197,9 +191,7 @@ fn folder_count_word(count: usize) -> &'static str {
     }
 }
 
-fn build_incomplete_folder_items(
-    folders: &[IncompleteRouteFolder],
-) -> Vec<IncompleteFolderItem> {
+fn build_incomplete_folder_items(folders: &[IncompleteRouteFolder]) -> Vec<IncompleteFolderItem> {
     folders
         .iter()
         .map(|folder| IncompleteFolderItem {

@@ -170,8 +170,14 @@ fn detects_vehicle_references_by_their_context() {
         "#;
     let references = crate::assets::reference::extract_asset_references_with_locations(xml);
     assert_eq!(references.len(), 2);
-    assert_eq!(references[0].kind, crate::common::domain::AssetKind::Scenery);
-    assert_eq!(references[1].kind, crate::common::domain::AssetKind::Vehicle);
+    assert_eq!(
+        references[0].kind,
+        crate::common::domain::AssetKind::Scenery
+    );
+    assert_eq!(
+        references[1].kind,
+        crate::common::domain::AssetKind::Vehicle
+    );
 }
 
 /// Замена ассета в маршруте, упакованном в .ap: файл из архива читается
@@ -466,7 +472,10 @@ fn extracts_tile_coordinates_from_route_file_names() {
     let route = Path::new(r"C:\Routes\RouteA");
     let source = route.join("Scenery").join("+000012-000034.bin");
     assert_eq!(
-        crate::assets::reference::route_tile_label(route, &crate::common::domain::RouteFile::Path(source.clone())),
+        crate::assets::reference::route_tile_label(
+            route,
+            &crate::common::domain::RouteFile::Path(source.clone())
+        ),
         "+000012-000034"
     );
 }

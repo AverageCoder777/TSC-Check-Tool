@@ -5,12 +5,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::MissingAssetsWindow;
-use crate::common::domain::{TileKind, RouteFile};
 use crate::app::app_controller::{CheckerApp, LogLevel};
-use crate::assets::inventory_ui::{asset_directory, existing_directory_upwards};
-use crate::scenarios::blueprint::ap_archive_entries;
-use crate::assets::ap_picker_controller::ApPickerState;
 use crate::assets::RouteAssetType;
+use crate::assets::ap_picker_controller::ApPickerState;
+use crate::assets::inventory_ui::{asset_directory, existing_directory_upwards};
+use crate::common::domain::{RouteFile, TileKind};
+use crate::scenarios::blueprint::ap_archive_entries;
 
 pub struct MissingAssetsController {
     pub window: MissingAssetsWindow,
@@ -73,9 +73,9 @@ impl MissingAssetsController {
                 m.suggested_repair.as_deref().unwrap_or(""),
             ));
             corrupted.push(m.is_corrupted_link);
-            types.push(slint::SharedString::from(
-                RouteAssetType::label(m.asset_type),
-            ));
+            types.push(slint::SharedString::from(RouteAssetType::label(
+                m.asset_type,
+            )));
             safe.push(crate::assets::is_safe_for_global_replacement(
                 &m.path, &m.uses,
             ));
@@ -256,13 +256,10 @@ impl MissingAssetsController {
                             .missing_assets
                             .iter()
                             .find(|m| m.path.eq_ignore_ascii_case(&selected_path))?;
-                        let mut counts: BTreeMap<&str, (TileKind, usize, String)> =
-                            BTreeMap::new();
+                        let mut counts: BTreeMap<&str, (TileKind, usize, String)> = BTreeMap::new();
                         for usage in &missing.uses {
                             let file_path = match &usage.source_file {
-                                RouteFile::Path(path) => {
-                                    path.to_string_lossy().to_string()
-                                }
+                                RouteFile::Path(path) => path.to_string_lossy().to_string(),
                                 RouteFile::Archive { name, .. } => name.clone(),
                             };
                             counts

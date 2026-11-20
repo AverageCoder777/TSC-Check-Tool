@@ -1,15 +1,18 @@
 //! Application state, background tasks, and Slint UI synchronization.
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, mpsc::{self, Receiver, Sender, TryRecvError}};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{
+    Arc, Mutex,
+    mpsc::{self, Receiver, Sender, TryRecvError},
+};
 use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::assets::inventory_ui::InventorySort;
 use crate::app::settings::*;
+use crate::assets::inventory_ui::InventorySort;
 use crate::common::domain::*;
-use crate::common::translit::*;
 use crate::common::fs_utils::*;
+use crate::common::translit::*;
 use crate::routes::clear_route_icon_cache;
 use crate::scenarios::read_route_scenarios;
 
@@ -86,12 +89,8 @@ pub(crate) struct CheckerApp {
     pub(crate) ignored_route_ids: HashSet<String>,
     route_scan: Option<Receiver<Result<RouteScanOutcome, String>>>,
     check: Option<Receiver<CheckMessage>>,
-    pub(crate) asset_replacement: Option<
-        Receiver<(
-            String,
-            Result<AssetReplacementReport, String>,
-        )>,
-    >,
+    pub(crate) asset_replacement:
+        Option<Receiver<(String, Result<AssetReplacementReport, String>)>>,
     pub(crate) asset_replacement_queue: VecDeque<(MissingAsset, PathBuf, String)>,
     asset_replacement_feedback: Option<Result<String, String>>,
     pub(crate) route_thumbnails_enabled: bool,
@@ -204,8 +203,8 @@ impl Default for CheckerApp {
 
 impl CheckerApp {
     pub(crate) fn clean_rw_path(&self) -> PathBuf {
-    crate::common::fs_utils::clean_rw_path(&self.rw_path)
-}
+        crate::common::fs_utils::clean_rw_path(&self.rw_path)
+    }
     pub(crate) fn open_asset_inventory(&mut self) {
         let Some(result) = self.result.as_ref() else {
             return;
@@ -397,10 +396,7 @@ impl CheckerApp {
         self.log_event("Сканирование маршрутов...".to_owned(), LogLevel::Info);
         crate::schedule_ui_sync();
         let ignored_route_ids = self.ignored_route_ids.clone();
-        let max_threads = route_scan_max_threads(
-            self.serz_process_limit,
-            self.route_scan_on_hdd,
-        );
+        let max_threads = route_scan_max_threads(self.serz_process_limit, self.route_scan_on_hdd);
         let log_tx = self.log_tx.clone();
         thread::spawn(move || {
             let result = crate::routes::scan_routes_with_cache(

@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::app::app_controller::{CheckerApp, LogLevel};
-use crate::common::{fs_utils::clean_rw_path, archive::extract_archive_member, domain};
 use crate::ApAssetPickerWindow;
+use crate::app::app_controller::{CheckerApp, LogLevel};
 use crate::common::external_editor::show_native_error;
+use crate::common::{archive::extract_archive_member, domain, fs_utils::clean_rw_path};
 
 #[derive(Clone)]
 pub struct ApPickerState {
@@ -115,11 +115,8 @@ impl ApPickerController {
                     let assets_path = clean_rw_path(&rw_path).join("Assets");
                     let target_file_path =
                         resolve_extraction_path(&assets_path, &archive_path, &entry);
-                    let extract_result = extract_archive_member(
-                        &archive_path,
-                        &entry,
-                        &target_file_path,
-                    );
+                    let extract_result =
+                        extract_archive_member(&archive_path, &entry, &target_file_path);
                     match extract_result {
                         Ok(()) => {
                             let replacement_relative = target_file_path
@@ -145,10 +142,7 @@ impl ApPickerController {
                         Err(err) => {
                             eprintln!("[ApPicker] Ошибка извлечения: {err}");
                             if let Ok(mut app) = app_t.lock() {
-                                app.log_event(
-                                    format!("Ошибка распаковки: {err}"),
-                                    LogLevel::Error,
-                                );
+                                app.log_event(format!("Ошибка распаковки: {err}"), LogLevel::Error);
                                 crate::schedule_ui_sync();
                             }
                             let _ = slint::invoke_from_event_loop(move || {

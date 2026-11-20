@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 use crate::ScenarioWindow;
 use crate::app::app_controller::LogLevel;
 use crate::common::windows::*;
+use crate::scenarios::blueprint::{resolve_blueprint_file_cached_free, vehicle_blueprint_exists};
 use crate::scenarios::scenario::{
     ScenarioVehicle, analyze_consists_parallel, is_hidden_scenario_type, load_consists,
     load_scenario_metadata, weather_display_name,
 };
-use crate::scenarios::blueprint::{resolve_blueprint_file_cached_free, vehicle_blueprint_exists};
 
 pub struct ScenarioController {
     pub window: ScenarioWindow,
@@ -517,9 +517,7 @@ impl ScenarioController {
                     &provider,
                     &product,
                 );
-                let exists = vehicle_blueprint_exists(
-                    &rw_path, &provider, &product, &blueprint,
-                );
+                let exists = vehicle_blueprint_exists(&rw_path, &provider, &product, &blueprint);
                 let path_text = if exists {
                     if provider.trim().is_empty() || product.trim().is_empty() {
                         blueprint.clone()

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use crate::common::archive::ApArchiveCache;
-use crate::common::fs_utils::{normalize_path,strip_shader_prefix};
+use crate::common::fs_utils::{normalize_path, strip_shader_prefix};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AssetResourceKind {
@@ -1120,9 +1120,7 @@ pub fn extract_xml_texture_id_refs(
         if let Some(root) = &assets_root {
             candidates.push(normalize_path(&root.join(&file_rel)));
         }
-        candidates.push(normalize_path(
-            &product_root.join(&file_rel),
-        ));
+        candidates.push(normalize_path(&product_root.join(&file_rel)));
         if !file_rel.to_ascii_lowercase().starts_with("textures\\") {
             candidates.push(normalize_path(
                 &product_root.join("textures").join(&file_rel),
@@ -1838,18 +1836,11 @@ pub fn audit_folders_with_progress(
     let mut outgoing_map: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
     let mut incoming_map: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
     for r in &results {
-        let parent_norm = std::path::PathBuf::from(
-            normalize_path(&r.parent)
-                .to_string_lossy()
-                .to_lowercase(),
-        );
+        let parent_norm =
+            std::path::PathBuf::from(normalize_path(&r.parent).to_string_lossy().to_lowercase());
         let set = outgoing_map.entry(parent_norm.clone()).or_default();
         for t in &r.outgoing {
-            let tn = std::path::PathBuf::from(
-                normalize_path(t)
-                    .to_string_lossy()
-                    .to_lowercase(),
-            );
+            let tn = std::path::PathBuf::from(normalize_path(t).to_string_lossy().to_lowercase());
             set.insert(tn.clone());
             incoming_map
                 .entry(tn)
@@ -1874,11 +1865,7 @@ pub fn audit_folders_with_progress(
         );
         let set = outgoing_map.entry(parent_norm.clone()).or_default();
         for t in &outcome.outgoing {
-            let tn = std::path::PathBuf::from(
-                normalize_path(t)
-                    .to_string_lossy()
-                    .to_lowercase(),
-            );
+            let tn = std::path::PathBuf::from(normalize_path(t).to_string_lossy().to_lowercase());
             set.insert(tn.clone());
             incoming_map
                 .entry(tn)
@@ -1931,11 +1918,7 @@ pub fn audit_folders_with_progress(
             .unwrap_or("")
             .to_lowercase();
         if ext == "bin" {
-            let nf = std::path::PathBuf::from(
-                normalize_path(f)
-                    .to_string_lossy()
-                    .to_lowercase(),
-            );
+            let nf = std::path::PathBuf::from(normalize_path(f).to_string_lossy().to_lowercase());
             if visited.insert(nf.clone()) {
                 queue.push_back(nf);
             }
@@ -1954,11 +1937,7 @@ pub fn audit_folders_with_progress(
 
     // Orphan detection
     for f in files.iter().chain(texture_files.iter()) {
-        let nf = std::path::PathBuf::from(
-            normalize_path(f)
-                .to_string_lossy()
-                .to_lowercase(),
-        );
+        let nf = std::path::PathBuf::from(normalize_path(f).to_string_lossy().to_lowercase());
         let in_ap = {
             let product_root = product_root_for(f, assets_root);
             let rel_product = f
@@ -2009,9 +1988,7 @@ pub fn audit_folders_with_progress(
         .chain(extra_files.iter())
     {
         files_on_disk.insert(std::path::PathBuf::from(
-            normalize_path(f)
-                .to_string_lossy()
-                .to_lowercase(),
+            normalize_path(f).to_string_lossy().to_lowercase(),
         ));
     }
 

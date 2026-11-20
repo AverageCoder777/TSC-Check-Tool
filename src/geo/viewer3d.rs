@@ -6,14 +6,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use crate::geo::gpu_renderer::GpuRenderer;
-use crate::geo::texture::resolve_texture_data;
+use crate::BatchEntry;
 use crate::GeoViewerWindow;
 use crate::common::external_editor;
+use crate::geo::gpu_renderer::GpuRenderer;
+use crate::geo::texture::resolve_texture_data;
 use crate::geo::{GeoModel, GeoRenderMode, GeoVertex};
 use crate::texture::decode_tgpcdx_to_rgba;
-use crate::BatchEntry;
-
 
 #[derive(Clone, Copy)]
 pub(crate) struct Camera {
@@ -161,9 +160,7 @@ impl LoadedModel {
         let mut archive_toc_cache = HashMap::new();
         let resolved = texture_sources
             .iter()
-            .map(|(geo_path, name)| {
-                resolve_texture_data(geo_path, name, &mut archive_toc_cache)
-            })
+            .map(|(geo_path, name)| resolve_texture_data(geo_path, name, &mut archive_toc_cache))
             .collect::<Vec<_>>();
         let mut unique_resolved = HashMap::<PathBuf, (String, Vec<u8>)>::new();
         let resolved_paths = resolved
@@ -181,14 +178,13 @@ impl LoadedModel {
         let decoded = unique_resolved
             .into_par_iter()
             .map(|(key, (resolved_path, bytes))| {
-                let result =
-                    decode_tgpcdx_to_rgba(&bytes).map(|(width, height, pixels)| {
-                        Arc::new(Texture {
-                            width,
-                            height,
-                            pixels,
-                        })
-                    });
+                let result = decode_tgpcdx_to_rgba(&bytes).map(|(width, height, pixels)| {
+                    Arc::new(Texture {
+                        width,
+                        height,
+                        pixels,
+                    })
+                });
                 (key, (resolved_path, result))
             })
             .collect::<HashMap<_, _>>();
@@ -381,12 +377,7 @@ fn bind_batch_panel(window: &GeoViewerWindow, sender: Sender<ViewCommand>) {
     });
 }
 
-fn push_frame(
-    window: &slint::Weak<GeoViewerWindow>,
-    width: u32,
-    height: u32,
-    pixels: Vec<u8>,
-) {
+fn push_frame(window: &slint::Weak<GeoViewerWindow>, width: u32, height: u32, pixels: Vec<u8>) {
     let weak = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(window) = weak.upgrade() {
@@ -536,11 +527,7 @@ fn set_batch_visibility(
     }
 }
 
-fn apply_batch_preset(
-    loaded: &mut LoadedModel,
-    gpu: Option<&mut GpuRenderer>,
-    preset: &str,
-) {
+fn apply_batch_preset(loaded: &mut LoadedModel, gpu: Option<&mut GpuRenderer>, preset: &str) {
     for submesh in &mut loaded.model.submeshes {
         let visible = submesh.preset_visible(preset);
         submesh.visible = visible;

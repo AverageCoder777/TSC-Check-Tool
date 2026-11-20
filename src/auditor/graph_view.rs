@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::common::fs_utils::{to_assets_relative_display, normalize_path};
+use crate::common::fs_utils::{normalize_path, to_assets_relative_display};
 
 const VIS_NETWORK_CDN: &str = "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js";
 const GRAPH_HTML_NAME: &str = "tsc_graph_view.html";

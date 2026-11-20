@@ -1,6 +1,6 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::collections::HashSet;
 use walkdir::WalkDir;
 
 use crate::common::domain::RouteFile;

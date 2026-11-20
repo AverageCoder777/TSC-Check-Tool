@@ -1,18 +1,13 @@
+use rayon::iter::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use rayon::iter::*;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 use zip::ZipArchive;
 
 use crate::assets::{
-    analysis_cache::*,
-    reference::*,
-    fuzzy::*,
-    replacement::asset_key,
-    resolver::resolve_asset_path,
-    scanner::*,
-    types::classify_route_asset_type,
+    analysis_cache::*, fuzzy::*, reference::*, replacement::asset_key,
+    resolver::resolve_asset_path, scanner::*, types::classify_route_asset_type,
     umlaut::scan_umlaut_assets,
 };
 use crate::common::domain::*;

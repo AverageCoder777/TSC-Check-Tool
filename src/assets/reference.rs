@@ -4,9 +4,9 @@
 //! быть без расширения и с суффиксом варианта `[00]`, а в файлах сценарных
 //! поездов — с указанием на объект поезда.
 
-use std::path::Path;
-use crate::common::translit::{decode_xml_text};
 use crate::common::domain::{AssetKind, RouteFile};
+use crate::common::translit::decode_xml_text;
+use std::path::Path;
 
 pub(crate) struct AssetReference {
     pub(crate) path: String,
@@ -330,10 +330,7 @@ pub(crate) fn extract_asset_references(xml: &str) -> std::collections::HashSet<S
 }
 /// Прежняя реализация разбора на регулярных выражениях.
 /// /// Оставлена для сверки: ручной разбор обязан давать ровно тот же результат.
-pub(crate) fn route_tile_label(
-    route_path: &Path,
-    source_file: &RouteFile,
-) -> String {
+pub(crate) fn route_tile_label(route_path: &Path, source_file: &RouteFile) -> String {
     let file_name = source_file.file_name_str();
     let stem = Path::new(file_name)
         .file_stem()
@@ -405,6 +402,5 @@ fn kind_from_context_state(
     {
         best = Some((*index, AssetKind::Loft));
     }
-    best.map(|(_, kind)| kind)
-        .unwrap_or(AssetKind::Other)
+    best.map(|(_, kind)| kind).unwrap_or(AssetKind::Other)
 }

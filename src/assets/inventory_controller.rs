@@ -1,18 +1,21 @@
-use std::time::{Instant, Duration};
-use std::sync::{Arc, Mutex};
+use slint::{ComponentHandle, Model, Weak};
 use std::collections::HashSet;
-use slint::{Model, ComponentHandle, Weak};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::AssetInventoryWindow;
-use crate::common::domain::TileKind;
+use crate::app::app_controller::{AssetInventoryWindowState, CheckerApp, LogLevel};
 use crate::assets::inventory_ui::*;
+use crate::assets::{
+    classify_route_asset_type, delete_loft_asset, delete_scenery_asset,
+    is_safe_for_global_replacement,
+};
+use crate::common::domain::MissingAsset;
+use crate::common::domain::TileKind;
+use crate::common::external_editor::open_and_sync_with_vscode;
 use crate::common::windows::open_in_explorer;
 use crate::common::windows::open_in_file_explorer;
-use crate::common::external_editor::open_and_sync_with_vscode;
-use crate::app::app_controller::{CheckerApp, AssetInventoryWindowState, LogLevel};
 use crate::schedule_ui_sync;
-use crate::assets::{delete_scenery_asset, delete_loft_asset, is_safe_for_global_replacement, classify_route_asset_type};
-use crate::common::domain::MissingAsset;
 
 pub struct InventoryController {
     pub window: AssetInventoryWindow,
@@ -153,9 +156,7 @@ impl InventoryController {
                     let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                     if full.exists() {
                         open_in_explorer(&full);
-                    } else if let Some(target) =
-                        existing_directory_upwards(&full)
-                    {
+                    } else if let Some(target) = existing_directory_upwards(&full) {
                         open_in_file_explorer(&target);
                     }
                 }
@@ -192,19 +193,16 @@ impl InventoryController {
                 let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                 if full.is_file() {
                     let app_for_status = app.clone();
-                    let _ =
-                        open_and_sync_with_vscode(&full, move |result| {
-                            if let Ok(mut app) = app_for_status.lock() {
-                                let (msg, level) = match result {
-                                    Ok(msg) => (msg, LogLevel::Info),
-                                    Err(err) => {
-                                        (format!("✗ {err}"), LogLevel::Error)
-                                    }
-                                };
-                                app.log_event(msg, level);
-                                schedule_ui_sync();
-                            }
-                        });
+                    let _ = open_and_sync_with_vscode(&full, move |result| {
+                        if let Ok(mut app) = app_for_status.lock() {
+                            let (msg, level) = match result {
+                                Ok(msg) => (msg, LogLevel::Info),
+                                Err(err) => (format!("✗ {err}"), LogLevel::Error),
+                            };
+                            app.log_event(msg, level);
+                            schedule_ui_sync();
+                        }
+                    });
                 }
             });
         }
@@ -437,10 +435,9 @@ impl InventoryController {
                     return;
                 }
                 let assets_dir = rw_path.join("Assets");
-                let start_dir = existing_directory_upwards(
-                    &asset_directory(&assets_dir, &asset.path),
-                )
-                .unwrap_or_else(|| assets_dir.clone());
+                let start_dir =
+                    existing_directory_upwards(&asset_directory(&assets_dir, &asset.path))
+                        .unwrap_or_else(|| assets_dir.clone());
                 let selected_file = rfd::FileDialog::new()
                     .set_title("Заменить в маршруте...")
                     .add_filter("RailWorks Blueprint (*.bin)", &["bin"])
@@ -499,9 +496,7 @@ impl InventoryController {
                             has_suspicious_chars(&a.path)
                                 || a.uses.iter().any(|u| {
                                     has_suspicious_chars(&u.tile)
-                                        || has_suspicious_chars(
-                                            &u.source_file_search,
-                                        )
+                                        || has_suspicious_chars(&u.source_file_search)
                                 })
                         })
                         .count();

@@ -4,11 +4,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::{AuditorState, TextureViewerWindow, log_event, MainWindow};
-use super::{decode_tgpcdx_to_rgba, rgba_to_slint_image, inspect_tgpcdx_with_path, inspect_tgpcdx_file, texture_info_text, export_tgpcdx_to_dds, convert_dds_to_tgpcdx_report, update_tgpcdx_internal_name};
-use crate::auditor::AuditorController;
+use super::{
+    convert_dds_to_tgpcdx_report, decode_tgpcdx_to_rgba, export_tgpcdx_to_dds, inspect_tgpcdx_file,
+    inspect_tgpcdx_with_path, rgba_to_slint_image, texture_info_text, update_tgpcdx_internal_name,
+};
 use crate::app::LogLevel;
+use crate::auditor::AuditorController;
 use crate::common::external_editor;
+use crate::{AuditorState, MainWindow, TextureViewerWindow, log_event};
 
 pub struct TextureController {
     pub window: TextureViewerWindow,
@@ -105,9 +108,7 @@ impl TextureController {
                             v.set_pan_y(0.0);
                             v.set_show_alpha(false);
                             v.set_info_text(info.into());
-                            if let Ok(i) =
-                                inspect_tgpcdx_with_path(&data, Some(&path))
-                            {
+                            if let Ok(i) = inspect_tgpcdx_with_path(&data, Some(&path)) {
                                 v.set_texture_name(i.name.into());
                             }
                             let enabled = !std::fs::metadata(&path)
@@ -135,12 +136,7 @@ impl TextureController {
                 .and_then(|state| state.as_ref().map(|(_, _, _, path)| path.clone()));
             let Some(path) = path else {
                 let message = "Нет загруженной текстуры для открытия в редакторе".to_string();
-                notify(
-                    &editor_weak,
-                    &editor_ui_weak,
-                    &message,
-                    LogLevel::Warning,
-                );
+                notify(&editor_weak, &editor_ui_weak, &message, LogLevel::Warning);
                 return;
             };
             let callback_path = path.clone();
@@ -148,14 +144,12 @@ impl TextureController {
             let callback_ui = editor_ui_weak.clone();
             let callback_state = editor_state.clone();
             if let Err(error) =
-                external_editor::open_and_sync_with_vscode(&path, move |result| match result
-                {
+                external_editor::open_and_sync_with_vscode(&path, move |result| match result {
                     Ok(message) => {
                         let refreshed = std::fs::read(&callback_path)
                             .map_err(|error| error.to_string())
                             .and_then(|data| {
-                                decode_tgpcdx_to_rgba(&data)
-                                    .map(|preview| (data, preview))
+                                decode_tgpcdx_to_rgba(&data).map(|preview| (data, preview))
                             });
                         match refreshed {
                             Ok((data, (width, height, rgba))) => {
@@ -170,26 +164,16 @@ impl TextureController {
                                     height,
                                     false,
                                 );
-                                let name = inspect_tgpcdx_with_path(
-                                    &data,
-                                    Some(&callback_path),
-                                )
-                                .map(|info| info.name)
-                                .unwrap_or_default();
-                                notify(
-                                    &callback_viewer,
-                                    &callback_ui,
-                                    &message,
-                                    LogLevel::Info,
-                                );
+                                let name = inspect_tgpcdx_with_path(&data, Some(&callback_path))
+                                    .map(|info| info.name)
+                                    .unwrap_or_default();
+                                notify(&callback_viewer, &callback_ui, &message, LogLevel::Info);
                                 let viewer = callback_viewer.clone();
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(viewer) = viewer.upgrade() {
-                                        viewer.set_texture_image(
-                                            rgba_to_slint_image(
-                                                width, height, &rgba,
-                                            ),
-                                        );
+                                        viewer.set_texture_image(rgba_to_slint_image(
+                                            width, height, &rgba,
+                                        ));
                                         viewer.set_texture_orig_width(width as i32);
                                         viewer.set_texture_orig_height(height as i32);
                                         viewer.set_zoom_factor(if width > 640 || height > 480 {
@@ -208,33 +192,18 @@ impl TextureController {
                             Err(error) => {
                                 let message =
                                     format!("Файл изменён, но превью не удалось обновить: {error}");
-                                notify(
-                                    &callback_viewer,
-                                    &callback_ui,
-                                    &message,
-                                    LogLevel::Error,
-                                );
+                                notify(&callback_viewer, &callback_ui, &message, LogLevel::Error);
                             }
                         }
                     }
                     Err(error) => {
                         let message = format!("Ошибка редактора: {error}");
-                        notify(
-                            &callback_viewer,
-                            &callback_ui,
-                            &message,
-                            LogLevel::Error,
-                        );
+                        notify(&callback_viewer, &callback_ui, &message, LogLevel::Error);
                     }
                 })
             {
                 let message = format!("Не удалось открыть файл в редакторе: {error}");
-                notify(
-                    &editor_weak,
-                    &editor_ui_weak,
-                    &message,
-                    LogLevel::Error,
-                );
+                notify(&editor_weak, &editor_ui_weak, &message, LogLevel::Error);
             }
         });
 
@@ -309,10 +278,7 @@ impl TextureController {
                         format!("Экспортировано DDS: {}", out.display()),
                         LogLevel::Success,
                     ),
-                    Err(e) => (
-                        format!("Ошибка экспорта DDS: {e}"),
-                        LogLevel::Error,
-                    ),
+                    Err(e) => (format!("Ошибка экспорта DDS: {e}"), LogLevel::Error),
                 };
                 notify(&viewer_weak, &ui_weak, &msg, level);
             });
@@ -429,8 +395,8 @@ impl TextureController {
             let ui_weak = ui_weak_name.clone();
             let tex_state = tex_state_for_name.clone();
             let new_name = new_name.to_string();
-            std::thread::spawn(move || {
-                match update_tgpcdx_internal_name(&path, &new_name) {
+            std::thread::spawn(
+                move || match update_tgpcdx_internal_name(&path, &new_name) {
                     Ok(()) => {
                         if let Ok(data) = std::fs::read(&path)
                             && let Ok((w, h, rgba)) = decode_tgpcdx_to_rgba(&data)
@@ -453,24 +419,14 @@ impl TextureController {
                             });
                         }
                         let msg = format!("Внутреннее имя текстуры сохранено: {}", path.display());
-                        notify(
-                            &viewer_weak,
-                            &ui_weak,
-                            &msg,
-                            LogLevel::Success,
-                        );
+                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
                     }
                     Err(e) => {
                         let msg = format!("Ошибка сохранения имени: {e}");
-                        notify(
-                            &viewer_weak,
-                            &ui_weak,
-                            &msg,
-                            LogLevel::Error,
-                        );
+                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
                     }
-                }
-            });
+                },
+            );
         });
 
         // Подстановка имени по имени файла
@@ -479,9 +435,7 @@ impl TextureController {
         self.window.on_texture_name_from_file(move || {
             let (path, current_name) = match tex_state_for_fn.lock().ok().and_then(|g| g.clone()) {
                 Some((_, _, _, p)) => {
-                    let nm = inspect_tgpcdx_file(&p)
-                        .map(|i| i.name)
-                        .unwrap_or_default();
+                    let nm = inspect_tgpcdx_file(&p).map(|i| i.name).unwrap_or_default();
                     (p, nm)
                 }
                 None => return,

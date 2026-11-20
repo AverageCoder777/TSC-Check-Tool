@@ -1,12 +1,12 @@
 use super::*;
+use crate::assets::reference::extract_asset_references_with_locations;
 use crate::common::{
-    domain::{AssetUse, RouteFile, TileKind, AssetReplacementReport},
+    domain::{AssetReplacementReport, AssetUse, RouteFile, TileKind},
     serz::{SerzReader, encode_to_vec},
 };
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use std::fs;
-use crate::assets::reference::extract_asset_references_with_locations;
+use std::path::{Path, PathBuf};
 
 pub fn is_safe_for_global_replacement(relative_path: &str, uses: &[AssetUse]) -> bool {
     let item = RouteAssetItem {
@@ -119,13 +119,12 @@ pub fn delete_scenery_asset(
             untouched.push(source_file.display().to_string());
             continue;
         }
-        let bytes =
-            encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
-                format!(
-                    "Не удалось подготовить изменённый BIN {}: {error}",
-                    source_file.display()
-                )
-            })?;
+        let bytes = encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+            format!(
+                "Не удалось подготовить изменённый BIN {}: {error}",
+                source_file.display()
+            )
+        })?;
         if bytes.len() < 1024 {
             return Err(format!(
                 "Ошибка генерации: размер файла аномально мал ({} байт). Удаление отменено.",
@@ -199,9 +198,7 @@ pub fn delete_loft_asset(
         if usage.source_file.is_protected_pathway() {
             return Err("Удаление этого объекта запрещено (путевая инфраструктура).".to_owned());
         }
-        if usage.tile_kind != TileKind::Loft
-            && usage.tile_kind != TileKind::Road
-        {
+        if usage.tile_kind != TileKind::Loft && usage.tile_kind != TileKind::Road {
             return Err(format!(
                 "Удаление поддерживается только для тайлов Loft/Road: {}",
                 usage.source_file.display()
@@ -280,13 +277,12 @@ pub fn delete_loft_asset(
             untouched.push(source_file.display().to_string());
             continue;
         }
-        let bytes =
-            encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
-                format!(
-                    "Не удалось подготовить изменённый BIN {}: {error}",
-                    source_file.display()
-                )
-            })?;
+        let bytes = encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+            format!(
+                "Не удалось подготовить изменённый BIN {}: {error}",
+                source_file.display()
+            )
+        })?;
         if bytes.len() < 1024 {
             return Err(format!(
                 "Ошибка генерации: размер файла аномально мал ({} байт). Удаление отменено.",
@@ -614,13 +610,12 @@ pub(crate) fn replace_missing_asset(
             if count == 0 {
                 continue;
             }
-            let bytes =
-                encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
-                    format!(
-                        "Не удалось подготовить изменённый BIN {}: {error}",
-                        source_file.display()
-                    )
-                })?;
+            let bytes = encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+                format!(
+                    "Не удалось подготовить изменённый BIN {}: {error}",
+                    source_file.display()
+                )
+            })?;
             if bytes.len() < 1024 {
                 return Err(format!(
                     "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена, оригинал не затронут.",
@@ -661,8 +656,7 @@ pub(crate) fn replace_missing_asset(
                     source_file.display()
                 )
             })?;
-            let references =
-                extract_asset_references_with_locations(&xml);
+            let references = extract_asset_references_with_locations(&xml);
             let edits: Vec<_> = references
                 .into_iter()
                 .filter(|reference| reference.path.eq_ignore_ascii_case(old_asset))

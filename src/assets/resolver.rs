@@ -1,8 +1,11 @@
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
+use crate::assets::{
+    fuzzy::names_match,
+    xml_reference::{GeometryReference, ReferenceBase},
+};
 use crate::common::translit::*;
-use crate::assets::{xml_reference::{GeometryReference, ReferenceBase}, fuzzy::names_match};
 
 pub fn resolve_asset_path(
     assets_path: &Path,
@@ -26,14 +29,8 @@ pub fn resolve_asset_path(
     }
 
     let tiers = [
-        replace_broken_characters_combinations(
-            relative_asset,
-            &TRANSLITERATED_CHARACTERS,
-        ),
-        replace_broken_characters_combinations(
-            relative_asset,
-            &UMLAUT_CHARACTERS,
-        ),
+        replace_broken_characters_combinations(relative_asset, &TRANSLITERATED_CHARACTERS),
+        replace_broken_characters_combinations(relative_asset, &UMLAUT_CHARACTERS),
     ];
 
     // Windows считает «ä» и «Ä» одним и тем же именем файла, поэтому одинаковые
@@ -170,10 +167,7 @@ pub fn resolve_product_reference(
             // проверяются все сочетания.
             let mut replacements: Vec<&str> = TRANSLITERATED_CHARACTERS.to_vec();
             replacements.extend_from_slice(&UMLAUT_CHARACTERS);
-            names.extend(replace_broken_characters_combinations(
-                &base,
-                &replacements,
-            ));
+            names.extend(replace_broken_characters_combinations(&base, &replacements));
         }
     }
     let extensions = reference.disk_extensions();

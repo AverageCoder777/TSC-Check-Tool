@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
-use super::parse::{IndexBuffer, VertexBuffer, MaterialBinding, RawSubmesh};
+use super::parse::{IndexBuffer, MaterialBinding, RawSubmesh, VertexBuffer};
 use super::types::GeoParseDiagnostics;
 
 /// Best-effort warning channel for recoverable per-buffer/per-batch parse failures.
@@ -31,10 +31,7 @@ pub(crate) fn warn_parse_skip(message: String) {
 }
 
 /// Diagnostic log for every material binding resolved during parsing.
-pub(crate) fn log_material_diagnostics(
-    path: &Path,
-    bindings: &HashMap<u32, MaterialBinding>,
-) {
+pub(crate) fn log_material_diagnostics(path: &Path, bindings: &HashMap<u32, MaterialBinding>) {
     use std::io::Write;
 
     let mut entries: Vec<_> = bindings.iter().collect();

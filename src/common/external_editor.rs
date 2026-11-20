@@ -1,10 +1,10 @@
 //! External editor (VS Code / system default) integration with two-way sync.
 use std::fs;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 use crate::assets::read_serz_xml;
 use crate::common::serz::*;

@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
-use crate::common::serz::{SerzNode, encode_to_vec};
+use crate::assets::{scanner::create_temporary_work_directory, umlaut::StagedUmlautFile};
 use crate::common::domain::RouteFile;
-use crate::assets::{scanner::create_temporary_work_directory,umlaut::StagedUmlautFile};
+use crate::common::serz::{SerzNode, encode_to_vec};
 
 #[derive(Default)]
 pub(crate) struct FileTransaction {

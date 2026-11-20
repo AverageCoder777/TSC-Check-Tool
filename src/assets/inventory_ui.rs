@@ -3,9 +3,9 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 use crate::app::app_controller::AssetInventoryWindowState;
+use crate::assets::replacement::is_safe_for_global_replacement;
 use crate::common::domain::ReferencedAsset;
 use crate::common::domain::TileKind;
-use crate::assets::replacement::is_safe_for_global_replacement;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum InventorySortColumn {
@@ -64,8 +64,7 @@ pub fn build_inventory_rows(
         if state.umlaut_filter {
             let suspicious = has_suspicious_chars(&a.path)
                 || a.uses.iter().any(|u| {
-                    has_suspicious_chars(&u.tile)
-                        || has_suspicious_chars(&u.source_file_search)
+                    has_suspicious_chars(&u.tile) || has_suspicious_chars(&u.source_file_search)
                 });
             if !suspicious {
                 continue;
@@ -126,17 +125,13 @@ pub fn build_inventory_rows(
         rows.push(slint::ModelRc::new(slint::VecModel::from(vec![
             item0, item1, item2,
         ])));
-        safe_flags.push(is_safe_for_global_replacement(
-            &a.path, &a.uses,
-        ));
+        safe_flags.push(is_safe_for_global_replacement(&a.path, &a.uses));
         delete_flags.push(
             !a.uses.is_empty()
                 && a.uses.iter().all(|u| {
                     matches!(
                         u.tile_kind,
-                        TileKind::Scenery
-                            | TileKind::Loft
-                            | TileKind::Road
+                        TileKind::Scenery | TileKind::Loft | TileKind::Road
                     )
                 }),
         );

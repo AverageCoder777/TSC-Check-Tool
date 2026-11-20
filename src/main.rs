@@ -16,16 +16,16 @@ slint::include_modules!();
 use rayon::prelude::*;
 use std::cell::RefCell;
 use std::fs;
-use std::io::{ BufWriter, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
+use crate::assets::ap_picker_controller::ApPickerController;
 use crate::assets::inventory_controller::InventoryController;
 use crate::assets::missing_assets_controller::MissingAssetsController;
-use crate::assets::ap_picker_controller::ApPickerController;
 
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
@@ -68,15 +68,9 @@ pub(crate) fn log_event(ui: &MainWindow, message: &str, level: app::LogLevel) {
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    app::LogLevel::Error => {
-                        slint::Color::from_rgb_u8(239, 68, 68)
-                    }
-                    app::LogLevel::Warning => {
-                        slint::Color::from_rgb_u8(245, 158, 11)
-                    }
-                    app::LogLevel::Success => {
-                        slint::Color::from_rgb_u8(34, 197, 94)
-                    }
+                    app::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
+                    app::LogLevel::Warning => slint::Color::from_rgb_u8(245, 158, 11),
+                    app::LogLevel::Success => slint::Color::from_rgb_u8(34, 197, 94),
                     _ => slint::Color::from_rgb_u8(204, 204, 204),
                 },
             })
@@ -227,9 +221,7 @@ fn sync_ui(ui: &MainWindow) {
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    app::app_controller::LogLevel::Error => {
-                        slint::Color::from_rgb_u8(239, 68, 68)
-                    }
+                    app::app_controller::LogLevel::Error => slint::Color::from_rgb_u8(239, 68, 68),
                     app::app_controller::LogLevel::Warning => {
                         slint::Color::from_rgb_u8(245, 158, 11)
                     }
@@ -275,9 +267,9 @@ fn open_texture_viewer(path: &Path) {
     };
     match texture::decode_tgpcdx_to_rgba(&data) {
         Ok((w, h, rgba)) => {
-            let controller = texture::texture_controller::TextureController::new(Arc::new(Mutex::new(
-                AuditorState::default(),
-            )));
+            let controller = texture::texture_controller::TextureController::new(Arc::new(
+                Mutex::new(AuditorState::default()),
+            ));
             if let Ok(mut st) = controller.tex_state.lock() {
                 *st = Some((w, h, rgba.clone(), path.to_path_buf()));
             }
@@ -470,23 +462,20 @@ fn main() {
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
 
-    let incomplete_controller = routes::IncompleteFoldersController::new(
-        app_for_controllers.clone(),
-    );
+    let incomplete_controller =
+        routes::IncompleteFoldersController::new(app_for_controllers.clone());
     incomplete_controller.bind();
     INCOMPLETE_FOLDERS_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(incomplete_controller);
     });
 
-    let missing_controller =
-        MissingAssetsController::new(app_for_controllers.clone());
+    let missing_controller = MissingAssetsController::new(app_for_controllers.clone());
     missing_controller.bind();
     MISSING_ASSETS_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(missing_controller);
     });
 
-    let ap_picker_controller =
-        ApPickerController::new(app_for_controllers.clone());
+    let ap_picker_controller = ApPickerController::new(app_for_controllers.clone());
     ap_picker_controller.bind();
     AP_PICKER_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(ap_picker_controller);
@@ -569,7 +558,8 @@ fn main() {
         }
     });
 
-    let inventory = assets::inventory_controller::InventoryController::new(app_for_controllers.clone());
+    let inventory =
+        assets::inventory_controller::InventoryController::new(app_for_controllers.clone());
     inventory.bind();
     let inventory_weak_for_show = inventory.weak.clone();
     INVENTORY_CONTROLLER.with(|cell| {
@@ -659,7 +649,8 @@ fn main() {
     });
     auditor.bind(ui.as_weak());
 
-    let texture_controller = texture::texture_controller::TextureController::new(auditor.state.clone());
+    let texture_controller =
+        texture::texture_controller::TextureController::new(auditor.state.clone());
     texture_controller.bind(&auditor);
 
     let app = app_for_controllers.clone();
@@ -700,15 +691,15 @@ fn main() {
 }
 
 #[cfg(test)]
+pub(crate) use app::settings::*;
+#[cfg(test)]
 pub(crate) use assets::*;
 #[cfg(test)]
 pub(crate) use common::domain::*;
 #[cfg(test)]
-pub(crate) use routes::*;
-#[cfg(test)]
-pub(crate) use app::settings::*;
-#[cfg(test)]
 pub(crate) use common::translit::*;
+#[cfg(test)]
+pub(crate) use routes::*;
 
 #[cfg(test)]
 #[path = "tests/main.rs"]

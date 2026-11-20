@@ -6,10 +6,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::app::app_controller::{CheckerApp, LogLevel};
-use crate::common::{fs_utils::{normalize_path, to_assets_relative_display}, windows::open_in_explorer};
-use crate::common::external_editor::open_and_sync_with_vscode;
 use crate::auditor::graph_view::*;
 use crate::common::archive::ApArchiveCache;
+use crate::common::external_editor::open_and_sync_with_vscode;
+use crate::common::{
+    fs_utils::{normalize_path, to_assets_relative_display},
+    windows::open_in_explorer,
+};
 
 pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
@@ -529,10 +532,9 @@ impl AuditorController {
                     if !completed {
                         return;
                     }
-                    if let Err(e) = generate_full_directory_graph(
-                        &full_graph,
-                        std::path::Path::new(""),
-                    ) {
+                    if let Err(e) =
+                        generate_full_directory_graph(&full_graph, std::path::Path::new(""))
+                    {
                         let template =
                             crate::gettext!("Не удалось построить полный граф каталога: {}");
                         let msg = template.replace("{}", &e.to_string());
@@ -696,9 +698,7 @@ impl AuditorController {
                         });
                     };
 
-                    if let Err(e) =
-                        open_and_sync_with_vscode(&asset_path, callback)
-                    {
+                    if let Err(e) = open_and_sync_with_vscode(&asset_path, callback) {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(win) = thread_handle.upgrade() {
                                 win.set_editor_status(format!("x {e}").into());

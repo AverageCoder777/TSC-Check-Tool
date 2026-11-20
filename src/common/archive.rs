@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use zip::ZipArchive;
 
 use crate::app::settings::ap_index_cache_file;
-use crate::common::fs_utils::{strip_shader_prefix, normalize_path};
+use crate::common::fs_utils::{normalize_path, strip_shader_prefix};
 
 /// Метаданные одного `.ap`-архива для дискового кэша индекса.
 #[derive(Clone, Debug, Serialize, Deserialize)]

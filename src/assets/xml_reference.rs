@@ -1,5 +1,5 @@
-use std::path::{Path};
 use regex::Regex;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::assets::reference::capture_value_range;

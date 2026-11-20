@@ -1,5 +1,5 @@
-use std::io::{Error};
 use std::fs;
+use std::io::Error;
 use std::path::Path;
 
 use crate::common::serz::SerzReader;

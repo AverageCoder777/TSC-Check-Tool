@@ -12,8 +12,8 @@ use std::sync::Arc;
 use super::helpers::{
     build_id_map, find_named_numbers, find_named_text, matrix_from_values, parse_serz_document,
 };
-use crate::geo::types::{GeoAssembly, GeoAssemblyPart, GeoModel};
 use crate::common::serz::SerzNode;
+use crate::geo::types::{GeoAssembly, GeoAssemblyPart, GeoModel};
 
 #[derive(Clone)]
 pub(crate) struct AttachmentBlueprintRef {

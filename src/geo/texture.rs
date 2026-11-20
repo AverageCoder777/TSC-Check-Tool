@@ -1,8 +1,8 @@
 //! Texture reference resolution and material classification.
 
-use std::path::{Path, PathBuf};
-use crate::common::serz::SerzNode;
 use crate::common::archive::normalize_member;
+use crate::common::serz::SerzNode;
+use std::path::{Path, PathBuf};
 
 /// Explicit shader-level signals for geometry that must never be rendered as visible
 /// surface. Node and material *names* are deliberately not inspected: in rolling stock

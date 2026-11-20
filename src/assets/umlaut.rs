@@ -1,18 +1,20 @@
 use rayon::iter::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::common::serz::{SerzNode, SerzReader, encode_to_vec};
 use crate::assets::serz::read_serz_xml;
 use crate::assets::{
-    resolver::{resolve_asset_path, resolve_product_reference, unresolved_reference_error},
-    xml_reference::*,
     reference::extract_asset_references_with_locations,
-    transaction::{FileTransaction, stage_renamed_file, stage_serz_xml, next_backup_path, install_staged_file},
+    resolver::{resolve_asset_path, resolve_product_reference, unresolved_reference_error},
     scanner::create_temporary_work_directory,
+    transaction::{
+        FileTransaction, install_staged_file, next_backup_path, stage_renamed_file, stage_serz_xml,
+    },
+    xml_reference::*,
 };
+use crate::common::serz::{SerzNode, SerzReader, encode_to_vec};
 use crate::common::{domain::*, translit::*};
 
 /// Результат проверки цепочки ассета на сломанные символы.
@@ -726,10 +728,8 @@ pub(crate) fn repair_umlaut_asset_chain(
             let mut staged = temp.path().join("route-new");
             staged.set_extension(source.extension().unwrap());
             let xml = fs::read_to_string(&xml_path).map_err(|e| e.to_string())?;
-            let (node, preamble) =
-                SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
-            let bytes =
-                encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
+            let (node, preamble) = SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
+            let bytes = encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
             if bytes.len() < 1024 {
                 return Err(format!(
                     "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена.",
