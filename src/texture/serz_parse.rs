@@ -29,7 +29,8 @@ pub fn image_mips_from_bytes(data: &[u8]) -> Result<Vec<ImageMip>, String> {
             let bytes = extract_blob(block)
                 .map(|blob| hex_decode(&blob))
                 .unwrap_or_default();
-            if !bytes.is_empty() && bytes.len() != extract_blob_size(block) as usize {
+            let declared = extract_blob_size(block) as usize;
+            if declared > 0 && bytes.len() != declared {
                 return Err("XML mip blob size does not match its declared size".into());
             }
             Ok(ImageMip {
@@ -102,6 +103,9 @@ pub fn extract_format(block: &str) -> String {
     if block.contains("DXT5") || block.contains("BC3") {
         return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".to_string();
     }
+    if block.contains("EXPL_ALPHA") || block.contains("DXT3") || block.contains("BC2") {
+        return "HC_IMAGE_FORMAT_COMPRESSED_EXPL_ALPHA".to_string();
+    }
     if block.contains("DXT1") || block.contains("BC1") {
         return "HC_IMAGE_FORMAT_COMPRESSED".to_string();
     }
@@ -172,7 +176,7 @@ pub fn parse_bool_tag(block: &str, tag: &str) -> bool {
     false
 }
 
-/// Извлекаетunnamed u16 перед blob.
+/// Извлекает unnamed u16 перед blob.
 pub fn extract_unnamed_u16(block: &str) -> u16 {
     if let Some(blob_pos) = block.find("<d:blob") {
         let pre = &block[..blob_pos];
