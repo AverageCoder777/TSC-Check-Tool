@@ -40,7 +40,7 @@ pub fn dds_compression_of(dds: &ddsfile::Dds) -> DdsCompression {
         if s.contains("BC1") {
             return DdsCompression::Dxt1;
         }
-        if s.contains("B8G8R8A8") {
+        if s.contains("B8G8R8A8") || s.contains("B8G8R8X8") {
             return DdsCompression::Bgra8888;
         }
         if s.contains("R8G8B8A8") || s.contains("R8G8B8X8") {
@@ -60,9 +60,9 @@ pub fn dds_compression_of(dds: &ddsfile::Dds) -> DdsCompression {
             ddsfile::D3DFormat::DXT3 | ddsfile::D3DFormat::DXT2 => DdsCompression::Dxt3,
             ddsfile::D3DFormat::DXT1 => DdsCompression::Dxt1,
             ddsfile::D3DFormat::A8R8G8B8
-            | ddsfile::D3DFormat::A8B8G8R8
             | ddsfile::D3DFormat::X8R8G8B8
-            | ddsfile::D3DFormat::X8B8G8R8 => DdsCompression::Rgba8888,
+            | ddsfile::D3DFormat::A8B8G8R8
+            | ddsfile::D3DFormat::X8B8G8R8 => DdsCompression::Bgra8888,
             ddsfile::D3DFormat::L8 => DdsCompression::L8,
             ddsfile::D3DFormat::A8 => DdsCompression::A8,
             _ => DdsCompression::Unknown,
@@ -159,6 +159,8 @@ pub fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
             | ddsfile::D3DFormat::A8B8G8R8
             | ddsfile::D3DFormat::X8R8G8B8
             | ddsfile::D3DFormat::X8B8G8R8 => return "HC_IMAGE_FORMAT_8888".into(),
+            ddsfile::D3DFormat::L8 => return "HC_IMAGE_FORMAT_L8".into(),
+            ddsfile::D3DFormat::A8 => return "HC_IMAGE_FORMAT_A8".into(),
             _ => {}
         }
     }
@@ -173,8 +175,14 @@ pub fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
         if s.contains("BC1") {
             return "HC_IMAGE_FORMAT_COMPRESSED".into();
         }
-        if s.contains("R8G8B8A8") || s.contains("B8G8R8A8") || s.contains("R8G8B8X8") {
+        if s.contains("R8G8B8A8") || s.contains("B8G8R8A8") || s.contains("R8G8B8X8") || s.contains("B8G8R8X8") {
             return "HC_IMAGE_FORMAT_8888".into();
+        }
+        if s.contains("A8_UNORM") {
+            return "HC_IMAGE_FORMAT_A8".into();
+        }
+        if s.contains("R8_UNORM") || s.contains("L8_UNORM") {
+            return "HC_IMAGE_FORMAT_L8".into();
         }
     }
     // Uncompressed heuristic: if no fourcc/DXT and pitch is 4 bytes per pixel.
@@ -307,11 +315,14 @@ pub fn validate_dds_mip_chain(
     if let Some(expected) = expected_levels
         && declared_levels < expected
     {
+        let level_word = match declared_levels % 10 {
+            1 if declared_levels % 100 != 11 => "уровень",
+            2..=4 if !(12..=14).contains(&(declared_levels % 100)) => "уровня",
+            _ => "уровней",
+        };
         return Err(format!(
-            "В DDS-файле {} уровень{} мипмапов, ожидается {}. Включите генерацию MipMaps при сохранении DDS",
-            declared_levels,
-            if declared_levels == 1 { "" } else { "ей" },
-            expected
+            "В DDS-файле {} {} мипмапов, ожидается {}. Включите генерацию MipMaps при сохранении DDS",
+            declared_levels, level_word, expected
         ));
     }
 
