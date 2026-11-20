@@ -325,14 +325,17 @@ pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     if bytes.starts_with(b"SERZ") {
         crate::serz::validate_tgpcdx_binary(bytes, None)?;
     }
-    let tmp = output.with_extension("tmp");
+    let tmp = output.with_extension(format!("{}.tmp", output.extension().and_then(|e| e.to_str()).unwrap_or("tmp")));
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
     if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
         let _ = fs::remove_file(&tmp);
         return Err("empty staged file".into());
     }
     let _ = fs::remove_file(output);
-    fs::rename(&tmp, output).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, output).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e.to_string()
+    })?;
     Ok(())
 }
 
