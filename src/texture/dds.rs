@@ -256,14 +256,20 @@ fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     if bytes.starts_with(b"SERZ") {
         crate::serz::validate_tgpcdx_binary(bytes, None)?;
     }
-    let tmp = output.with_extension("tmp");
+    // Use unique temp name to avoid conflicts and preserve original extension.
+    let tmp = output.with_extension(format!("{}.tmp", output.extension().and_then(|e| e.to_str()).unwrap_or("tmp")));
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
     if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
         let _ = fs::remove_file(&tmp);
         return Err("empty staged file".into());
     }
+    // Atomic replace: remove target first (if exists), then rename temp to target.
+    // If rename fails, temp file remains as backup, original is gone but temp has data.
     let _ = fs::remove_file(output);
-    fs::rename(&tmp, output).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, output).map_err(|e| {
+        let _ = fs::remove_file(&tmp); // best effort cleanup
+        e.to_string()
+    })?;
     Ok(())
 }
 
@@ -286,13 +292,8 @@ fn modify_tgpcdx_tree(
         .cloned()
         .collect();
 
-    let mip_container = find_element_mut(root, "Mip").ok_or("no Mip node")?;
-    if let SerzNode::Element { children, .. } = mip_container {
-        children.clear();
-    } else {
-        return Err("invalid Mip node".into());
-    }
-
+    // Build all image nodes first.
+    let mut image_nodes = Vec::with_capacity(mips.len());
     for (idx, (w, h, bytes)) in mips.iter().enumerate() {
         let template = templates.get(idx).or_else(|| templates.first());
         let mut img = if let Some(t) = template {
@@ -341,11 +342,15 @@ fn modify_tgpcdx_tree(
         if let SerzNode::Element { name: n, .. } = &mut img {
             *n = "cHcImageDx".to_string();
         }
+        image_nodes.push(img);
+    }
 
-        let mip_container = find_element_mut(root, "Mip").ok_or("no Mip node")?;
-        if let SerzNode::Element { children, .. } = mip_container {
-            children.push(img);
-        }
+    // Insert all at once.
+    let mip_container = find_element_mut(root, "Mip").ok_or("no Mip node")?;
+    if let SerzNode::Element { children, .. } = mip_container {
+        children.extend(image_nodes);
+    } else {
+        return Err("invalid Mip node".into());
     }
     Ok(())
 }

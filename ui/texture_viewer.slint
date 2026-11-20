@@ -112,7 +112,7 @@ export component TextureViewerWindow inherits Window {
                 }
             }
         }
-        Button { text: show-alpha ? @tr("Обычный режим") : @tr("Переключить альфа-канал"); clicked => { toggle-alpha(); } }
+        Button { text: show-alpha ? @tr("Обычный режим") : @tr("Альфа-канал"); clicked => { toggle-alpha(); } }
         Button { text: @tr("Экспортировать DDS"); clicked => { export-dds(); } }
         Button { text: @tr("Заменить из DDS"); clicked => { replace-from-dds(); } }
     }
