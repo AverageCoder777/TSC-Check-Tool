@@ -108,7 +108,6 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
             if existing_layout_matches
                 && let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &mips)
             {
-                crate::serz::validate_tgpcdx_binary(&patched, Some(&expected_lengths))?;
                 validate_imported_tgpcdx(&patched, width, height, &fmt_str, &mips)?;
                 return write_output_bytes(output, &patched).map(|()| report);
             }
@@ -119,8 +118,6 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
         let preamble = reader.preamble.clone();
         modify_tgpcdx_tree(&mut root, width, height, &fmt_str, &mips)?;
         let bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())?;
-        let expected_lengths: Vec<usize> = mips.iter().map(|(_, _, bytes)| bytes.len()).collect();
-        crate::serz::validate_tgpcdx_binary(&bytes, Some(&expected_lengths))?;
         validate_imported_tgpcdx(&bytes, width, height, &fmt_str, &mips)?;
         return write_output_bytes(output, &bytes).map(|()| report);
     }
@@ -128,8 +125,6 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     // Build the AST directly when creating a new texture.
     let node = new_tgpcdx_tree(width, height, &fmt_str, &mips);
     let bytes = crate::serz::encode_tgpcdx_to_vec(&node, None)?;
-    let expected_lengths: Vec<usize> = mips.iter().map(|(_, _, bytes)| bytes.len()).collect();
-    crate::serz::validate_tgpcdx_binary(&bytes, Some(&expected_lengths))?;
     validate_imported_tgpcdx(&bytes, width, height, &fmt_str, &mips)?;
     if bytes.is_empty() {
         return Err("empty output".into());
@@ -470,7 +465,9 @@ fn validate_imported_tgpcdx(
     if find_texture_dimensions(&root) != Some((width, height)) {
         return Err("serialized TgPcDx dimensions do not match the DDS".into());
     }
-    let actual_mips = image_mips_from_bytes(bytes)?;
+    // Extract mips from already-parsed root instead of re-parsing bytes.
+    let mut actual_mips = Vec::new();
+    collect_serz_image_mips(&root, &mut actual_mips)?;
     if actual_mips.len() != expected_mips.len() {
         return Err("serialized TgPcDx mip count does not match the DDS".into());
     }
