@@ -343,6 +343,7 @@ fn modify_tgpcdx_tree(
         set_or_insert_property(&mut img, "Format", "cDeltaString", fmt_str)?;
         set_or_insert_property(&mut img, "Width", "sUInt16", &w.to_string())?;
         set_or_insert_property(&mut img, "Height", "sUInt16", &h.to_string())?;
+        set_or_insert_property(&mut img, "IsSwizzled", "bool", "0")?;
         set_blob_data(&mut img, bytes);
         if let SerzNode::Element { name: n, .. } = &mut img {
             *n = "cHcImageDx".to_string();
