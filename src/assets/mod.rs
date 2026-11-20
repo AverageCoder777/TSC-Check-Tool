@@ -20,10 +20,7 @@ pub(crate) mod missing_assets_controller;
 
 pub(crate) use analysis_cache::*;
 pub(crate) use checker::*;
-pub(crate) use fuzzy::*;
-pub(crate) use reference::*;
 pub(crate) use replacement::*;
-pub(crate) use resolver::*;
 pub(crate) use scanner::*;
 pub(crate) use serz::*;
 pub(crate) use transaction::*;

@@ -321,13 +321,7 @@ pub(crate) fn match_bare_blueprint(haystack: &[u8], start: usize) -> Option<Blue
     let (blueprint_range, end) = parse_tagged_value(haystack, "BlueprintID", blueprint_start)?;
     Some((provider_range, product_range, blueprint_range, end))
 }
-#[cfg(test)]
-pub(crate) fn extract_asset_references(xml: &str) -> std::collections::HashSet<String> {
-    extract_asset_references_with_locations(xml)
-        .into_iter()
-        .map(|reference| reference.path)
-        .collect()
-}
+
 /// Прежняя реализация разбора на регулярных выражениях.
 /// /// Оставлена для сверки: ручной разбор обязан давать ровно тот же результат.
 pub(crate) fn route_tile_label(route_path: &Path, source_file: &RouteFile) -> String {

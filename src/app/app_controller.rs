@@ -21,10 +21,6 @@ enum CheckMessage {
     Finished(Result<CheckResult, String>),
 }
 
-pub(crate) enum InventoryAction {
-    ScanUmlauts,
-}
-
 #[derive(Default)]
 pub(crate) struct AssetInventoryWindowState {
     open: bool,
@@ -75,9 +71,7 @@ pub(crate) struct CheckerApp {
     ignore_scenarios: bool,
     pub(crate) result: Option<CheckResult>,
     pub(crate) status: String,
-    /// Кольцевой буфер последних записей для UI (ограничен MAX_LOG_ENTRIES).
     pub(crate) check_log: VecDeque<LogEntry>,
-    ///Sender в фоновый поток записи лога на диск (AppData\TSC Check Tool\app.log).
     pub(crate) log_tx: Option<Sender<LogEntry>>,
     pub(crate) progress_pending: Option<String>,
     pub(crate) last_progress_log: Option<Instant>,
@@ -100,10 +94,6 @@ pub(crate) struct CheckerApp {
     pub(crate) locoswap_path: String,
     pub(crate) language: String,
     pub(crate) asset_inventory_state: Arc<Mutex<AssetInventoryWindowState>>,
-    #[allow(dead_code)]
-    pub(crate) inventory_action_tx: Sender<InventoryAction>,
-    #[allow(dead_code)]
-    inventory_action_rx: Receiver<InventoryAction>,
     inventory_scan: Option<Receiver<Result<InventoryScanOutcome, String>>>,
     pub(crate) missing_assets_popup: Option<Vec<String>>,
     pub(crate) missing_assets_shown: bool,
@@ -140,7 +130,6 @@ impl Default for CheckerApp {
         let route_thumbnails_enabled = config.route_thumbnails_enabled;
         let route_scan_on_hdd = config.route_scan_on_hdd;
         let hide_quick_drive_free_roam = config.hide_quick_drive_free_roam;
-        let (inventory_action_tx, inventory_action_rx) = mpsc::channel();
         Self {
             rw_path,
             routes: Vec::new(),
@@ -182,8 +171,6 @@ impl Default for CheckerApp {
                 .unwrap_or_default(),
             language,
             asset_inventory_state: Arc::new(Mutex::new(AssetInventoryWindowState::default())),
-            inventory_action_tx,
-            inventory_action_rx,
             inventory_scan: None,
             missing_assets_popup: None,
             missing_assets_shown: false,
@@ -228,33 +215,6 @@ impl CheckerApp {
                 LogLevel::Error,
             );
         }
-    }
-    fn start_inventory_scan(&mut self) {
-        let Some(result) = self.result.as_ref() else {
-            self.log_event(
-                "Сначала выполните проверку маршрута.".to_owned(),
-                LogLevel::Warning,
-            );
-            return;
-        };
-        if self.inventory_scan.is_some() {
-            return;
-        }
-        let inventory = result.asset_inventory.clone();
-        let assets_path = clean_rw_path(&self.rw_path).join("Assets");
-        let max_concurrent_serz = self.serz_process_limit;
-        let (tx, rx) = mpsc::channel();
-        self.inventory_scan = Some(rx);
-        self.log_event(
-            "Проверка ассетов маршрута на умляуты...".to_owned(),
-            LogLevel::Info,
-        );
-        thread::spawn(move || {
-            let result =
-                crate::assets::scan_umlaut_assets(&inventory, &assets_path, max_concurrent_serz);
-            let _ = tx.send(result);
-            crate::schedule_ui_sync();
-        });
     }
     pub(crate) fn start_asset_replacement(
         &mut self,
@@ -529,9 +489,6 @@ impl CheckerApp {
         self.check.is_some()
     }
     pub(crate) fn receive_background_results(&mut self) {
-        while let Ok(InventoryAction::ScanUmlauts) = self.inventory_action_rx.try_recv() {
-            self.start_inventory_scan();
-        }
         self.flush_progress_log(false);
         let inventory_scan_result =
             self.inventory_scan

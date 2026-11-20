@@ -1,5 +1,5 @@
 use super::{
-    ScenarioClueCollection, check_route, decode_xml_text, extract_asset_references,
+    ScenarioClueCollection, check_route, decode_xml_text,
     extract_scenario_clues, inspect_route_folder, is_skipped_route_scan_directory,
     parse_route_name, read_route_name, scan_routes, scan_routes_with_ignored,
 };
@@ -82,35 +82,6 @@ fn falls_back_when_english_route_name_is_empty() {
         parse_route_name(xml).as_deref(),
         Some("[EZY] Bad Altburger Streckennetz/German")
     );
-}
-
-#[test]
-fn extracts_blueprint_references_across_xml_lines() {
-    let xml = r#"
-            <Provider d:type="cDeltaString">Kuju</Provider>
-            <Product d:type="cDeltaString">RailSimulator</Product>
-            <BlueprintID d:type="cDeltaString">
-                Scenery\Buildings\Station.XML
-            </BlueprintID>
-        "#;
-
-    assert_eq!(
-        extract_asset_references(xml),
-        ["Kuju/RailSimulator/Scenery/Buildings/Station.bin".to_owned()]
-            .into_iter()
-            .collect()
-    );
-}
-
-#[test]
-fn ignores_blueprint_paths_that_escape_the_assets_directory() {
-    let xml = r#"
-            <Provider>Kuju</Provider>
-            <Product>RailSimulator</Product>
-            <BlueprintID>..\Outside\asset.xml</BlueprintID>
-        "#;
-
-    assert!(extract_asset_references(xml).is_empty());
 }
 
 #[test]

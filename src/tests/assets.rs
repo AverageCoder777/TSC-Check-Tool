@@ -228,7 +228,7 @@ fn replaces_asset_in_route_packed_into_archive() {
 
     let xml = std::fs::read_to_string(&archive).ok();
     let _ = xml;
-    let extracted = super::extract_asset_references_with_locations(
+    let extracted = crate::assets::reference::extract_asset_references_with_locations(
         "<root><SceneryRenderBlueprint><iBlueprintLibrary-cAbsoluteBlueprintID><BlueprintSetID><iBlueprintLibrary-cBlueprintSetID><Provider d:type=\"cDeltaString\">Prov</Provider><Product d:type=\"cDeltaString\">Prod</Product></iBlueprintLibrary-cBlueprintSetID></BlueprintSetID><BlueprintID d:type=\"cDeltaString\">Scenery/Old.bin</BlueprintID></iBlueprintLibrary-cAbsoluteBlueprintID></SceneryRenderBlueprint></root>",
     );
     eprintln!(
