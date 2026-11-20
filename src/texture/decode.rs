@@ -42,6 +42,7 @@ pub fn decode_tgpcdx_with_max_dimension(
         || format_upper.contains("ARGB")
         || format_upper.contains("UNCOMPRESSED");
 
+    let mut image_u32 = vec![0u32; pixels];
     let mut rgba = Vec::with_capacity(rgba_bytes);
 
     if is_uncompressed || (!is_bc3 && !is_bc2 && !is_bc1 && bytes.len() >= pixels * 4) {
@@ -60,43 +61,27 @@ pub fn decode_tgpcdx_with_max_dimension(
             } else {
                 (bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3])
             };
-            rgba.push(r);
-            rgba.push(g);
-            rgba.push(b);
-            rgba.push(a);
+            image_u32[i] = (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | (b as u32);
         }
     } else if is_bc2 {
-        let mut image_u32 = vec![0u32; pixels];
         texture2ddecoder::decode_bc2(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
-        for px in image_u32 {
-            rgba.push(((px >> 16) & 0xff) as u8);
-            rgba.push(((px >> 8) & 0xff) as u8);
-            rgba.push((px & 0xff) as u8);
-            rgba.push(((px >> 24) & 0xff) as u8);
-        }
     } else if is_bc3 || (!is_bc1 && bytes.len() >= pixels) {
         // BC3 / DXT5 (16 bytes per 4x4 block)
-        let mut image_u32 = vec![0u32; pixels];
         texture2ddecoder::decode_bc3(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
-        for px in image_u32 {
-            rgba.push(((px >> 16) & 0xff) as u8);
-            rgba.push(((px >> 8) & 0xff) as u8);
-            rgba.push((px & 0xff) as u8);
-            rgba.push(((px >> 24) & 0xff) as u8);
-        }
     } else {
         // BC1 / DXT1 (8 bytes per 4x4 block)
-        let mut image_u32 = vec![0u32; pixels];
         texture2ddecoder::decode_bc1(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
-        for px in image_u32 {
-            rgba.push(((px >> 16) & 0xff) as u8);
-            rgba.push(((px >> 8) & 0xff) as u8);
-            rgba.push((px & 0xff) as u8);
-            rgba.push(((px >> 24) & 0xff) as u8);
-        }
+    }
+
+    // Single conversion loop for all formats
+    for px in image_u32 {
+        rgba.push(((px >> 16) & 0xff) as u8);
+        rgba.push(((px >> 8) & 0xff) as u8);
+        rgba.push((px & 0xff) as u8);
+        rgba.push(((px >> 24) & 0xff) as u8);
     }
 
     if rgba.len() < rgba_bytes {
@@ -107,11 +92,6 @@ pub fn decode_tgpcdx_with_max_dimension(
 
 /// Decode TgPcDx to RGBA (full resolution).
 pub fn decode_tgpcdx_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
-    decode_tgpcdx_with_max_dimension(data, None)
-}
-
-/// Decode TgPcDx for viewer (alias for decode_tgpcdx_to_rgba).
-pub fn decode_tgpcdx_for_viewer(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     decode_tgpcdx_with_max_dimension(data, None)
 }
 
