@@ -13,7 +13,7 @@ pub mod format;
 pub mod inspect;
 pub mod serz_parse;
 
-pub use decode::{decode_tgpcdx_for_viewer, decode_tgpcdx_to_rgba, rgba_to_slint_image};
+pub use decode::{decode_tgpcdx_to_rgba, rgba_to_slint_image};
 
 pub use dds::{convert_dds_to_tgpcdx_report, export_tgpcdx_to_dds};
 
