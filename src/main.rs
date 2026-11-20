@@ -1,5 +1,4 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//#![deny(clippy::all)]
 #![allow(clippy::type_complexity, reason = "required for some essential types")]
 
 mod app;
@@ -13,7 +12,6 @@ mod texture;
 
 slint::include_modules!();
 
-use rayon::prelude::*;
 use std::cell::RefCell;
 use std::fs;
 use std::io::{BufWriter, Write};

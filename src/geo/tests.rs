@@ -1,10 +1,6 @@
 #[cfg(test)]
 mod tests {
     use crate::common::serz::SerzNode;
-    use crate::geo::assembly::{
-        collect_blueprint_attachments, find_geometry_blueprint, matching_geometry_blueprint,
-        resolve_asset_path,
-    };
     use crate::geo::helpers::{
         build_id_map, collect_float_values, collect_i32_values, compute_world_transforms,
         find_named_values, find_number, find_transform_id, matrix_from_values, parse_serz_document,
@@ -16,11 +12,10 @@ mod tests {
     };
     use crate::geo::texture::{classify_shader, is_hidden_shader_name, resolve_texture_data};
     use crate::geo::types::PrimitiveTopology;
-    use crate::geo::{GeoAssembly, GeoAssemblyPart, GeoModel, GeoRenderMode, GeoSubmesh};
+    use crate::geo::{GeoModel, GeoRenderMode, GeoSubmesh};
     use glam::{Mat4, Vec3};
     use std::collections::{HashMap, HashSet};
-    use std::path::{Path, PathBuf};
-    use std::sync::Arc;
+    use std::path::Path;
 
     fn triangle_vertices(count: usize) -> Vec<u8> {
         let mut vertices = Vec::new();
@@ -57,140 +52,6 @@ mod tests {
                 <TextureByName><e d:type="cDeltaString">Textures\sample.TgPcDx</e></TextureByName>
             </Root>"#
         )
-    }
-
-    #[test]
-    fn reads_blueprint_geometry_and_attachment_transforms() {
-        let xml = r#"
-            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
-                <cWagonBlueprint d:id="1">
-                    <GeometryID d:type="cDeltaString">Models\Main.GeoPcDx</GeometryID>
-                    <Bogey>
-                        <BogeyBlueprint d:type="cDeltaString">Bogies\front.xml</BogeyBlueprint>
-                        <BogeyPivotX d:type="sFloat32">3</BogeyPivotX>
-                        <BogeyPivotY d:type="sFloat32">-1</BogeyPivotY>
-                        <BogiePivotZ d:type="sFloat32">7</BogiePivotZ>
-                    </Bogey>
-                    <Bogey d:type="ref">2</Bogey>
-                    <ContainerComponent>
-                        <Children>
-                            <cEntityContainerBlueprint-sChild>
-                                <BlueprintID d:type="cDeltaString">Parts\pantograph.xml</BlueprintID>
-                                <Matrix d:type="sFloat32">1 0 0 0 0 1 0 0 0 0 1 0 5 6 7 1</Matrix>
-                            </cEntityContainerBlueprint-sChild>
-                        </Children>
-                    </ContainerComponent>
-                </cWagonBlueprint>
-                <BogeyEntry d:id="2">
-                    <BogeyBlueprint d:type="cDeltaString">Bogies\rear.xml</BogeyBlueprint>
-                    <BogeyPivotX d:type="sFloat32">-3</BogeyPivotX>
-                </BogeyEntry>
-            </Root>
-        "#;
-        let root = SerzNode::from_xml_str(xml).unwrap().0;
-        let ids = build_id_map(&root);
-
-        let blueprint = matching_geometry_blueprint(&root, "main", &ids).unwrap();
-        let mut attachments = Vec::new();
-        collect_blueprint_attachments(&blueprint, &ids, false, false, &mut attachments);
-        assert_eq!(
-            attachments
-                .iter()
-                .map(|attachment| attachment.blueprint_reference.as_str())
-                .collect::<Vec<_>>(),
-            [
-                r"Bogies\front.xml",
-                r"Bogies\rear.xml",
-                r"Parts\pantograph.xml"
-            ]
-        );
-        assert_eq!(attachments[0].kind, "bogey");
-        assert_eq!(attachments[0].blueprint_reference, r"Bogies\front.xml");
-        assert_eq!(
-            attachments[0].transform.w_axis.truncate(),
-            Vec3::new(3.0, -1.0, 7.0)
-        );
-        assert_eq!(attachments[1].kind, "bogey");
-        assert_eq!(
-            attachments[1].transform.w_axis.truncate(),
-            Vec3::new(-3.0, 0.0, 0.0)
-        );
-        assert_eq!(attachments[2].kind, "child");
-        assert_eq!(
-            attachments[2].transform.w_axis.truncate(),
-            Vec3::new(5.0, 6.0, 7.0)
-        );
-    }
-
-    #[test]
-    fn discovers_sibling_blueprint_and_resolves_asset_relative_links() {
-        let directory = tempfile::tempdir().unwrap();
-        let assets = directory.path().join("Assets");
-        let model_dir = assets.join("Provider").join("Product").join("Models");
-        let bogey_dir = assets.join("Provider").join("Product").join("Bogies");
-        let geometry_path = model_dir.join("Main.GeoPcDx");
-        let blueprint_path = model_dir.join("Main.bin");
-        let bogey_path = bogey_dir.join("Front.bin");
-        std::fs::create_dir_all(&model_dir).unwrap();
-        std::fs::create_dir_all(&bogey_dir).unwrap();
-        std::fs::write(&geometry_path, b"").unwrap();
-        std::fs::write(
-            &blueprint_path,
-            r#"<Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
-                <cWagonBlueprint>
-                    <GeometryID d:type="cDeltaString">Provider\Product\Models\[00]Main.GeoPcDx</GeometryID>
-                </cWagonBlueprint>
-            </Root>"#,
-        )
-        .unwrap();
-        std::fs::write(&bogey_path, b"").unwrap();
-
-        let (found_path, _, _) = find_geometry_blueprint(&geometry_path, "main").unwrap();
-        let resolved =
-            resolve_asset_path(&found_path, r"Provider\Product\Bogies\[00]Front.xml", "bin")
-                .unwrap();
-        let resolved_geometry = resolve_asset_path(
-            &found_path,
-            r"Provider\Product\Models\[00]Main.GeoPcDx",
-            "GeoPcDx",
-        )
-        .unwrap();
-
-        assert_eq!(found_path, blueprint_path);
-        assert_eq!(resolved, bogey_path);
-        assert_eq!(resolved_geometry, geometry_path);
-    }
-
-    #[test]
-    fn composes_attached_parts_and_side_by_side_layouts() {
-        let source = xml(&triangle_vertices(3), &[0, 0, 1, 0, 2, 0], 32);
-        let model = Arc::new(GeoModel::parse(Path::new(""), source.as_bytes()).unwrap());
-        let assembly = GeoAssembly {
-            parts: vec![
-                GeoAssemblyPart {
-                    path: PathBuf::from("Main.GeoPcDx"),
-                    model: Arc::clone(&model),
-                    transform: Mat4::IDENTITY,
-                    blueprint_attached: false,
-                },
-                GeoAssemblyPart {
-                    path: PathBuf::from("Bogey.GeoPcDx"),
-                    model,
-                    transform: Mat4::from_translation(Vec3::new(10.0, -1.0, 2.0)),
-                    blueprint_attached: true,
-                },
-            ],
-            has_blueprint_attachments: true,
-        };
-
-        let (assembled, sources) = assembly.compose(false).unwrap();
-        let bogey_position = assembled.vertices[assembled.indices[3] as usize].position;
-        assert_eq!(bogey_position, [10.0, -1.0, 2.0]);
-        assert_eq!(sources.len(), assembled.textures.len());
-
-        let (side_by_side, _) = assembly.compose(true).unwrap();
-        let bogey_position = side_by_side.vertices[side_by_side.indices[3] as usize].position;
-        assert_eq!(bogey_position, [3.5, 0.0, 0.0]);
     }
 
     #[test]

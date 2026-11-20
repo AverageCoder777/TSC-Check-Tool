@@ -1,8 +1,5 @@
 //! Geometry assembly: blueprint attachments, sibling parts, and model composition.
 //! All items here are `#[cfg(test)]` as in the original monolithic file.
-
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -10,7 +7,7 @@ use glam::{Mat4, Vec3};
 use std::sync::Arc;
 
 use super::helpers::{
-    build_id_map, find_named_numbers, find_named_text, matrix_from_values, parse_serz_document,
+    build_id_map, references_target, matrix_from_values, parse_serz_document,
 };
 use crate::common::serz::SerzNode;
 use crate::geo::types::{GeoAssembly, GeoAssemblyPart, GeoModel};

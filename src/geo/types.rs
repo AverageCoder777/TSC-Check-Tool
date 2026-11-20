@@ -1,12 +1,5 @@
 //! Public geometry data types for GeoPcDx parsing.
-
-#![allow(dead_code)]
-
-#[cfg(test)]
-use glam::Mat4;
 use std::path::Path;
-#[cfg(test)]
-use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GeoVertex {
@@ -34,22 +27,17 @@ pub struct GeoSubmesh {
     pub vertex_buffer_index: u32,
     pub base_vertex: i32,
     pub vertex_buffer_offset: i32,
-    /// Alpha cutout threshold (`AlphaRef / 255.0`), only honored for `Cutout` batches.
     pub alpha_cutoff: f32,
-    /// Draw flag only: buffers stay resident, so toggling never re-uploads geometry.
     pub visible: bool,
     pub node_name: String,
     pub material_name: String,
     pub shader_name: String,
     pub lod_level: u8,
     pub triangle_count: u32,
-    /// True when the batch's world transform has a negative determinant (mirrored),
-    /// meaning winding order is flipped and front-face culling must be inverted.
     pub mirrored: bool,
 }
 
 impl GeoSubmesh {
-    /// Visibility a batch should take for a named preset. Unknown presets are a no-op.
     pub fn preset_visible(&self, preset: &str) -> bool {
         match preset {
             "lod0" => {
@@ -115,37 +103,9 @@ impl GeoModel {
         super::diagnostics::log_parse_diagnostics(path, &model.diagnostics);
         Ok(model)
     }
-
+    #[cfg(test)]
     pub fn parse(path: &Path, data: &[u8]) -> Result<Self, String> {
         parse_model(path, data)
     }
 }
 
-#[cfg(test)]
-#[derive(Clone)]
-pub struct GeoAssemblyPart {
-    pub path: PathBuf,
-    pub model: std::sync::Arc<GeoModel>,
-    pub transform: Mat4,
-    pub blueprint_attached: bool,
-}
-
-#[cfg(test)]
-pub struct GeoAssembly {
-    pub parts: Vec<GeoAssemblyPart>,
-    pub has_blueprint_attachments: bool,
-}
-
-#[cfg(test)]
-impl GeoAssembly {
-    pub fn load(path: &Path) -> Result<Self, String> {
-        super::assembly::load_assembly(path)
-    }
-
-    pub fn compose(
-        &self,
-        side_by_side: bool,
-    ) -> Result<(GeoModel, Vec<(PathBuf, String)>), String> {
-        super::assembly::compose_assembly(self, side_by_side)
-    }
-}

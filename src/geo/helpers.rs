@@ -1,7 +1,5 @@
 //! SERZ node traversal helpers shared by parsing, assembly, and texture modules.
 
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
 use crate::common::serz::SerzNode;
@@ -400,6 +398,7 @@ pub(crate) fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
 
 /// Picks a stride that actually divides the buffer. An explicit `VertexStride` from the
 /// file is authoritative when present and valid; the parsed declaration is the fallback.
+#[cfg(test)]
 pub(crate) fn select_vertex_stride(
     bytes_len: usize,
     explicit: Option<usize>,
@@ -631,63 +630,6 @@ pub(crate) fn decode_indices(data: &[u8], width: usize) -> Result<Vec<u32>, Stri
         .collect())
 }
 
-pub(crate) fn find_parent_geometry_vertex_data<'a>(
-    node: &'a SerzNode,
-    ids: &HashMap<u32, &'a SerzNode>,
-) -> &'a SerzNode {
-    for (_, candidate) in ids {
-        if let SerzNode::Element { name, children, .. } = candidate {
-            if name.to_ascii_lowercase().contains("chcgeometryvertexdata") {
-                for child in children {
-                    if references_target(child, node) {
-                        return candidate;
-                    }
-                }
-            }
-        }
-    }
-    node
-}
-
-pub(crate) fn find_parent_vertex_data_element<'a>(
-    node: &'a SerzNode,
-    ids: &HashMap<u32, &'a SerzNode>,
-) -> &'a SerzNode {
-    for (_, candidate) in ids {
-        if let SerzNode::Element {
-            name, children, id, ..
-        } = candidate
-        {
-            let clean_name = name.replace("::", "-").to_ascii_lowercase();
-            if clean_name.contains("vertexdata") && *id != 0 {
-                for child in children {
-                    if references_target(child, node) {
-                        return candidate;
-                    }
-                }
-            }
-        }
-    }
-    node
-}
-
-pub(crate) fn references_target<'a>(node: &'a SerzNode, target: &'a SerzNode) -> bool {
-    let target_id = match target {
-        SerzNode::Element { id, .. } => *id,
-        _ => return false,
-    };
-    if target_id == 0 {
-        return false;
-    }
-    match node {
-        SerzNode::Reference {
-            target_id: ref_id, ..
-        } => *ref_id == target_id,
-        SerzNode::Element { children, .. } => children.iter().any(|c| references_target(c, target)),
-        _ => false,
-    }
-}
-
 /// Recursively search for a SerzNode::Reference in the subtree that points to a known vertex buffer ID.
 pub(crate) fn find_vbuf_ref_in_subtree(
     children: &[SerzNode],
@@ -724,160 +666,4 @@ pub(crate) fn find_vbuf_ref_in_subtree(
         }
     }
     None
-}
-
-/// Named text lookup used by assembly helpers (kept outside #[cfg(test)] to match
-/// original visibility; only invoked from test code paths).
-pub(crate) fn find_named_text(
-    node: &SerzNode,
-    names: &[&str],
-    ids: &HashMap<u32, &SerzNode>,
-) -> Option<String> {
-    match node {
-        SerzNode::Property { name, value, .. }
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
-        {
-            Some(value.trim().to_owned())
-        }
-        SerzNode::Array { name, values, .. }
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
-        {
-            Some(values.join(" "))
-        }
-        SerzNode::Reference { name, target_id }
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
-        {
-            ids.get(target_id)
-                .and_then(|target| find_asset_path_text(target))
-        }
-        SerzNode::Element { name, children, .. } => {
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate))
-            {
-                let value = children
-                    .iter()
-                    .find_map(|child| find_named_text(child, names, ids))
-                    .or_else(|| {
-                        names
-                            .iter()
-                            .any(|candidate| {
-                                candidate.eq_ignore_ascii_case("geometryid")
-                                    || candidate.eq_ignore_ascii_case("collisiongeometryid")
-                            })
-                            .then(|| {
-                                children
-                                    .iter()
-                                    .find_map(|child| find_named_text(child, &["blueprintid"], ids))
-                            })
-                            .flatten()
-                    })
-                    .or_else(|| match children.as_slice() {
-                        [SerzNode::Property { value, .. }] => Some(value.trim().to_owned()),
-                        _ => None,
-                    });
-                if let Some(value) = value {
-                    return Some(value);
-                }
-            }
-            children
-                .iter()
-                .find_map(|child| find_named_text(child, names, ids))
-        }
-        _ => None,
-    }
-}
-
-pub(crate) fn find_asset_path_text(node: &SerzNode) -> Option<String> {
-    match node {
-        SerzNode::Property { value, .. } => {
-            let value = value.trim();
-            (!value.is_empty()
-                && (value.contains('\\')
-                    || value.contains('/')
-                    || value.to_ascii_lowercase().ends_with(".xml")
-                    || value.to_ascii_lowercase().ends_with(".bin")
-                    || value.to_ascii_lowercase().ends_with(".geopcdx")))
-            .then(|| value.to_owned())
-        }
-        SerzNode::Array { values, .. } => values.iter().find_map(|value| {
-            let lower = value.to_ascii_lowercase();
-            (value.contains('\\')
-                || value.contains('/')
-                || lower.ends_with(".xml")
-                || lower.ends_with(".bin")
-                || lower.ends_with(".geopcdx"))
-            .then(|| value.clone())
-        }),
-        SerzNode::Element { children, .. } => children.iter().find_map(find_asset_path_text),
-        _ => None,
-    }
-}
-
-pub(crate) fn find_named_number(
-    node: &SerzNode,
-    names: &[&str],
-    ids: &HashMap<u32, &SerzNode>,
-) -> Option<f32> {
-    find_named_text(node, names, ids)?.parse().ok()
-}
-
-pub(crate) fn find_named_numbers(
-    node: &SerzNode,
-    names: &[&str],
-    ids: &HashMap<u32, &SerzNode>,
-) -> Option<Vec<f32>> {
-    match node {
-        SerzNode::Property { name, value, .. }
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
-        {
-            Some(parse_float_values(value))
-        }
-        SerzNode::Array { name, values, .. }
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
-        {
-            Some(
-                values
-                    .iter()
-                    .flat_map(|value| parse_float_values(value))
-                    .collect(),
-            )
-        }
-        SerzNode::Reference { name, target_id }
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
-        {
-            ids.get(target_id)
-                .and_then(|target| find_named_numbers(target, names, ids))
-        }
-        SerzNode::Element { name, children, .. } => {
-            if names
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate))
-            {
-                let values = children
-                    .iter()
-                    .flat_map(collect_float_values)
-                    .collect::<Vec<_>>();
-                if !values.is_empty() {
-                    return Some(values);
-                }
-            }
-            children
-                .iter()
-                .find_map(|child| find_named_numbers(child, names, ids))
-        }
-        _ => None,
-    }
 }
