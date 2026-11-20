@@ -364,24 +364,3 @@ pub fn find_texture_dimensions(node: &SerzNode) -> Option<(u32, u32)> {
     }
     None
 }
-
-/// Конвертирует SERZ байты в XML для метаданных (без blobов).
-pub fn serz_bytes_to_metadata_xml(data: &[u8]) -> Result<String, String> {
-    let mut reader = crate::serz::SerzReader::new(data);
-    let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
-
-    fn clear_blobs(node: &mut SerzNode) {
-        if let SerzNode::Element { children, .. } = node {
-            for child in children {
-                if let SerzNode::Blob { data } = child {
-                    data.clear();
-                } else {
-                    clear_blobs(child);
-                }
-            }
-        }
-    }
-
-    clear_blobs(&mut root);
-    Ok(crate::serz::SerzReader::to_xml(&root, 0, true))
-}

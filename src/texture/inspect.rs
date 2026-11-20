@@ -8,8 +8,7 @@ use super::format::{
 };
 use super::serz_parse::{
     all_image_blocks, count_c_hc_textures, extract_blob, extract_blob_size, extract_format,
-    extract_tag, extract_unnamed_u16, hex_decode, parse_bool_tag,
-    collect_serz_image_mips, ImageMip,
+    extract_tag, extract_unnamed_u16, hex_decode, parse_bool_tag, ImageMip,
 };
 use crate::serz::SerzNode;
 
@@ -38,28 +37,16 @@ pub struct TextureInfo {
 
 /// Вариант с указанием пути на диске: позволяет сверить имя и проверить .bak.
 pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<TextureInfo, String> {
-    let (xml, mips) = if data.starts_with(b"SERZ") {
-        // Single SERZ parse: get both XML (for metadata) and mips (for blob sizes).
+    let (xml, total_blob_bytes) = if data.starts_with(b"SERZ") {
+        // Single SERZ parse: get XML for metadata and blob sizes before clearing.
         let mut reader = crate::serz::SerzReader::new(data);
         let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
-        let xml = {
-            fn clear_blobs(node: &mut crate::serz::SerzNode) {
-                if let crate::serz::SerzNode::Element { children, .. } = node {
-                    for child in children {
-                        if let crate::serz::SerzNode::Blob { data } = child {
-                            data.clear();
-                        } else {
-                            clear_blobs(child);
-                        }
-                    }
-                }
-            }
-            clear_blobs(&mut root);
-            crate::serz::SerzReader::to_xml(&root, 0, true)
-        };
-        let mut mips = Vec::new();
-        collect_serz_image_mips(&root, &mut mips)?;
-        (xml, mips)
+        
+        // Collect blob sizes BEFORE clearing blobs for XML generation.
+        let total_blob_bytes = collect_blob_bytes_and_clear(&mut root);
+        
+        let xml = crate::serz::SerzReader::to_xml(&root, 0, true);
+        (xml, total_blob_bytes)
     } else {
         let xml = String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?;
         let blocks = all_image_blocks(&xml);
@@ -78,7 +65,8 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        (xml, mips)
+        let total_blob_bytes: u64 = mips.iter().map(|mip| mip.data.len() as u64).sum();
+        (xml, total_blob_bytes)
     };
 
     let blocks = all_image_blocks(&xml);
@@ -137,8 +125,7 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
         raw_format = extract_format(blocks[0]);
     }
 
-    // total_blob_bytes из уже распарсенных мипмапов (SERZ) или XML.
-    let total_blob_bytes: u64 = mips.iter().map(|mip| mip.data.len() as u64).sum();
+    // total_blob_bytes already computed above (SERZ: before clear_blobs, XML: from mips).
     let total_blob_bytes = if total_blob_bytes == 0 {
         blocks.iter().map(|b| extract_blob_size(b)).sum()
     } else {
@@ -154,7 +141,8 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
         if fmt != DdsCompression::Unknown && total_blob_bytes > sum {
             let mut w = (width / 2).max(1);
             let mut h = (height / 2).max(1);
-            while sum < total_blob_bytes {
+            // Не заходим в цикл если уже на 1×1 — избегаем лишнего уровня для битой 1×1 текстуры.
+            while sum < total_blob_bytes && !(w == 1 && h == 1) {
                 let sz = mip_level_bytes(w, h, fmt).unwrap_or(0) as u64;
                 if sz == 0 || sum + sz > total_blob_bytes {
                     break;
@@ -238,17 +226,76 @@ pub fn inspect_tgpcdx_file(path: &Path) -> Result<TextureInfo, String> {
     inspect_tgpcdx_with_path(&data, Some(path))
 }
 
+/// Валидация и нормализация внутреннего имени текстуры.
+/// Возвращает нормализованное имя или ошибку.
+pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Внутреннее имя текстуры не может быть пустым".into());
+    }
+
+    // Запрещаем расширения на конце.
+    let lower = trimmed.to_lowercase();
+    if lower.ends_with(".tgpcdx")
+        || lower.ends_with(".dds")
+        || lower.ends_with(".ace")
+        || lower.ends_with(".tgpc")
+    {
+        return Err(format!(
+            "Внутреннее имя не должно содержать расширение файла (.tgpcdx, .dds, .ace): {}",
+            trimmed
+        ));
+    }
+
+    // Нормализация: прямые слэши -> обратные.
+    let normalized = trimmed.replace('/', "\\");
+
+    // Проверка на не-ASCII символы (TS Classic не поддерживает Unicode в SERZ).
+    if !normalized.is_ascii() {
+        return Err("Внутреннее имя должно содержать только ASCII символы (без кириллицы)".into());
+    }
+
+    // Проверка на спецсимволы, которые могут сломать парсинг.
+    if normalized.chars().any(|c| c.is_control() || c == '"' || c == '<' || c == '>') {
+        return Err("Внутреннее имя содержит недопустимые символы".into());
+    }
+
+    Ok(normalized)
+}
+
+/// Вычисляет путь относительно папки Assets для файла.
+/// Возвращает путь от Assets без расширения, с обратными слэшами.
+pub fn compute_internal_name_from_path(tgpcdx_path: &Path, assets_root: Option<&Path>) -> Option<String> {
+    let assets_root = assets_root?;
+    let path = tgpcdx_path.canonicalize().ok()?;
+    let assets_root = assets_root.canonicalize().ok()?;
+
+    let rel = path.strip_prefix(&assets_root).ok()?;
+    // Убираем расширение (любой регистр) через PathBuf, затем в строку.
+    let rel_no_ext = rel.with_extension("");
+    let mut rel_str = rel_no_ext.to_string_lossy().replace('/', "\\");
+
+    // Убираем ведущий слэш если есть
+    if rel_str.starts_with('\\') {
+        rel_str = rel_str[1..].to_string();
+    }
+
+    if rel_str.is_empty() {
+        None
+    } else {
+        Some(rel_str)
+    }
+}
+
 pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result<(), String> {
     append_tgpcdx_log(&format!(
         "update_tgpcdx_internal_name: path={}, new_name={}",
         tgpcdx_path.display(),
         new_name
     ));
-    let trimmed = new_name.trim();
-    if trimmed.is_empty() {
-        return Err("Внутреннее имя текстуры не может быть пустым".into());
-    }
-    let normalized = trimmed.replace('/', "\\");
+
+    // Валидация и нормализация имени.
+    let normalized = validate_and_normalize_internal_name(new_name)?;
 
     let meta = std::fs::metadata(tgpcdx_path).map_err(|e| e.to_string())?;
     if meta.permissions().readonly() {
@@ -267,10 +314,8 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
     let preamble = reader.preamble.clone();
 
-    let updated = update_internal_name_in_node(&mut root, &normalized);
-    if !updated {
-        return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
-    }
+    // Обновляем имена с учётом групп текстур.
+    update_tgpcdx_internal_names(&mut root, &normalized)?;
 
     let out_bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())
         .map_err(|e| format!("serz encode: {e}"))?;
@@ -300,8 +345,49 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     Ok(())
 }
 
-pub fn update_internal_name_in_node(node: &mut SerzNode, new_name: &str) -> bool {
-    // Возвращает true, если имя было обновлено (только у первой найденной текстуры).
+/// Обновляет имена cHcTexture/Name с учётом групп текстур.
+/// Для одиночных текстур (texture_count == 1) — просто ставит новое имя.
+/// Для групп — меняет общий префикс, сохраняя уникальные суффиксы каждого узла.
+pub fn update_tgpcdx_internal_names(root: &mut SerzNode, new_name: &str) -> Result<(), String> {
+    // Первый проход: собираем текущие имена всех cHcTexture.
+    let mut current_names = Vec::new();
+    collect_c_hc_texture_names(root, &mut current_names);
+
+    if current_names.is_empty() {
+        return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
+    }
+
+    if current_names.len() == 1 {
+        // Одиночная текстура — просто обновляем Name.
+        update_first_c_hc_texture_name(root, new_name);
+        return Ok(());
+    }
+
+    // Группа текстур: определяем общий префикс.
+    let common_prefix = find_common_prefix(&current_names);
+
+    // Второй проход: обновляем каждый Name, заменяя префикс на новый, сохраняя суффикс.
+    let new_prefix = new_name.trim_end_matches('\\');
+    update_c_hc_texture_names_with_prefix(root, &current_names, &common_prefix, new_prefix)?;
+
+    Ok(())
+}
+
+fn collect_c_hc_texture_names(node: &SerzNode, out: &mut Vec<String>) {
+    if let SerzNode::Element { name, .. } = node
+        && name == "cHcTexture"
+        && let Some(prop) = find_name_property(node)
+    {
+        out.push(prop.clone());
+    }
+    if let SerzNode::Element { children, .. } = node {
+        for child in children {
+            collect_c_hc_texture_names(child, out);
+        }
+    }
+}
+
+fn update_first_c_hc_texture_name(node: &mut SerzNode, new_name: &str) {
     if let SerzNode::Element { name, children, .. } = node {
         if name == "cHcTexture" {
             for child in children.iter_mut() {
@@ -315,17 +401,114 @@ pub fn update_internal_name_in_node(node: &mut SerzNode, new_name: &str) -> bool
                     && type_name == "cDeltaString"
                 {
                     *value = new_name.to_string();
-                    return true;
+                    return;
                 }
             }
         }
         for child in children.iter_mut() {
-            if update_internal_name_in_node(child, new_name) {
-                return true;
+            update_first_c_hc_texture_name(child, new_name);
+        }
+    }
+}
+
+fn update_c_hc_texture_names_with_prefix(
+    node: &mut SerzNode,
+    current_names: &[String],
+    common_prefix: &str,
+    new_prefix: &str,
+) -> Result<(), String> {
+    if let SerzNode::Element { name, children, .. } = node {
+        if name == "cHcTexture" {
+            // Ищем Name в children.
+            for child in children.iter_mut() {
+                if let SerzNode::Property {
+                    name: prop_name,
+                    type_name,
+                    value,
+                    ..
+                } = child
+                    && prop_name == "Name"
+                    && type_name == "cDeltaString"
+{
+                        // Ищем индекс этого имени в current_names.
+                        if let Some(idx) = current_names.iter().position(|n| n == value) {
+                            let old_name = &current_names[idx];
+                            let suffix = if old_name.len() > common_prefix.len() {
+                                &old_name[common_prefix.len()..]
+                            } else {
+                                ""
+                            };
+                            // Склеиваем через \ (если оба непустые), чтобы не потерять разделитель.
+                            *value = if new_prefix.is_empty() {
+                                suffix.to_string()
+                            } else if suffix.is_empty() {
+                                new_prefix.to_string()
+                            } else {
+                                format!("{}\\{}", new_prefix, suffix.trim_start_matches('\\'))
+                            };
+                        }
+                        break;
+                    }
+            }
+        }
+        for child in children.iter_mut() {
+            update_c_hc_texture_names_with_prefix(child, current_names, common_prefix, new_prefix)?;
+        }
+    }
+    Ok(())
+}
+
+fn find_name_property(node: &SerzNode) -> Option<&String> {
+    if let SerzNode::Element { children, .. } = node {
+        for child in children {
+            if let SerzNode::Property {
+                name: prop_name,
+                type_name,
+                value,
+                ..
+            } = child
+                && prop_name == "Name"
+                && type_name == "cDeltaString"
+            {
+                return Some(value);
             }
         }
     }
-    false
+    None
+}
+
+fn find_common_prefix(names: &[String]) -> String {
+    if names.is_empty() {
+        return String::new();
+    }
+    if names.len() == 1 {
+        // Для одного имени: префикс — всё до последнего \ включительно.
+        if let Some(pos) = names[0].rfind('\\') {
+            return names[0][..=pos].to_string();
+        }
+        return String::new();
+    }
+
+    // Находим общий префикс среди всех имён.
+    let mut prefix = names[0].clone();
+    for name in &names[1..] {
+        let mut new_len = 0;
+        for (a, b) in prefix.chars().zip(name.chars()) {
+            if a == b {
+                new_len += a.len_utf8();
+            } else {
+                break;
+            }
+        }
+        prefix.truncate(new_len);
+        // Обрезаем до последнего \ включительно.
+        if let Some(pos) = prefix.rfind('\\') {
+            prefix.truncate(pos + 1);
+        } else {
+            prefix.clear();
+        }
+    }
+    prefix
 }
 
 /// Writes output bytes atomically.
@@ -350,6 +533,22 @@ pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     })?;
     let _ = fs::remove_file(&old);
     Ok(())
+}
+
+/// Собирает суммарный размер всех Blob и очищает их (для генерации XML без блобов).
+fn collect_blob_bytes_and_clear(node: &mut crate::serz::SerzNode) -> u64 {
+    let mut total = 0u64;
+    if let crate::serz::SerzNode::Element { children, .. } = node {
+        for child in children {
+            if let crate::serz::SerzNode::Blob { data } = child {
+                total += data.len() as u64;
+                data.clear();
+            } else {
+                total += collect_blob_bytes_and_clear(child);
+            }
+        }
+    }
+    total
 }
 
 /// Appends a log message to the TgPcDx log file.
