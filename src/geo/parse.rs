@@ -129,19 +129,6 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
     let mut vertex_data = Vec::new();
     let (vb_id_to_index, prim_id_to_vbuf) =
         collect_vertex_buffers(&root, &id_map, &mut vertex_data);
-
-    // Build vertex buffer sizes array for range-based fallback
-    let vb_sizes: Vec<usize> = vertex_data
-        .iter()
-        .map(|buffer| {
-            if buffer.stride == 0 {
-                0
-            } else {
-                buffer.bytes.len() / buffer.stride
-            }
-        })
-        .collect();
-
     let context = NodeContext {
         material_bindings: &material_bindings,
         ids: &id_map,
@@ -149,7 +136,6 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
         transform_names: &transform_names,
         vb_id_to_index: &vb_id_to_index,
         prim_id_to_vbuf: &prim_id_to_vbuf,
-        vb_sizes: &vb_sizes,
     };
     let mut raw_batches = Vec::new();
     find_submeshes(
@@ -458,12 +444,8 @@ pub(crate) struct NodeContext<'a> {
     pub ids: &'a HashMap<u32, &'a crate::serz::SerzNode>,
     pub world_transforms: &'a [Mat4],
     pub transform_names: &'a [String],
-    /// SERZ ID (of cHcVertexBufferDx or cHcGeometryVertexDataDx) -> vertex buffer source_index.
     pub vb_id_to_index: &'a HashMap<u32, u32>,
-    /// SERZ ID of cHcPrimitiveSetDescDx -> vertex buffer source_index (from References inside cHcGeometryVertexDataDx).
     pub prim_id_to_vbuf: &'a HashMap<u32, u32>,
-    /// Vertex buffer sizes: source_index -> vertex count (for range-based fallback).
-    pub vb_sizes: &'a [usize],
 }
 
 pub(crate) fn find_submeshes(
@@ -486,7 +468,6 @@ pub(crate) fn find_submeshes(
         transform_names,
         vb_id_to_index,
         prim_id_to_vbuf,
-        vb_sizes,
     } = context;
     if let SerzNode::Reference { name, target_id } = node {
         if name.eq_ignore_ascii_case("material") {

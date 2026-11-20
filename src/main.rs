@@ -6,7 +6,6 @@ slint::include_modules!();
 use rayon::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};

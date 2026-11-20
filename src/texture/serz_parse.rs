@@ -299,23 +299,6 @@ pub fn find_all_elements<'a>(
     out
 }
 
-/// Устанавливает значение property в SERZ элементе.
-pub fn set_property_value(elem: &mut SerzNode, name: &str, value: &str) -> bool {
-    if let SerzNode::Element { children, .. } = elem {
-        for child in children.iter_mut() {
-            if let SerzNode::Property {
-                name: n, value: v, ..
-            } = child
-                && n == name
-            {
-                *v = value.to_string();
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Устанавливает или вставляет property в SERZ элемент.
 pub fn set_or_insert_property(
     elem: &mut SerzNode,
@@ -406,15 +389,4 @@ pub fn serz_bytes_to_metadata_xml(data: &[u8]) -> Result<String, String> {
 
     clear_blobs(&mut root);
     Ok(crate::serz::SerzReader::to_xml(&root, 0, true))
-}
-
-/// Конвертирует SERZ байты в полный XML.
-pub fn serz_bytes_to_xml(data: &[u8]) -> Result<String, String> {
-    if data.starts_with(b"SERZ") {
-        let mut reader = crate::serz::SerzReader::new(data);
-        let node = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
-        Ok(crate::serz::SerzReader::to_xml(&node, 0, true))
-    } else {
-        String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))
-    }
 }

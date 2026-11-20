@@ -859,7 +859,6 @@ mod tests {
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
             prim_id_to_vbuf: &empty_vb_map,
-            vb_sizes: &[],
         };
         find_submeshes(
             &root,
@@ -916,7 +915,6 @@ mod tests {
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
             prim_id_to_vbuf: &empty_vb_map,
-            vb_sizes: &[],
         };
         find_submeshes(
             &root,
@@ -1166,7 +1164,6 @@ mod tests {
             transform_names: &[],
             vb_id_to_index: &empty_vb_map,
             prim_id_to_vbuf: &empty_vb_map,
-            vb_sizes: &[],
         };
         find_submeshes(
             &root,

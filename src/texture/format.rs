@@ -1,7 +1,5 @@
 //! Texture format handling and mip size calculations.
 
-use ddsfile::D3DFormat;
-
 /// Сжатие DDS, которое движок TS Classic ожидает от импортируемого файла.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DdsCompression {
@@ -91,35 +89,6 @@ pub fn dds_compression_of(dds: &ddsfile::Dds) -> DdsCompression {
         return DdsCompression::Rgba8888;
     }
     DdsCompression::Unknown
-}
-
-/// Имя формата .dds, требуемое для импорта в текстуру с данным тегом `Format`.
-pub fn tgpcdx_format_to_dds_name(fmt: &str) -> Option<&'static str> {
-    let u = fmt.to_uppercase();
-    if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
-        return Some("DXT5");
-    }
-    if u.contains("EXPL_ALPHA") || u.contains("DXT3") || u.contains("BC2") {
-        return Some("DXT3");
-    }
-    if u.contains("DXT1") || u.contains("BC1") || u.contains("COMPRESSED") {
-        return Some("DXT1");
-    }
-    if u.contains("L8") {
-        return Some("L8");
-    }
-    if u.contains("A8") {
-        return Some("A8");
-    }
-    if u.contains("8888")
-        || u.contains("ARGB")
-        || u.contains("RGBA")
-        || u.contains("BGRA")
-        || u.contains("UNCOMPRESSED")
-    {
-        return Some("RGBA8888");
-    }
-    None
 }
 
 /// (человекочитаемая метка, эквивалент в DDS) для тега `Format` из .TgPcDx.
@@ -316,8 +285,6 @@ pub struct MipChainInfo {
 /// Итоговый отчёт об успешном импорте DDS -> .TgPcDx.
 #[derive(Debug, Clone)]
 pub struct ImportReport {
-    pub width: u32,
-    pub height: u32,
     pub mip_count: u32,
     pub total_bytes: usize,
     pub dds_format: String,

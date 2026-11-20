@@ -8,7 +8,7 @@ use super::format::{
     format_label_and_dds_name, mip_level_bytes, tgpcdx_dds_compression, DdsCompression,
 };
 use super::serz_parse::{
-    all_image_blocks, collect_serz_image_mips, count_c_hc_textures, extract_blob,
+    all_image_blocks, count_c_hc_textures, extract_blob,
     extract_blob_size, extract_format, extract_tag, extract_unnamed_u16, hex_decode,
     image_mips_from_bytes, parse_bool_tag, serz_bytes_to_metadata_xml,
 };
@@ -23,35 +23,17 @@ pub struct TextureInfo {
     pub mip_count: u32,
     pub min_width: u32,
     pub min_height: u32,
-    pub format: String,
     pub raw_format: String,
     pub format_label: String,
     pub dds_format: Option<&'static str>,
     pub texture_count: u32,
     pub mip_storage_mode: String,
     pub flags_u16: u16,
-    pub flags: u16,
-    pub unnamed_u16: u16,
-    pub image_flags: u16,
-    pub pre_blob_u16: u16,
     pub file_size_bytes: u64,
     pub total_blob_bytes: u64,
     pub header_bytes: u64,
     pub name_matches_filename: bool,
     pub has_bak: bool,
-    pub bak_size_bytes: u64,
-    pub backup_size_bytes: u64,
-}
-
-/// Алиасы для совместимости с ожидаемыми именами структуры.
-#[allow(dead_code)]
-pub type TgpcdxInfo = TextureInfo;
-#[allow(dead_code)]
-pub type TextureInspectReport = TextureInfo;
-
-/// Извлекает метаданные текстуры из файла .TgPcDx (SERZ или простой XML).
-pub fn inspect_tgpcdx(data: &[u8]) -> Result<TextureInfo, String> {
-    inspect_tgpcdx_with_path(data, None)
 }
 
 /// Вариант с указанием пути на диске: позволяет сверить имя и проверить .bak.
@@ -193,25 +175,24 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
     let name = extract_tag(&xml, "Name", "cDeltaString").unwrap_or_default();
 
     let (format_label, dds_format) = format_label_and_dds_name(&raw_format);
-    let format = raw_format.clone();
 
     // Путь / файл.
-    let (file_size_bytes, has_bak, bak_size_bytes, name_matches_filename) = match path {
+    let (file_size_bytes, has_bak, name_matches_filename) = match path {
         Some(p) => {
             let fs_size = std::fs::metadata(p)
                 .map(|m| m.len())
                 .unwrap_or(data.len() as u64);
             let bak_path = PathBuf::from(format!("{}.bak", p.display()));
-            let (has, bak_sz) = match std::fs::metadata(&bak_path) {
-                Ok(m) => (true, m.len()),
-                Err(_) => (false, 0u64),
+            let has = match std::fs::metadata(&bak_path) {
+                Ok(_) => true,
+                Err(_) => false,
             };
             let file_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let internal_tail = name.rsplit(['\\', '/']).next().unwrap_or(&name);
             let matches = !file_stem.is_empty() && file_stem.eq_ignore_ascii_case(internal_tail);
-            (fs_size, has, bak_sz, matches)
+            (fs_size, has, matches)
         }
-        None => (data.len() as u64, false, 0u64, false),
+        None => (data.len() as u64, false, false),
     };
 
     let header_bytes = file_size_bytes.saturating_sub(total_blob_bytes);
@@ -224,48 +205,27 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
         mip_count,
         min_width,
         min_height,
-        format,
         raw_format,
         format_label,
         dds_format,
         texture_count,
         mip_storage_mode,
         flags_u16,
-        flags: flags_u16,
-        unnamed_u16: flags_u16,
-        image_flags: flags_u16,
-        pre_blob_u16: flags_u16,
         file_size_bytes,
         total_blob_bytes,
         header_bytes,
         name_matches_filename,
         has_bak,
-        bak_size_bytes,
-        backup_size_bytes: bak_size_bytes,
     })
 }
 
 /// Inspects a TgPcDx file from disk.
-#[allow(dead_code)]
 pub fn inspect_tgpcdx_file(path: &Path) -> Result<TextureInfo, String> {
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
     inspect_tgpcdx_with_path(&data, Some(path))
 }
 
-/// Alias for inspect_tgpcdx.
-#[allow(dead_code)]
-pub fn inspect_texture(data: &[u8]) -> Result<TextureInfo, String> {
-    inspect_tgpcdx(data)
-}
-
-/// Alias for inspect_tgpcdx_file.
-#[allow(dead_code)]
-pub fn inspect_texture_file(path: &Path) -> Result<TextureInfo, String> {
-    inspect_tgpcdx_file(path)
-}
-
 /// Обновляет внутреннее имя текстуры (узел `Name` / `cDeltaString`) в `.TgPcDx`.
-#[allow(dead_code)]
 pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result<(), String> {
     append_tgpcdx_log(&format!(
         "update_tgpcdx_internal_name: path={}, new_name={}",
@@ -330,34 +290,6 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
         normalized
     ));
     Ok(())
-}
-
-/// Вариант для работы с байтами.
-#[allow(dead_code)]
-pub fn update_tgpcdx_internal_name_bytes(data: &[u8], new_name: &str) -> Result<Vec<u8>, String> {
-    let trimmed = new_name.trim();
-    if trimmed.is_empty() {
-        return Err("Внутреннее имя текстуры не может быть пустым".into());
-    }
-    let normalized = trimmed.replace('/', "\\");
-
-    if !data.starts_with(b"SERZ") {
-        return Err("TgPcDx save requires a binary SERZ file".into());
-    }
-    let mut reader = crate::serz::SerzReader::new(data);
-    let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
-    let preamble = reader.preamble.clone();
-
-    if !update_internal_name_in_node(&mut root, &normalized) {
-        return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
-    }
-
-    let out_bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())
-        .map_err(|e| format!("serz encode: {e}"))?;
-    if out_bytes.is_empty() {
-        return Err("Пустой результат сериализации".into());
-    }
-    Ok(out_bytes)
 }
 
 pub fn update_internal_name_in_node(node: &mut SerzNode, new_name: &str) -> bool {

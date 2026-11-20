@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::serz::SerzNode;
 use super::format::{
     dds_compression_of, dds_format_to_tgpcdx, expected_mip_size, tgpcdx_format_to_d3d,
-    validate_dds_mip_chain, DdsCompression, ImportReport, MipChainInfo,
+    validate_dds_mip_chain, ImportReport,
 };
 use super::serz_parse::{
     find_all_elements, find_element_mut, find_texture_dimensions, set_blob_data,
@@ -56,8 +56,6 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     let chain = validate_dds_mip_chain(width, height, compression, declared, all.len(), None)?;
 
     let report = ImportReport {
-        width,
-        height,
         mip_count: chain.levels,
         total_bytes: chain.total_bytes,
         dds_format: compression.as_dds_name().to_string(),
@@ -140,11 +138,6 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     write_output_bytes(output, &bytes).map(|()| report)
 }
 
-/// Simple wrapper for convert_dds_to_tgpcdx_report.
-pub fn convert_dds_to_tgpcdx(input: &Path, output: &Path) -> Result<(), String> {
-    convert_dds_to_tgpcdx_report(input, output).map(|_| ())
-}
-
 /// Exports TgPcDx file to DDS.
 pub fn export_tgpcdx_to_dds(input: &Path, output: &Path) -> Result<(), String> {
     let data = fs::read(input).map_err(|e| e.to_string())?;
@@ -158,6 +151,8 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
         return Err("no image blocks".into());
     }
     let fmt_str = image_mips[0].format.clone();
+    let d3d_fmt = tgpcdx_format_to_d3d(&fmt_str);
+    let compression = super::format::tgpcdx_dds_compression(&fmt_str);
 
     // Собираем мипмапы с размерами.
     let mut mips: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(image_mips.len());
@@ -171,7 +166,47 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
         mips.push((mip.width, mip.height, mip.data));
     }
 
-    let d3d_fmt = tgpcdx_format_to_d3d(&fmt_str);
+    // Если только один cHcImageDx, но блоб больше размера верхнего уровня —
+    // это "Единый упакованный блоб": все мипмапы лежат в одном Blob подряд.
+    // Разбиваем блоб на уровни по формуле размера (как в inspect_tgpcdx_with_path).
+    if mips.len() == 1 {
+        let (w, h, blob) = &mips[0];
+        let top_level_size = super::format::mip_level_bytes(*w, *h, compression);
+        if let Some(top_size) = top_level_size
+            && blob.len() > top_size
+        {
+            // Вычисляем уровни за один проход: собираем (width, height, size) для каждого.
+            let mut level_infos = Vec::new();
+            let mut mw = *w;
+            let mut mh = *h;
+            let mut sum = 0usize;
+            let total = blob.len();
+            while sum < total {
+                if mw == 1 && mh == 1 {
+                    break;
+                }
+                mw = (mw / 2).max(1);
+                mh = (mh / 2).max(1);
+                let sz = super::format::mip_level_bytes(mw, mh, compression)
+                    .ok_or("невозможно вычислить размер уровня мипмапа")?;
+                if sz == 0 || sum + sz > total {
+                    break;
+                }
+                level_infos.push((mw, mh, sz));
+                sum += sz;
+            }
+            if sum == total && level_infos.len() > 1 {
+                let mut split_mips = Vec::with_capacity(level_infos.len());
+                let mut offset = 0usize;
+                for (mw, mh, sz) in level_infos {
+                    let end = offset + sz;
+                    split_mips.push((mw, mh, blob[offset..end].to_vec()));
+                    offset = end;
+                }
+                mips = split_mips;
+            }
+        }
+    }
 
     // Сортируем от самого крупного уровня к самому мелкому (стандарт DirectX).
     mips.sort_by_key(|a| std::cmp::Reverse(a.0 * a.1));
