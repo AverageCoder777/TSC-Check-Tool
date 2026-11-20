@@ -1,9 +1,10 @@
 //! Persistent user settings in a single JSON configuration file.
-
-use super::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::common::domain::AssetReplacementLogEntry;
 
 fn default_language() -> String {
     "ru".to_owned()
@@ -157,7 +158,7 @@ pub(crate) fn ap_index_cache_file() -> PathBuf {
 
 pub(crate) fn append_asset_replacement_log(
     path: &Path,
-    entry: &mut crate::domain::AssetReplacementLogEntry,
+    entry: &mut AssetReplacementLogEntry,
 ) -> Result<(), String> {
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -302,5 +303,5 @@ pub(crate) fn write_serz_process_limit(path: &Path, limit: usize) -> Result<(), 
 }
 
 #[cfg(test)]
-#[path = "tests/settings.rs"]
+#[path = "../tests/settings.rs"]
 mod tests;

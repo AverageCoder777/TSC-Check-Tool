@@ -1,14 +1,17 @@
+use std::time::{Instant, Duration};
+use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use slint::{Model, ComponentHandle, Weak};
+
 use crate::AssetInventoryWindow;
 use crate::common::domain::TileKind;
-use crate::app::app_controller::CheckerApp;
-use crate::assets::build_inventory_rows;
+use crate::assets::inventory_ui::*;
 use crate::common::windows::open_in_explorer;
 use crate::common::windows::open_in_file_explorer;
 use crate::common::external_editor::open_and_sync_with_vscode;
-use crate::app::app_controller::LogLevel;
-use schedule_ui_sync;
+use crate::app::app_controller::{CheckerApp, AssetInventoryWindowState, LogLevel};
+use crate::schedule_ui_sync;
 use crate::assets::{delete_scenery_asset, delete_loft_asset, is_safe_for_global_replacement, classify_route_asset_type};
-use crate::assets::inventory_ui::{has_suspicious_chars, existing_directory_upwards, asset_directory};
 use crate::common::domain::MissingAsset;
 
 pub struct InventoryController {

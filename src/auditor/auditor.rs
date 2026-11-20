@@ -6,9 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-pub use crate::archive::ApArchiveCache;
-pub use crate::fs_utils::normalize_path;
-pub use crate::fs_utils::strip_shader_prefix;
+use crate::common::archive::ApArchiveCache;
+use crate::common::fs_utils::{normalize_path,strip_shader_prefix};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AssetResourceKind {
@@ -940,7 +939,7 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
     for suf in SEASONAL_VARIANTS {
         let seasonal = dir.join(format!("{}{}.TgPcDx", base, suf));
         if loose_path_exists(&seasonal) {
-            let norm = crate::fs_utils::normalize_path(&seasonal);
+            let norm = normalize_path(&seasonal);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -951,7 +950,7 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
         let base_nm = &stem[..stem.len().saturating_sub(3)];
         let nmc = dir.join(format!("{}_nmc.TgPcDx", base_nm));
         if loose_path_exists(&nmc) {
-            let norm = crate::fs_utils::normalize_path(&nmc);
+            let norm = normalize_path(&nmc);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -960,7 +959,7 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
         let base_nmc = &stem[..stem.len().saturating_sub(4)];
         let nm = dir.join(format!("{}_nm.TgPcDx", base_nmc));
         if loose_path_exists(&nm) {
-            let norm = crate::fs_utils::normalize_path(&nm);
+            let norm = normalize_path(&nm);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -988,7 +987,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
     for ext in &["GeoPcDx", "XSec"] {
         let paired = bin_path.with_extension(ext);
         if loose_path_exists(&paired) {
-            let norm = crate::fs_utils::normalize_path(&paired);
+            let norm = normalize_path(&paired);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -1028,7 +1027,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
                 if is_tgpcdx {
                     register_texture_siblings(&candidate, outgoing);
                 }
-                let norm = crate::fs_utils::normalize_path(&candidate);
+                let norm = normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
                     outgoing.push(norm);
                 }
@@ -1041,7 +1040,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
                 if is_tgpcdx {
                     register_texture_siblings(&candidate, outgoing);
                 }
-                let norm = crate::fs_utils::normalize_path(&candidate);
+                let norm = normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
                     outgoing.push(norm);
                 }
@@ -1119,18 +1118,18 @@ pub fn extract_xml_texture_id_refs(
         // Build candidate paths: relative to Assets root, product root, and blueprint directory.
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Some(root) = &assets_root {
-            candidates.push(crate::fs_utils::normalize_path(&root.join(&file_rel)));
+            candidates.push(normalize_path(&root.join(&file_rel)));
         }
-        candidates.push(crate::fs_utils::normalize_path(
+        candidates.push(normalize_path(
             &product_root.join(&file_rel),
         ));
         if !file_rel.to_ascii_lowercase().starts_with("textures\\") {
-            candidates.push(crate::fs_utils::normalize_path(
+            candidates.push(normalize_path(
                 &product_root.join("textures").join(&file_rel),
             ));
         }
         if let Some(p_dir) = parent_dir {
-            candidates.push(crate::fs_utils::normalize_path(&p_dir.join(&file_rel)));
+            candidates.push(normalize_path(&p_dir.join(&file_rel)));
         }
         let mut seen_cands = HashSet::new();
         candidates.retain(|p| seen_cands.insert(p.clone()));
@@ -1154,7 +1153,7 @@ pub fn extract_xml_texture_id_refs(
         if exists {
             if let Some(candidate) = matched_candidate {
                 register_texture_siblings(&candidate, outgoing);
-                let norm = crate::fs_utils::normalize_path(&candidate);
+                let norm = normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
                     outgoing.push(norm);
                 }
@@ -1221,7 +1220,7 @@ pub fn extract_xml_cross_section_refs(
 
         let mut check_and_add = |candidate: PathBuf| {
             if loose_path_exists(&candidate) {
-                let norm = crate::fs_utils::normalize_path(&candidate);
+                let norm = normalize_path(&candidate);
                 if !outgoing.contains(&norm) {
                     register_texture_siblings(&candidate, outgoing);
                     outgoing.push(norm);
@@ -1301,7 +1300,7 @@ pub fn extract_absolute_blueprint_refs(
 
         let bin_candidate = target_dir.join(format!("{}.bin", base_rel));
         if loose_path_exists(&bin_candidate) {
-            let norm = crate::fs_utils::normalize_path(&bin_candidate);
+            let norm = normalize_path(&bin_candidate);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -1309,7 +1308,7 @@ pub fn extract_absolute_blueprint_refs(
 
         let geo_candidate = target_dir.join(format!("{}.GeoPcDx", base_rel));
         if loose_path_exists(&geo_candidate) {
-            let norm = crate::fs_utils::normalize_path(&geo_candidate);
+            let norm = normalize_path(&geo_candidate);
             if !outgoing.contains(&norm) {
                 register_texture_siblings(&geo_candidate, outgoing);
                 outgoing.push(norm);
@@ -1318,7 +1317,7 @@ pub fn extract_absolute_blueprint_refs(
 
         let xsec_candidate = target_dir.join(format!("{}.XSec", base_rel));
         if loose_path_exists(&xsec_candidate) {
-            let norm = crate::fs_utils::normalize_path(&xsec_candidate);
+            let norm = normalize_path(&xsec_candidate);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -1514,7 +1513,7 @@ fn audit_one_file(
             } else {
                 expected.clone()
             };
-            let norm = crate::fs_utils::normalize_path(&resolved);
+            let norm = normalize_path(&resolved);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -1565,7 +1564,7 @@ fn audit_one_file(
             } else {
                 expected.clone()
             };
-            let norm = crate::fs_utils::normalize_path(&resolved);
+            let norm = normalize_path(&resolved);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -1621,7 +1620,7 @@ fn audit_one_file(
             } else {
                 expected.clone()
             };
-            let norm = crate::fs_utils::normalize_path(&resolved);
+            let norm = normalize_path(&resolved);
             if !outgoing.contains(&norm) {
                 outgoing.push(norm);
             }
@@ -1702,7 +1701,7 @@ pub fn audit_folders_with_progress(
                         .to_lowercase();
                     if ext == "lua" || ext == "out" {
                         if let Some(root) = find_scripted_component_root(path) {
-                            scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
+                            scripted_component_roots.insert(normalize_path(&root));
                         }
                     } else if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
                         if file_set.insert(path.to_path_buf()) {
@@ -1782,7 +1781,7 @@ pub fn audit_folders_with_progress(
                     } else if (ext == "lua" || ext == "out")
                         && let Some(root) = find_scripted_component_root(path)
                     {
-                        scripted_component_roots.insert(crate::fs_utils::normalize_path(&root));
+                        scripted_component_roots.insert(normalize_path(&root));
                     }
                 }
             }
@@ -1840,14 +1839,14 @@ pub fn audit_folders_with_progress(
     let mut incoming_map: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
     for r in &results {
         let parent_norm = std::path::PathBuf::from(
-            crate::fs_utils::normalize_path(&r.parent)
+            normalize_path(&r.parent)
                 .to_string_lossy()
                 .to_lowercase(),
         );
         let set = outgoing_map.entry(parent_norm.clone()).or_default();
         for t in &r.outgoing {
             let tn = std::path::PathBuf::from(
-                crate::fs_utils::normalize_path(t)
+                normalize_path(t)
                     .to_string_lossy()
                     .to_lowercase(),
             );
@@ -1869,14 +1868,14 @@ pub fn audit_folders_with_progress(
 
     for outcome in extra_outcomes {
         let parent_norm = std::path::PathBuf::from(
-            crate::fs_utils::normalize_path(&outcome.parent)
+            normalize_path(&outcome.parent)
                 .to_string_lossy()
                 .to_lowercase(),
         );
         let set = outgoing_map.entry(parent_norm.clone()).or_default();
         for t in &outcome.outgoing {
             let tn = std::path::PathBuf::from(
-                crate::fs_utils::normalize_path(t)
+                normalize_path(t)
                     .to_string_lossy()
                     .to_lowercase(),
             );
@@ -1933,7 +1932,7 @@ pub fn audit_folders_with_progress(
             .to_lowercase();
         if ext == "bin" {
             let nf = std::path::PathBuf::from(
-                crate::fs_utils::normalize_path(f)
+                normalize_path(f)
                     .to_string_lossy()
                     .to_lowercase(),
             );
@@ -1956,7 +1955,7 @@ pub fn audit_folders_with_progress(
     // Orphan detection
     for f in files.iter().chain(texture_files.iter()) {
         let nf = std::path::PathBuf::from(
-            crate::fs_utils::normalize_path(f)
+            normalize_path(f)
                 .to_string_lossy()
                 .to_lowercase(),
         );
@@ -2010,7 +2009,7 @@ pub fn audit_folders_with_progress(
         .chain(extra_files.iter())
     {
         files_on_disk.insert(std::path::PathBuf::from(
-            crate::fs_utils::normalize_path(f)
+            normalize_path(f)
                 .to_string_lossy()
                 .to_lowercase(),
         ));
@@ -2020,7 +2019,7 @@ pub fn audit_folders_with_progress(
     let mut dead_files: HashSet<PathBuf> = HashSet::new();
     for b in &deduped {
         let ep = std::path::PathBuf::from(
-            crate::fs_utils::normalize_path(&b.expected_path)
+            normalize_path(&b.expected_path)
                 .to_string_lossy()
                 .to_lowercase(),
         );
@@ -2076,7 +2075,7 @@ fn collect_files(
                     .to_lowercase();
                 if ext == "lua" || ext == "out" {
                     if let Some(root) = find_scripted_component_root(&path) {
-                        scripted_roots.insert(crate::fs_utils::normalize_path(&root));
+                        scripted_roots.insert(normalize_path(&root));
                     }
                 } else if ext == "bin" || ext == "geopcdx" || ext == "xsec" {
                     out.push(path);

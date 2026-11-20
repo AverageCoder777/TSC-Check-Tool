@@ -2,10 +2,12 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::common::fs_utils::{to_assets_relative_display, normalize_path};
+
 const VIS_NETWORK_CDN: &str = "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js";
 const GRAPH_HTML_NAME: &str = "tsc_graph_view.html";
-const DEPENDENCY_GRAPH_TEMPLATE: &str = include_str!("templates/dependency_graph.html");
-const FULL_GRAPH_TEMPLATE: &str = include_str!("templates/full_graph.html");
+const DEPENDENCY_GRAPH_TEMPLATE: &str = include_str!("../templates/dependency_graph.html");
+const FULL_GRAPH_TEMPLATE: &str = include_str!("../templates/full_graph.html");
 const FULL_GRAPH_HTML_NAME: &str = "tsc_full_graph.html";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +87,7 @@ fn build_html(
     /// Register a node (deduplicated by normalized path) and return its id.
     macro_rules! add_node {
         ($path:expr, $kind:expr) => {{
-            let norm = crate::fs_utils::normalize_path($path);
+            let norm = normalize_path($path);
             if let Some(&id) = index_of.get(&norm) {
                 id
             } else {
@@ -99,7 +101,7 @@ fn build_html(
                     Some(prefix) => format!("{prefix}{label}"),
                     None => label,
                 };
-                let title = crate::fs_utils::to_assets_relative_display(&norm);
+                let title = to_assets_relative_display(&norm);
                 let (border_width, border_dash) = match $kind {
                     NodeKind::Center => (Some(3usize), None),
                     NodeKind::Missing => (None, Some([5usize, 2usize])),
@@ -320,7 +322,7 @@ pub fn generate_full_directory_graph(
             Some(prefix) => format!("{prefix}{label}"),
             None => label,
         };
-        let title = crate::fs_utils::to_assets_relative_display(path);
+        let title = to_assets_relative_display(path);
         nodes.push(FullGraphNode {
             id: idx,
             label,
@@ -344,7 +346,7 @@ pub fn generate_full_directory_graph(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.display().to_string());
         let label = format!("[Missing] {label}");
-        let title = crate::fs_utils::to_assets_relative_display(path);
+        let title = to_assets_relative_display(path);
 
         nodes.push(FullGraphNode {
             id: idx,
@@ -405,5 +407,5 @@ pub fn generate_full_directory_graph(
 }
 
 #[cfg(test)]
-#[path = "tests/graph_view.rs"]
+#[path = "../tests/graph_view.rs"]
 mod tests;

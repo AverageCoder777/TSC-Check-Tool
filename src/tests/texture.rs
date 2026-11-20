@@ -1,17 +1,18 @@
 use super::*;
 use std::fs;
 use tempfile;
+use crate::common::serz::*;
 
 #[test]
 fn save_button_preserves_binary_blob_and_serz_markers() {
-    fn collect_blobs(node: &crate::serz::SerzNode, blobs: &mut Vec<Vec<u8>>) {
+    fn collect_blobs(node: &SerzNode, blobs: &mut Vec<Vec<u8>>) {
         match node {
-            crate::serz::SerzNode::Element { children, .. } => {
+            SerzNode::Element { children, .. } => {
                 for child in children {
                     collect_blobs(child, blobs);
                 }
             }
-            crate::serz::SerzNode::Blob { data } => blobs.push(data.clone()),
+            SerzNode::Blob { data } => blobs.push(data.clone()),
             _ => {}
         }
     }
@@ -25,52 +26,52 @@ fn save_button_preserves_binary_blob_and_serz_markers() {
     }
 
     let blob = vec![0x00, 0xFF, 0xAA, 0x80, 0x12, 0xFF, 0xAB, 0x42];
-    let root = crate::serz::SerzNode::Element {
+    let root = SerzNode::Element {
         name: "cHcTextureGroup".into(),
         id: 1,
         version: 1,
-        children: vec![crate::serz::SerzNode::Element {
+        children: vec![SerzNode::Element {
             name: "cHcTexture".into(),
             id: 2,
             version: 1,
             children: vec![
-                crate::serz::SerzNode::Property {
+                SerzNode::Property {
                     name: "Name".into(),
                     type_name: "cDeltaString".into(),
                     value: "Provider\\Product\\Original".into(),
                     alt_encoding: None,
                 },
-                crate::serz::SerzNode::Element {
+                SerzNode::Element {
                     name: "cHcImageDx".into(),
                     id: 3,
                     version: 1,
                     children: vec![
-                        crate::serz::SerzNode::Property {
+                        SerzNode::Property {
                             name: "Format".into(),
                             type_name: "cDeltaString".into(),
                             value: "HC_IMAGE_FORMAT_COMPRESSED".into(),
                             alt_encoding: None,
                         },
-                        crate::serz::SerzNode::Property {
+                        SerzNode::Property {
                             name: "Width".into(),
                             type_name: "sUInt16".into(),
                             value: "4".into(),
                             alt_encoding: None,
                         },
-                        crate::serz::SerzNode::Property {
+                        SerzNode::Property {
                             name: "Height".into(),
                             type_name: "sUInt16".into(),
                             value: "4".into(),
                             alt_encoding: None,
                         },
-                        crate::serz::SerzNode::Blob { data: blob.clone() },
+                        SerzNode::Blob { data: blob.clone() },
                     ],
                 },
             ],
         }],
     };
-    let preamble = crate::serz::SerzPreamble { flag: 0, val: 0 };
-    let original = crate::serz::encode_tgpcdx_to_vec(&root, Some(&preamble)).unwrap();
+    let preamble = SerzPreamble { flag: 0, val: 0 };
+    let original = encode_tgpcdx_to_vec(&root, Some(&preamble)).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("texture.TgPcDx");
     fs::write(&path, &original).unwrap();
@@ -82,7 +83,7 @@ fn save_button_preserves_binary_blob_and_serz_markers() {
     assert_eq!(&saved[..10], b"SERZ\0\0\x01\0\xFF\x43");
     assert_eq!(markers(&saved), markers(&original));
 
-    let mut reader = crate::serz::SerzReader::new(&saved);
+    let mut reader = SerzReader::new(&saved);
     let saved_tree = reader.parse().unwrap();
     let mut saved_blobs = Vec::new();
     collect_blobs(&saved_tree, &mut saved_blobs);

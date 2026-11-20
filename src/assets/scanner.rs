@@ -1,6 +1,9 @@
-use super::*;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::collections::HashSet;
 use walkdir::WalkDir;
+
+use crate::common::domain::RouteFile;
 
 pub(crate) fn is_skipped_route_scan_directory(name: &str, ignore_scenarios: bool) -> bool {
     ignore_scenarios && name.eq_ignore_ascii_case("Scenarios")
@@ -109,7 +112,7 @@ pub(crate) fn collect_route_files(
 pub(crate) fn collect_archive_members(
     route_path: &Path,
     ignore_scenarios: bool,
-) -> Result<Vec<crate::domain::RouteFile>, String> {
+) -> Result<Vec<RouteFile>, String> {
     let mut members = Vec::new();
     let entries = fs::read_dir(route_path)
         .map_err(|error| format!("Не удалось прочитать папку маршрута: {error}"))?;
@@ -126,7 +129,7 @@ pub(crate) fn collect_archive_members(
             .map_err(|error| format!("Не удалось открыть архив {}: {error}", path.display()))?;
         let zip = zip::ZipArchive::new(file)
             .map_err(|error| format!("Не удалось прочитать архив {}: {error}", path.display()))?;
-        let archive_stamp = crate::analysis_cache::FileStamp::of(&path);
+        let archive_stamp = crate::assets::FileStamp::of(&path);
         // Индекс имён записей архива строится один раз в памяти: поиск и
         // дедупликация имён идут через HashSet, а не через линейный обход zip.
         let mut seen_names: HashSet<String> = HashSet::new();
@@ -169,7 +172,7 @@ pub(crate) fn collect_archive_members(
                 continue;
             }
 
-            members.push(crate::domain::RouteFile::Archive {
+            members.push(RouteFile::Archive {
                 archive: path.clone(),
                 name: name.to_owned(),
                 stamp: archive_stamp,

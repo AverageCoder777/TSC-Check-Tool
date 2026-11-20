@@ -1,12 +1,13 @@
 //! External editor (VS Code / system default) integration with two-way sync.
-
-use crate::assets::read_serz_xml;
 use std::fs;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+use crate::assets::read_serz_xml;
+use crate::common::serz::*;
 
 fn is_tracks_bin(path: &Path) -> bool {
     path.file_name()
@@ -23,24 +24,24 @@ fn uses_structured_serz_xml(path: &Path) -> bool {
 
 fn compile_xml_for_target(target_bin: &Path, xml: &str) -> Result<Vec<u8>, String> {
     if is_tracks_bin(target_bin) {
-        crate::serz::compile_tracks_xml_to_bin(xml)
+        compile_tracks_xml_to_bin(xml)
     } else if uses_structured_serz_xml(target_bin) {
-        let bytes = crate::serz::compile_tracks_xml_to_bin(xml)?;
+        let bytes = compile_tracks_xml_to_bin(xml)?;
         if target_bin
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("TgPcDx"))
         {
-            let mut reader = crate::serz::SerzReader::new(&bytes);
+            let mut reader = SerzReader::new(&bytes);
             let root = reader
                 .parse()
                 .map_err(|error| format!("Не удалось проверить сериализованный TgPcDx: {error}"))?;
-            crate::serz::encode_tgpcdx_to_vec(&root, reader.preamble.as_ref())
+            encode_tgpcdx_to_vec(&root, reader.preamble.as_ref())
         } else {
             Ok(bytes)
         }
     } else {
-        let (node, preamble) = crate::serz::SerzNode::from_xml_str(xml)?;
-        crate::serz::encode_to_vec(&node, preamble.as_ref())
+        let (node, preamble) = SerzNode::from_xml_str(xml)?;
+        encode_to_vec(&node, preamble.as_ref())
     }
 }
 
@@ -108,7 +109,7 @@ pub fn open_and_sync_with_vscode(
                         status_callback(Err(err));
                         return;
                     }
-                    let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+                    let mut validation_reader = SerzReader::new(&bytes);
                     if let Err(e) = validation_reader.parse() {
                         let err =
                             format!("Ошибка сериализации: сгенерированный бинарник поврежден: {e}");
@@ -180,7 +181,7 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
             let raw = fs::read(binary_asset_path).map_err(|e| {
                 format!("Не удалось прочитать {}: {e}", binary_asset_path.display())
             })?;
-            crate::serz::tracks_bin_to_xml(&raw)?
+            tracks_bin_to_xml(&raw)?
         } else {
             read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?
         };
@@ -383,7 +384,7 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
                     );
                     return Err("Бинарный файл слишком короткий".to_string());
                 }
-                let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+                let mut validation_reader = SerzReader::new(&bytes);
                 if let Err(e) = validation_reader.parse() {
                     show_native_error(
                         "Ошибка записи",
@@ -424,5 +425,5 @@ pub fn run_headless(target: &Path) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "tests/external_editor.rs"]
+#[path = "../tests/external_editor.rs"]
 mod tests;

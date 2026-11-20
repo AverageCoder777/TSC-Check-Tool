@@ -1,11 +1,24 @@
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use rayon::iter::*;
+use std::path::{Path, PathBuf};
+use tempfile::tempdir;
+use zip::ZipArchive;
+
+use crate::assets::{
+    analysis_cache::*,
+    reference::*,
+    fuzzy::*,
+    replacement::asset_key,
+    resolver::resolve_asset_path,
+    scanner::*,
+    types::classify_route_asset_type,
+    umlaut::scan_umlaut_assets,
+};
 use crate::common::domain::*;
 use crate::common::serz::SerzNode;
-use crate::common::translit::decode_xml_text;
-use crate::assets::reference::*;
-use crate::assets::analysis_cache::*;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use crate::common::serz::SerzReader;
+use crate::common::translit::*;
 
 pub struct FileAnalysis {
     /// Разбор взят из кэша: файл не менялся с прошлой проверки.
@@ -16,10 +29,7 @@ pub struct FileAnalysis {
     error: Option<String>,
 }
 
-pub(crate) fn analyze_route_file(
-    route_file: &RouteFile,
-    temp_dir: &Path,
-) -> FileAnalysis {
+pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> FileAnalysis {
     let is_archive = matches!(route_file, RouteFile::Archive { .. });
     // Запись архива читается через временный файл: конвертеру Serz нужен
     // настоящий файл на диске.
@@ -135,7 +145,7 @@ pub(crate) fn analyze_route_file(
     if is_archive {
         let _ = fs::remove_file(&file_path);
     }
-    let xml_text = decode_xml_bytes(&xml_data);
+    let xml_text = crate::routes::decode_xml_bytes(&xml_data);
 
     let references = extract_asset_references_with_locations(&xml_text);
 
@@ -150,9 +160,7 @@ pub(crate) fn analyze_route_file(
 /// Обходит дерево `SerzNode` напрямую и извлекает ссылки на ассеты,
 /// без промежуточной сериализации в XML. Результат идентичен
 /// `extract_asset_references_with_locations`, но без аллокации большой строки.
-pub(crate) fn extract_asset_references_from_serz(
-    node: &SerzNode,
-) -> Vec<(String, u32, AssetKind)> {
+pub(crate) fn extract_asset_references_from_serz(node: &SerzNode) -> Vec<(String, u32, AssetKind)> {
     let mut raw_refs: Vec<(String, AssetKind)> = Vec::new();
     let mut context: Option<AssetKind> = None;
     walk_serz_for_blueprints(node, &mut raw_refs, &mut context);
@@ -184,20 +192,14 @@ fn walk_serz_for_blueprints(
         if clean == "iBlueprintLibrary-cAbsoluteBlueprintID" {
             if let Some((provider, product, blueprint)) = extract_blueprint_ids(children) {
                 let kind = context.unwrap_or(AssetKind::Other);
-                if let Some(path) =
-                    asset_relative_path(&provider, &product, &blueprint)
-                {
+                if let Some(path) = asset_relative_path(&provider, &product, &blueprint) {
                     refs.push((path, kind));
                 }
             }
         } else {
             // Запасной вариант: «голые» подряд идущие свойства
             // Provider → Product → BlueprintID без обёртки.
-            check_bare_blueprint_children(
-                children,
-                refs,
-                context.unwrap_or(AssetKind::Other),
-            );
+            check_bare_blueprint_children(children, refs, context.unwrap_or(AssetKind::Other));
         }
 
         for child in children {
@@ -238,12 +240,10 @@ fn extract_blueprint_ids(children: &[SerzNode]) -> Option<(String, String, Strin
                             for prop in ibs_children {
                                 if let SerzNode::Property { name, value, .. } = prop {
                                     if provider.is_none() && name == "Provider" {
-                                        provider =
-                                            Some(decode_xml_text(value.trim()));
+                                        provider = Some(decode_xml_text(value.trim()));
                                     }
                                     if product.is_none() && name == "Product" {
-                                        product =
-                                            Some(decode_xml_text(value.trim()));
+                                        product = Some(decode_xml_text(value.trim()));
                                     }
                                 }
                             }
@@ -299,9 +299,7 @@ fn check_bare_blueprint_children(
             let provider = decode_xml_text(value.trim());
             let product = decode_xml_text(v2.trim());
             let blueprint = decode_xml_text(v3.trim());
-            if let Some(path) =
-                asset_relative_path(&provider, &product, &blueprint)
-            {
+            if let Some(path) = asset_relative_path(&provider, &product, &blueprint) {
                 refs.push((path, kind));
             }
             i += 3;
@@ -312,9 +310,7 @@ fn check_bare_blueprint_children(
 }
 
 /// Считает вхождения пар (путь, тип), сохраняя порядок первого появления.
-fn count_asset_uses_from_pairs(
-    refs: Vec<(String, AssetKind)>,
-) -> Vec<(String, u32, AssetKind)> {
+fn count_asset_uses_from_pairs(refs: Vec<(String, AssetKind)>) -> Vec<(String, u32, AssetKind)> {
     struct Entry {
         count: u32,
         kind: AssetKind,
@@ -348,9 +344,7 @@ fn count_asset_uses_from_pairs(
 /// Порядок первого появления сохраняется: по нему собирается список
 /// использований в инвентаре. Вместе с ассетом запоминается, что он из себя
 /// представляет: объект маршрута или файл состава.
-pub fn count_asset_uses(
-    references: Vec<crate::reference::AssetReference>,
-) -> Vec<(String, u32, AssetKind)> {
+pub fn count_asset_uses(references: Vec<AssetReference>) -> Vec<(String, u32, AssetKind)> {
     struct Entry {
         count: u32,
         kind: AssetKind,
@@ -760,7 +754,7 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
     use std::io::Read;
     let properties_path = route_path.join("RouteProperties.xml");
     if let Ok(data) = fs::read(&properties_path) {
-        return Ok(crate::routes::routes::decode_xml_bytes(&data));
+        return Ok(crate::routes::decode_xml_bytes(&data));
     }
     let entries = fs::read_dir(route_path)
         .map_err(|error| format!("Не удалось прочитать {}: {error}", route_path.display()))?;
@@ -803,7 +797,7 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
             if member.read_to_end(&mut bytes).is_err() {
                 continue;
             }
-            return Ok(crate::routes::routes::decode_xml_bytes(&bytes));
+            return Ok(crate::routes::decode_xml_bytes(&bytes));
         }
     }
     Err("RouteProperties.xml не найден".to_owned())
@@ -960,10 +954,7 @@ pub(crate) fn resolve_missing_and_corrupted(
     ap_cache: &ApCache,
     assets_path: &Path,
     structure_issues: &mut Vec<String>,
-) -> (
-    Vec<MissingAsset>,
-    Vec<ReferencedAsset>,
-) {
+) -> (Vec<MissingAsset>, Vec<ReferencedAsset>) {
     let mut asset_inventory = Vec::with_capacity(asset_uses.len());
     let mut missing_assets = Vec::new();
     for (relative_asset, uses) in asset_uses {

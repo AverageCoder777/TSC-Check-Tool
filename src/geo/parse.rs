@@ -5,24 +5,27 @@ use std::path::Path;
 
 use glam::{Mat4, Vec3};
 
-use super::diagnostics::{
+use crate::common::serz::SerzNode;
+use crate::geo::diagnostics::{
     log_batch_diagnostics, log_material_diagnostics, log_vertex_buffer_diagnostics, warn_parse_skip,
 };
-use super::helpers::{
+use crate::geo::helpers::{
     build_id_map, collect_float_values, collect_i32_values, collect_transform_names,
     compute_world_transforms, decode_indices, direct_text, find_direct_number, find_named_values,
-    find_number, find_reference, find_text, find_transform_id, matrix_from_values,
-    parse_float_values, parse_fvf, parse_serz_document, position_format_from_type,
-    resolve_ref_node, resolve_ref_text, vertex_element_size,
+    find_number, find_reference, find_text, find_transform_id, find_vbuf_ref_in_subtree,
+    matrix_from_values, parse_float_values, parse_fvf, parse_serz_document,
+    position_format_from_type, resolve_ref_node, resolve_ref_text, vertex_element_size,
 };
-use super::texture::{classify_shader, is_auxiliary_node, is_hidden_shader_name};
-use super::types::{
+use crate::geo::texture::{
+    classify_shader, is_auxiliary_node, is_hidden_shader_name, lod_from_name, lod_name_is_nonzero,
+    node_is_explicitly_hidden, texture_priority,
+};
+use crate::geo::types::{
     GeoModel, GeoParseDiagnostics, GeoRenderMode, GeoSubmesh, GeoVertex, PrimitiveTopology,
 };
-use super::vertex::{
+use crate::geo::vertex::{
     PositionFormat, fill_missing_normals, read_position, read_vec2, read_vec3,
 };
-use crate::common::serz::SerzNode;
 
 #[derive(Clone, Debug)]
 pub(crate) struct VertexBuffer {
@@ -120,7 +123,7 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
     } else {
         String::from_utf8_lossy(data).into_owned()
     };
-    let textures = crate::auditor::auditor::extract_geo_texture_references(&xml);
+    let textures = crate::auditor::extract_geo_texture_references(&xml);
     let material_bindings = find_material_bindings(&root, &textures, &id_map);
     log_material_diagnostics(path, &material_bindings);
     let transform_names = collect_transform_names(&root);
@@ -504,8 +507,7 @@ pub(crate) fn find_submeshes(
         return;
     }
     let node_label =
-        direct_text(children, &["name", "nodename", "transformname"], ids)
-            .unwrap_or_default();
+        direct_text(children, &["name", "nodename", "transformname"], ids).unwrap_or_default();
     let has_lower_lod_name = lod_name_is_nonzero(name)
         || ["name", "nodename", "transformname"]
             .iter()
@@ -774,8 +776,7 @@ pub(crate) fn find_submeshes(
         } else {
             // Then check for References to known vertex buffer IDs
             next_inherited_vbuf =
-                find_vbuf_ref_in_subtree(children, vb_id_to_index)
-                    .or(next_inherited_vbuf);
+                find_vbuf_ref_in_subtree(children, vb_id_to_index).or(next_inherited_vbuf);
         }
     }
 
@@ -2106,7 +2107,7 @@ pub(crate) fn find_material_bindings(
             let texture_index = texture_references
                 .iter()
                 .filter_map(|reference| {
-                    let reference = crate::auditor::auditor::normalize_texture_reference(reference);
+                    let reference = crate::auditor::normalize_texture_reference(reference);
                     textures
                         .iter()
                         .position(|texture| texture.eq_ignore_ascii_case(&reference))

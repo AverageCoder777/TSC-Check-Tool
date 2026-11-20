@@ -14,30 +14,27 @@ mod texture;
 slint::include_modules!();
 
 use rayon::prelude::*;
-use regex::Regex;
 use std::cell::RefCell;
 use std::fs;
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{ BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use tempfile::tempdir;
-use zip::ZipArchive;
 
-pub(crate) use route_icon_cache::{
-    clear_route_icon_cache, request_route_icon_load, try_get_route_icon,
-};
+use crate::assets::inventory_controller::InventoryController;
+use crate::assets::missing_assets_controller::MissingAssetsController;
+use crate::assets::ap_picker_controller::ApPickerController;
 
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
 static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
 
 thread_local! {
-    static INVENTORY_CONTROLLER: RefCell<Option<assets::InventoryController>> = const { RefCell::new(None) };
-    static MISSING_ASSETS_CONTROLLER: RefCell<Option<assets::MissingAssetsController>> = const { RefCell::new(None) };
-    static AP_PICKER_CONTROLLER: RefCell<Option<assets::ApPickerController>> = const { RefCell::new(None) };
+    static INVENTORY_CONTROLLER: RefCell<Option<InventoryController>> = const { RefCell::new(None) };
+    static MISSING_ASSETS_CONTROLLER: RefCell<Option<MissingAssetsController>> = const { RefCell::new(None) };
+    static AP_PICKER_CONTROLLER: RefCell<Option<ApPickerController>> = const { RefCell::new(None) };
     static INCOMPLETE_FOLDERS_CONTROLLER: RefCell<Option<routes::IncompleteFoldersController>> = const { RefCell::new(None) };
     static ROUTE_PROPERTIES_WARNING_WINDOW: RefCell<Option<RoutePropertiesWarningWindow>> = const { RefCell::new(None) };
 }
@@ -95,7 +92,7 @@ fn sync_ui(ui: &MainWindow) {
         app.receive_background_results();
 
         // === Асинхронная загрузка иконок: дренируем результаты из фонового потока ===
-        let icons_updated = route_icon_cache::drain_loaded_icons();
+        let icons_updated = routes::drain_loaded_icons();
 
         if !app.is_checking()
             && app.result.is_some()
@@ -159,14 +156,14 @@ fn sync_ui(ui: &MainWindow) {
             if app.route_thumbnails_enabled {
                 for route in &app.routes {
                     if let Some(path) = &route.icon_path
-                        && try_get_route_icon(path).is_none()
+                        && routes::try_get_route_icon(path).is_none()
                     {
-                        request_route_icon_load(path);
+                        routes::request_route_icon_load(path);
                     }
                 }
             }
             let query = q.trim().to_lowercase();
-            let filtered_routes: Vec<&domain::Route> = app
+            let filtered_routes: Vec<&common::domain::Route> = app
                 .routes
                 .iter()
                 .filter(|r| query.is_empty() || r.name.to_lowercase().contains(&query))
@@ -185,7 +182,7 @@ fn sync_ui(ui: &MainWindow) {
                     let icon = if app.route_thumbnails_enabled {
                         r.icon_path
                             .as_ref()
-                            .and_then(|p| try_get_route_icon(p))
+                            .and_then(|p| routes::try_get_route_icon(p))
                             .unwrap_or_default()
                     } else {
                         slint::Image::default()
@@ -230,13 +227,13 @@ fn sync_ui(ui: &MainWindow) {
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    crate::app_controller::LogLevel::Error => {
+                    app::app_controller::LogLevel::Error => {
                         slint::Color::from_rgb_u8(239, 68, 68)
                     }
-                    crate::app_controller::LogLevel::Warning => {
+                    app::app_controller::LogLevel::Warning => {
                         slint::Color::from_rgb_u8(245, 158, 11)
                     }
-                    crate::app_controller::LogLevel::Success => {
+                    app::app_controller::LogLevel::Success => {
                         slint::Color::from_rgb_u8(34, 197, 94)
                     }
                     _ => slint::Color::from_rgb_u8(204, 204, 204),
@@ -272,7 +269,7 @@ fn open_texture_viewer(path: &Path) {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
-            common::show_native_error("Ошибка", &e.to_string());
+            common::external_editor::show_native_error("Ошибка", &e.to_string());
             std::process::exit(1);
         }
     };
@@ -314,7 +311,7 @@ fn open_texture_viewer(path: &Path) {
             std::process::exit(0);
         }
         Err(e) => {
-            common::show_native_error("Ошибка", &e);
+            common::external_editor::show_native_error("Ошибка", &e);
             std::process::exit(1);
         }
     }
@@ -364,7 +361,7 @@ fn handle_cli_args() {
                 .unwrap_or(false);
         if is_asset {
             println!("[ExternalEditor] Запуск синхронизации для: {:?}", path);
-            match common::run_headless(&path) {
+            match common::external_editor::run_headless(&path) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
                     eprintln!("{}", e);
@@ -378,7 +375,7 @@ fn handle_cli_args() {
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("geopcdx"))
         {
             if let Err(error) = geo::viewer3d::show_geo_viewer(&path) {
-                common::show_native_error("GeoPcDx Viewer", &error);
+                common::external_editor::show_native_error("GeoPcDx Viewer", &error);
                 std::process::exit(1);
             }
             std::process::exit(0);
@@ -427,14 +424,14 @@ impl Default for AuditorState {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 4 && args[1] == "--serz-diff" {
-        common::run_test(&args[2], &args[3]);
+        common::serz::run_test(&args[2], &args[3]);
         return;
     }
     handle_cli_args();
 
     // Фоновый поток записи полного лога на диск (AppData\TSC Check Tool\app.log).
     let (log_tx, log_rx) = mpsc::channel::<app::LogEntry>();
-    let log_path = app::log_file();
+    let log_path = app::settings::log_file();
     thread::spawn(move || {
         if let Some(parent) = log_path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -466,7 +463,7 @@ fn main() {
 
     let ui = MainWindow::new().unwrap();
     let _ = UI_WEAK.set(ui.as_weak());
-    app::apply_saved_language(&app::load_language());
+    app::settings::apply_saved_language(&app::settings::load_language());
     let ui_handle = ui.as_weak();
     if let Ok(mut app) = app.lock() {
         app.start_route_scan();
@@ -482,14 +479,14 @@ fn main() {
     });
 
     let missing_controller =
-        assets::MissingAssetsController::new(app_for_controllers.clone());
+        MissingAssetsController::new(app_for_controllers.clone());
     missing_controller.bind();
     MISSING_ASSETS_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(missing_controller);
     });
 
     let ap_picker_controller =
-        assets::ApPickerController::new(app_for_controllers.clone());
+        ApPickerController::new(app_for_controllers.clone());
     ap_picker_controller.bind();
     AP_PICKER_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(ap_picker_controller);
@@ -503,7 +500,7 @@ fn main() {
         }
         if let Ok(mut app) = app.lock() {
             let q = app.search_query.trim().to_lowercase();
-            let filtered: Vec<&common::Route> = app
+            let filtered: Vec<&common::domain::Route> = app
                 .routes
                 .iter()
                 .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
@@ -601,7 +598,7 @@ fn main() {
             let Some(path) = path else {
                 return;
             };
-            common::open_in_file_explorer(&path);
+            common::windows::open_in_file_explorer(&path);
             if let Some(ui) = ui_weak_open.upgrade() {
                 log_event(
                     &ui,
@@ -678,9 +675,9 @@ fn main() {
         if let Ok(mut app) = app.lock() {
             app.show_incomplete_warning = false;
             app.ignore_incomplete_warning = true;
-            let mut config = app::load_config();
+            let mut config = crate::app::settings::load_config();
             config.ignore_incomplete_warning = true;
-            let _ = app::save_config(&config);
+            let _ = crate::app::settings::save_config(&config);
             schedule_ui_sync();
         }
     });
@@ -707,11 +704,9 @@ pub(crate) use assets::*;
 #[cfg(test)]
 pub(crate) use common::domain::*;
 #[cfg(test)]
-pub(crate) use assets::reference::*;
-#[cfg(test)]
 pub(crate) use routes::*;
 #[cfg(test)]
-pub(crate) use app::*;
+pub(crate) use app::settings::*;
 #[cfg(test)]
 pub(crate) use common::translit::*;
 

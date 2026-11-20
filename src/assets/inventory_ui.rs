@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::app::app_controller::AssetInventoryWindowState;
 use crate::common::domain::ReferencedAsset;
-use is_safe_for_global_replacement;
 use crate::common::domain::TileKind;
-use crate::assets::has_suspicious_chars;
+use crate::assets::replacement::is_safe_for_global_replacement;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum InventorySortColumn {

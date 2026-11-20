@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::{AuditorState, TextureViewerWindow, UI_WEAK, log_event, MainWindow};
+use crate::{AuditorState, TextureViewerWindow, log_event, MainWindow};
 use super::{decode_tgpcdx_to_rgba, rgba_to_slint_image, inspect_tgpcdx_with_path, inspect_tgpcdx_file, texture_info_text, export_tgpcdx_to_dds, convert_dds_to_tgpcdx_report, update_tgpcdx_internal_name};
-use crate::auditor::auditor_controller::AuditorController;
-use crate::app::app_controller::LogLevel;
+use crate::auditor::AuditorController;
+use crate::app::LogLevel;
 use crate::common::external_editor;
 
 pub struct TextureController {

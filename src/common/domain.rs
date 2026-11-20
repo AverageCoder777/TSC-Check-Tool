@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::assets::FileStamp;
+use crate::common::archive::extract_archive_member;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Route {
     pub(crate) id: String,
@@ -45,8 +48,6 @@ pub(crate) struct CheckResult {
     pub(crate) umlaut_assets: Vec<UmlautAsset>,
     pub(crate) conversion_errors: Vec<String>,
     pub(crate) structure_issues: Vec<String>,
-    /// Провайдеры/продукты, используемые на маршруте, но не объявленные
-    /// в RouteProperties.xml (<RBlueprintSetPreLoad>).
     pub(crate) route_properties_warnings: Vec<String>,
 }
 
@@ -77,18 +78,12 @@ pub(crate) struct AssetUse {
     pub(crate) source_file: RouteFile,
     pub(crate) tile: String,
     pub(crate) tile_kind: TileKind,
-    /// Что за объект: объект маршрута, файл состава или что-то другое.
     pub(crate) kind: AssetKind,
-    /// Сколько раз объект встретился в этом файле/тайле.
     pub(crate) count: u32,
     pub(crate) tile_search: String,
     pub(crate) source_file_search: String,
 }
 
-/// Файл маршрута: обычный файл на диске или запись архива .ap.
-///
-/// Игра читает архив .ap так, будто его нет: записи лежат рядом с файлами
-/// маршрута. Поэтому архив читается прямо из zip, без распаковки целиком.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(crate) enum RouteFile {
     /// Файл лежит на диске.
@@ -97,13 +92,11 @@ pub(crate) enum RouteFile {
     Archive {
         archive: PathBuf,
         name: String,
-        /// Отпечаток архива, вычисленный один раз при сборе файлов.
-        stamp: Option<crate::analysis_cache::FileStamp>,
+        stamp: Option<FileStamp>,
     },
 }
 
 impl RouteFile {
-    /// Имя файла маршрута относительно его папки.
     pub(crate) fn route_name(&self, route_path: &Path) -> Option<String> {
         match self {
             RouteFile::Path(path) => {
@@ -117,12 +110,10 @@ impl RouteFile {
         }
     }
 
-    /// Имя файла без папок: по нему определяется тайл.
     pub(crate) fn file_name(&self) -> String {
         self.file_name_str().to_owned()
     }
 
-    /// Срез имени файла без аллокаций.
     pub(crate) fn file_name_str(&self) -> &str {
         match self {
             RouteFile::Path(path) => path
@@ -136,11 +127,6 @@ impl RouteFile {
         }
     }
 
-    /// Куда класть изменённую версию файла.
-    ///
-    /// Запись архива кладётся рядом с архивом: игра читает сначала архив, а
-    /// потом файлы рядом с ним, поэтому изменённая версия перекроет оригинал, а
-    /// сам архив останется нетронутым.
     pub(crate) fn install_target(&self, route_path: &Path) -> PathBuf {
         match self {
             RouteFile::Path(path) => path.clone(),
@@ -151,8 +137,6 @@ impl RouteFile {
         }
     }
 
-    /// Готовит файл на диске: запись архива распаковывается во временный файл
-    /// потоково через std::io::copy без выделения гигабайтных буферов в RAM.
     pub(crate) fn materialize(&self, temp_dir: &Path) -> Result<PathBuf, String> {
         let (archive, name) = match self {
             RouteFile::Path(path) => return Ok(path.clone()),
@@ -181,12 +165,11 @@ impl RouteFile {
                 format!("Не удалось создать папку {}: {error}", parent.display())
             })?;
         }
-        crate::archive::extract_archive_member(archive, name, &target)?;
+        extract_archive_member(archive, name, &target)?;
 
         Ok(target)
     }
 
-    /// Расширение файла без аллокации строки в куче.
     pub(crate) fn extension(&self) -> Option<&str> {
         match self {
             RouteFile::Path(path) => path.extension()?.to_str(),
@@ -194,7 +177,6 @@ impl RouteFile {
         }
     }
 
-    /// Как файл показывать в интерфейсе.
     pub(crate) fn display(&self) -> String {
         match self {
             RouteFile::Path(path) => path.display().to_string(),
@@ -204,10 +186,9 @@ impl RouteFile {
         }
     }
 
-    /// Признаки файла для кэша разбора.
-    pub(crate) fn stamp(&self) -> Option<crate::analysis_cache::FileStamp> {
+    pub(crate) fn stamp(&self) -> Option<FileStamp> {
         match self {
-            RouteFile::Path(path) => crate::analysis_cache::FileStamp::of(path),
+            RouteFile::Path(path) => FileStamp::of(path),
             RouteFile::Archive { stamp, .. } => *stamp,
         }
     }
@@ -217,18 +198,15 @@ impl RouteFile {
 pub(crate) enum AssetKind {
     Loft,
     Scenery,
-    /// Файл состава: в XML он лежит внутри `iRailVehicleBlueprint`.
     Vehicle,
     Other,
 }
 
 impl AssetKind {
-    /// Файл состава — это поезд, а не объект маршрута.
     pub(crate) fn is_vehicle(self) -> bool {
         self == AssetKind::Vehicle
     }
 
-    /// Код типа для кэша разбора.
     pub(crate) fn to_code(self) -> u8 {
         match self {
             AssetKind::Loft => 0,
@@ -238,7 +216,6 @@ impl AssetKind {
         }
     }
 
-    /// Восстанавливает тип по коду из кэша.
     pub(crate) fn from_code(code: u8) -> Self {
         match code {
             0 => AssetKind::Loft,
@@ -288,11 +265,6 @@ impl RouteFile {
         }
     }
 
-    /// Путевая инфраструктура, удаление которой запрещено:
-    /// только `Tracks.bin` внутри папки `Networks` маршрута и
-    /// папка `Track Tiles` в той же папке `Networks`. Всё остальное
-    /// (в т.ч. `Lofts.bin`, `Roads.bin`, прочие файлы в `Networks`)
-    /// не считается путевой инфраструктурой и может быть удалено.
     pub fn is_protected_pathway(&self) -> bool {
         let name_str = match self {
             RouteFile::Path(path) => path.to_string_lossy(),

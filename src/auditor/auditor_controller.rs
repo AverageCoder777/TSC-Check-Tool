@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::app::app_controller::{CheckerApp, LogLevel};
+use crate::common::{fs_utils::{normalize_path, to_assets_relative_display}, windows::open_in_explorer};
+use crate::common::external_editor::open_and_sync_with_vscode;
+use crate::auditor::graph_view::*;
+use crate::common::archive::ApArchiveCache;
+
 pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
         return Err(
@@ -41,13 +47,13 @@ pub struct AuditorController {
     pub window: FolderAuditorWindow,
     pub state: Arc<Mutex<AuditorState>>,
     pub weak: Weak<FolderAuditorWindow>,
-    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
+    pub app: Arc<Mutex<CheckerApp>>,
     pub audit_generation: Arc<AtomicU64>,
     pub is_busy: Arc<AtomicBool>,
 }
 
 impl AuditorController {
-    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<CheckerApp>>) -> Self {
         let window = FolderAuditorWindow::new().unwrap();
         let weak = window.as_weak();
         let state = Arc::new(Mutex::new(AuditorState::default()));
@@ -173,7 +179,7 @@ impl AuditorController {
                 let thread_handle = handle.clone();
                 let thread_state = state.clone();
                 let is_busy_thread = is_busy.clone();
-                let ap_cache = crate::auditor::ApArchiveCache::new();
+                let ap_cache = ApArchiveCache::new();
                 std::thread::spawn(move || {
                     let progress_handle = thread_handle.clone();
                     let progress_gen = generation.clone();
@@ -384,7 +390,7 @@ impl AuditorController {
                         } else {
                             &i.parent_file
                         };
-                        let np = crate::fs_utils::normalize_path(p);
+                        let np = normalize_path(p);
                         std::path::PathBuf::from(np.to_string_lossy().to_lowercase())
                     });
                     let outgoing = path.as_ref().and_then(|p| s.dependency_graph.outgoing.get(p));
@@ -420,7 +426,7 @@ impl AuditorController {
                         .map(|i| {
                             i.all_parents
                                 .iter()
-                                .map(|p| crate::fs_utils::to_assets_relative_display(p))
+                                .map(|p| to_assets_relative_display(p))
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         })
@@ -457,7 +463,7 @@ impl AuditorController {
                     } else {
                         &item.parent_file
                     };
-                    let np = crate::fs_utils::normalize_path(path);
+                    let np = normalize_path(path);
                     let key = std::path::PathBuf::from(np.to_string_lossy().to_lowercase());
                     let incoming = s
                         .dependency_graph
@@ -489,7 +495,7 @@ impl AuditorController {
                 let outgoing: Vec<PathBuf> = outgoing.into_iter().collect();
                 let thread_handle = handle.clone();
                 std::thread::spawn(move || {
-                    if let Err(e) = crate::graph_view::open_dependency_graph_in_browser(
+                    if let Err(e) = open_dependency_graph_in_browser(
                         &selected_path,
                         &incoming,
                         &outgoing,
@@ -523,7 +529,7 @@ impl AuditorController {
                     if !completed {
                         return;
                     }
-                    if let Err(e) = crate::graph_view::generate_full_directory_graph(
+                    if let Err(e) = generate_full_directory_graph(
                         &full_graph,
                         std::path::Path::new(""),
                     ) {
@@ -555,13 +561,13 @@ impl AuditorController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             format!("Открыта папка цели в Проводнике: {}.", path.display()),
-                            crate::app_controller::LogLevel::Info,
+                            LogLevel::Info,
                         );
                         crate::schedule_ui_sync();
                     }
                     println!("[Auditor] Opening path: {:?}", path);
                     #[cfg(windows)]
-                    crate::windows::open_in_explorer(&path);
+                    open_in_explorer(&path);
                 }
             });
         }
@@ -587,13 +593,13 @@ impl AuditorController {
                                         "Открыта родительская папка цели в Проводнике: {}.",
                                         d.display()
                                     ),
-                                    crate::app_controller::LogLevel::Info,
+                                    LogLevel::Info,
                                 );
                                 crate::schedule_ui_sync();
                             }
                             println!("[Auditor] Opening existing parent folder: {:?}", d);
                             #[cfg(windows)]
-                            crate::windows::open_in_explorer(d);
+                            open_in_explorer(d);
                             return;
                         }
                         dir = d.parent();
@@ -691,7 +697,7 @@ impl AuditorController {
                     };
 
                     if let Err(e) =
-                        crate::external_editor::open_and_sync_with_vscode(&asset_path, callback)
+                        open_and_sync_with_vscode(&asset_path, callback)
                     {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(win) = thread_handle.upgrade() {
@@ -729,7 +735,7 @@ pub(crate) fn map_broken_resources_to_ui(
                 expected_path: if is_dead {
                     "".into()
                 } else {
-                    crate::fs_utils::to_assets_relative_display(&r.expected_path).into()
+                    to_assets_relative_display(&r.expected_path).into()
                 },
                 parent_file: parent_display.into(),
                 sources_count: r.all_parents.len() as i32,

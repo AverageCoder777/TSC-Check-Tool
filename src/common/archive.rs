@@ -9,6 +9,9 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 use zip::ZipArchive;
 
+use crate::app::settings::ap_index_cache_file;
+use crate::common::fs_utils::{strip_shader_prefix, normalize_path};
+
 /// Метаданные одного `.ap`-архива для дискового кэша индекса.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ApArchiveMeta {
@@ -27,11 +30,8 @@ struct ApIndexCacheFile {
 #[derive(Default)]
 pub struct ApArchiveCache {
     pub inner: Mutex<HashMap<PathBuf, HashSet<String>>>,
-    /// Метаданные по каждому архиву (ключ — путь к .ap).
     archive_meta: Mutex<HashMap<PathBuf, ApArchiveMeta>>,
-    /// Признак того, что кэш нужно сохранить на диск.
     dirty: Mutex<bool>,
-    /// Флаг первичной загрузки дискового кэша.
     loaded: Mutex<bool>,
 }
 
@@ -49,7 +49,7 @@ impl ApArchiveCache {
         *loaded = true;
         drop(loaded);
 
-        let path = crate::settings::ap_index_cache_file();
+        let path = ap_index_cache_file();
         if let Ok(contents) = fs::read_to_string(&path)
             && let Ok(cache_file) = serde_json::from_str::<ApIndexCacheFile>(&contents)
         {
@@ -75,7 +75,7 @@ impl ApArchiveCache {
             return;
         }
 
-        let path = crate::settings::ap_index_cache_file();
+        let path = ap_index_cache_file();
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -98,7 +98,7 @@ impl ApArchiveCache {
 
     pub fn ensure_indexed(&self, product_dir: &Path) {
         self.ensure_loaded();
-        let norm_dir = crate::fs_utils::normalize_path(product_dir);
+        let norm_dir = normalize_path(product_dir);
         {
             let Ok(guard) = self.inner.lock() else {
                 return;
@@ -178,20 +178,20 @@ impl ApArchiveCache {
                     }
                     files.insert(name.clone());
                     archive_files.push(name.clone());
-                    files.insert(crate::fs_utils::strip_shader_prefix(&name));
+                    files.insert(strip_shader_prefix(&name));
                     let parts: Vec<&str> =
                         name.split('\\').filter(|part| !part.is_empty()).collect();
                     if parts.len() >= 3 {
                         let p2 = parts[2..].join("\\");
                         let p1 = parts[1..].join("\\");
                         files.insert(p2.clone());
-                        files.insert(crate::fs_utils::strip_shader_prefix(&p2));
+                        files.insert(strip_shader_prefix(&p2));
                         files.insert(p1.clone());
-                        files.insert(crate::fs_utils::strip_shader_prefix(&p1));
+                        files.insert(strip_shader_prefix(&p1));
                     } else if parts.len() == 2 {
                         let p1 = parts[1..].join("\\");
                         files.insert(p1.clone());
-                        files.insert(crate::fs_utils::strip_shader_prefix(&p1));
+                        files.insert(strip_shader_prefix(&p1));
                     }
                 }
 
@@ -225,12 +225,12 @@ impl ApArchiveCache {
         let Ok(guard) = self.inner.lock() else {
             return false;
         };
-        let norm_dir = crate::fs_utils::normalize_path(product_dir);
+        let norm_dir = normalize_path(product_dir);
         let Some(set) = guard.get(&norm_dir) else {
             return false;
         };
         let target = normalize_member(relative);
-        let target_stripped = normalize_member(&crate::fs_utils::strip_shader_prefix(relative));
+        let target_stripped = normalize_member(&strip_shader_prefix(relative));
         set.iter().any(|v| v.eq_ignore_ascii_case(&target))
             || set.iter().any(|v| v.eq_ignore_ascii_case(&target_stripped))
             || set

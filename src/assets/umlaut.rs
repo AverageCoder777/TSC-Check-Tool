@@ -1,6 +1,19 @@
-use super::*;
+use rayon::iter::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::fs;
 use walkdir::WalkDir;
+
+use crate::common::serz::{SerzNode, SerzReader, encode_to_vec};
+use crate::assets::serz::read_serz_xml;
+use crate::assets::{
+    resolver::{resolve_asset_path, resolve_product_reference, unresolved_reference_error},
+    xml_reference::*,
+    reference::extract_asset_references_with_locations,
+    transaction::{FileTransaction, stage_renamed_file, stage_serz_xml, next_backup_path, install_staged_file},
+    scanner::create_temporary_work_directory,
+};
+use crate::common::{domain::*, translit::*};
 
 /// Результат проверки цепочки ассета на сломанные символы.
 pub(crate) struct UmlautChainEvidence {
@@ -58,19 +71,19 @@ pub fn asset_chain_umlaut_evidence(
             continue;
         }
         let xml = read_serz_xml(&canonical).map_err(|e| e.to_string())?;
-        if crate::translit::has_umlauts_in_xml(&xml) {
+        if has_umlauts_in_xml(&xml) {
             evidence.push(format!("Внутри файла: {}", canonical.display()));
         }
         for (reference, _) in referenced_geometry_paths(&xml) {
             let reference_text = reference.to_text();
-            if crate::translit::has_umlauts(&reference_text) {
+            if has_umlauts(&reference_text) {
                 evidence.push(format!(
                     "Ссылка из {}: {reference_text}",
                     canonical.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }
             // Символы, которые игра не грузит, пользователь заменяет сам.
-            unsupported.extend(crate::translit::unsupported_characters(&reference_text));
+            unsupported.extend(unsupported_characters(&reference_text));
             let Some((path, _)) =
                 resolve_product_reference(assets_path, &product_root, &canonical, &reference)
             else {
@@ -96,10 +109,10 @@ pub fn asset_chain_umlaut_evidence(
 pub(crate) fn inspect_umlaut_asset(
     relative_asset: &str,
     assets_path: &Path,
-) -> (Option<crate::domain::UmlautAsset>, Option<String>) {
+) -> (Option<UmlautAsset>, Option<String>) {
     let mut evidence = Vec::new();
-    let mut unsupported = crate::translit::unsupported_characters(relative_asset);
-    let path_has_umlauts = crate::translit::has_umlauts(relative_asset);
+    let mut unsupported = unsupported_characters(relative_asset);
+    let path_has_umlauts = has_umlauts(relative_asset);
     if path_has_umlauts {
         evidence.push(format!("Умляут в пути ассета: {relative_asset}"));
     }
@@ -144,17 +157,17 @@ pub(crate) fn inspect_umlaut_asset(
     }
     // Ассета, которого нет на диске, чинить нечем: для него есть замена.
     let asset = (full_asset_path.is_some() && (!evidence.is_empty() || !unsupported.is_empty()))
-        .then(|| crate::domain::UmlautAsset {
+        .then(|| UmlautAsset {
             path: relative_asset.to_owned(),
         });
     (asset, scan_error)
 }
 
 pub(crate) fn scan_umlaut_assets(
-    inventory: &[crate::domain::ReferencedAsset],
+    inventory: &[ReferencedAsset],
     assets_path: &Path,
     max_concurrent_serz: usize,
-) -> Result<(Vec<crate::domain::UmlautAsset>, Vec<String>), String> {
+) -> Result<(Vec<UmlautAsset>, Vec<String>), String> {
     let worker_count = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(2)
@@ -188,7 +201,7 @@ pub(crate) fn scan_umlaut_assets(
 pub fn transliterated_asset_path(
     assets_path: &Path,
     source: &Path,
-    fixes: &crate::translit::CharacterFixes,
+    fixes: &CharacterFixes,
 ) -> Result<PathBuf, String> {
     let relative = source
         .strip_prefix(assets_path)
@@ -206,7 +219,7 @@ pub fn transliterated_asset_path(
         .as_os_str()
         .to_string_lossy()
         .into_owned();
-    if crate::translit::has_umlauts(&provider) || crate::translit::has_umlauts(&product) {
+    if has_umlauts(&provider) || has_umlauts(&product) {
         return Err(format!(
             "Умляут найден в имени Provider/Product для {}. Автоматическая транслитерация папок Provider/Product остановлена, чтобы не затронуть другие ассеты.",
             source.display()
@@ -214,7 +227,7 @@ pub fn transliterated_asset_path(
     }
     // Вложенные папки переименовываются вместе с файлами: все ссылки на них
     // обновляются каскадом.
-    let translated = crate::translit::transliterate_text(&relative.to_string_lossy(), fixes);
+    let translated = transliterate_text(&relative.to_string_lossy(), fixes);
     Ok(assets_path.join(translated))
 }
 
@@ -237,7 +250,7 @@ pub fn folders_with_umlauts(assets_path: &Path, asset: &Path) -> Result<Vec<Path
         current.push(component);
         // Первые два компонента — Provider и Product, их не переименовываем.
         let name = component.as_os_str().to_string_lossy();
-        if index >= 2 && crate::translit::has_umlauts(&name) {
+        if index >= 2 && has_umlauts(&name) {
             folders.push(current.clone());
         }
     }
@@ -301,9 +314,9 @@ pub(crate) fn repair_umlaut_asset_chain(
     route_path: &Path,
     assets_path: &Path,
     asset_relative_path: &str,
-    uses: &[crate::domain::AssetUse],
-    fixes: &crate::translit::CharacterFixes,
-) -> Result<crate::domain::UmlautRepairReport, String> {
+    uses: &[AssetUse],
+    fixes: &CharacterFixes,
+) -> Result<UmlautRepairReport, String> {
     let assets_root = assets_path
         .canonicalize()
         .map_err(|error| format!("Не удалось проверить папку Assets: {error}"))?;
@@ -363,7 +376,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         .unwrap_or_else(|| product_root.clone());
     let mut queue = vec![canonical_asset.clone()];
     let mut visited = HashSet::new();
-    let mut staged_by_source: HashMap<crate::domain::RouteFile, StagedUmlautFile> = HashMap::new();
+    let mut staged_by_source: HashMap<RouteFile, StagedUmlautFile> = HashMap::new();
     let mut renamed_tg_files: HashMap<PathBuf, PathBuf> = HashMap::new();
     let mut scan_all_geometry = false;
 
@@ -409,7 +422,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                 continue;
             }
             let staged = stage_renamed_file(&canonical, &target)?;
-            staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
+            staged_by_source.insert(RouteFile::Path(canonical), staged);
         }
     }
     while let Some(source) = queue.pop() {
@@ -438,7 +451,7 @@ pub(crate) fn repair_umlaut_asset_chain(
             let Some((dependency, base)) =
                 resolve_product_reference(&assets_root, &product_root, &canonical, &reference)
             else {
-                if crate::translit::has_umlauts(&reference_text) {
+                if has_umlauts(&reference_text) {
                     return Err(unresolved_reference_error(
                         &canonical,
                         &reference,
@@ -476,11 +489,11 @@ pub(crate) fn repair_umlaut_asset_chain(
             if dependency_extension.eq_ignore_ascii_case("GeoPcDx") {
                 queue.push(canonical_dependency.clone());
             } else if dependency_extension.eq_ignore_ascii_case("TgPcDx")
-                && (crate::translit::has_umlauts(&reference_text)
+                && (has_umlauts(&reference_text)
                     || canonical_dependency
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .is_some_and(crate::translit::has_umlauts))
+                        .is_some_and(has_umlauts))
             {
                 // Текстура — это готовый файл: её достаточно переименовать,
                 // внутри умляутов у неё не бывает.
@@ -505,11 +518,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         for (range, value) in edits {
             rewritten.replace_range(range, &value);
         }
-        rewritten = crate::translit::transliterate_xml_umlauts_outside(
-            &rewritten,
-            &protected_references,
-            fixes,
-        );
+        rewritten = transliterate_xml_umlauts_outside(&rewritten, &protected_references, fixes);
         if rewritten != xml || target_file != canonical {
             validate_xml_document(&rewritten).map_err(|error| {
                 format!(
@@ -518,7 +527,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                 )
             })?;
             let staged = stage_serz_xml(&canonical, &target_file, &rewritten)?;
-            staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
+            staged_by_source.insert(RouteFile::Path(canonical), staged);
         }
     }
 
@@ -555,7 +564,7 @@ pub(crate) fn repair_umlaut_asset_chain(
                 let Some((dependency, _)) =
                     resolve_product_reference(&assets_root, &product_root, &canonical, &reference)
                 else {
-                    if crate::translit::has_umlauts(&reference_text) {
+                    if has_umlauts(&reference_text) {
                         return Err(unresolved_reference_error(
                             &canonical,
                             &reference,
@@ -590,19 +599,13 @@ pub(crate) fn repair_umlaut_asset_chain(
                     .unwrap_or("");
                 if extension.eq_ignore_ascii_case("GeoPcDx") {
                     queue.push(dependency.clone());
-                } else if extension.eq_ignore_ascii_case("TgPcDx")
-                    && crate::translit::has_umlauts(&reference_text)
-                {
+                } else if extension.eq_ignore_ascii_case("TgPcDx") && has_umlauts(&reference_text) {
                     let target = transliterated_asset_path(&assets_root, &dependency, fixes)?;
                     renamed_tg_files.insert(dependency, target);
                 }
             }
             let target = transliterated_asset_path(&assets_root, &canonical, fixes)?;
-            let rewritten = crate::translit::transliterate_xml_umlauts_outside(
-                &xml,
-                &protected_references,
-                fixes,
-            );
+            let rewritten = transliterate_xml_umlauts_outside(&xml, &protected_references, fixes);
             if rewritten != xml || target != canonical {
                 validate_xml_document(&rewritten).map_err(|error| {
                     format!(
@@ -611,14 +614,14 @@ pub(crate) fn repair_umlaut_asset_chain(
                     )
                 })?;
                 let staged = stage_serz_xml(&canonical, &target, &rewritten)?;
-                staged_by_source.insert(crate::domain::RouteFile::Path(canonical), staged);
+                staged_by_source.insert(RouteFile::Path(canonical), staged);
             }
         }
     }
 
-    let mut renamed_staged: Vec<(crate::domain::RouteFile, StagedUmlautFile)> = Vec::new();
+    let mut renamed_staged: Vec<(RouteFile, StagedUmlautFile)> = Vec::new();
     for (source, target) in &renamed_tg_files {
-        let key = crate::domain::RouteFile::Path(source.clone());
+        let key = RouteFile::Path(source.clone());
         if staged_by_source.contains_key(&key) {
             continue;
         }
@@ -632,11 +635,11 @@ pub(crate) fn repair_umlaut_asset_chain(
         .with_extension("xml")
         .to_string_lossy()
         .into_owned();
-    let mut route_sources: HashSet<crate::domain::RouteFile> = HashSet::new();
+    let mut route_sources: HashSet<RouteFile> = HashSet::new();
     if new_relative_asset != asset_relative_path {
         for usage in uses {
             let source = usage.source_file.clone();
-            if let crate::domain::RouteFile::Path(path) = &source {
+            if let RouteFile::Path(path) = &source {
                 let canonical = path.canonicalize().map_err(|error| {
                     format!(
                         "Не удалось открыть файл маршрута {}: {error}",
@@ -670,20 +673,20 @@ pub(crate) fn repair_umlaut_asset_chain(
         // Запись из архива лежит только внутри архива: папки с таким именем на
         // диске нет, поэтому временные файлы кладём в папку маршрута.
         let source_parent = match &source {
-            crate::domain::RouteFile::Path(path) => path
+            RouteFile::Path(path) => path
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| route_root.clone()),
-            crate::domain::RouteFile::Archive { .. } => route_root.clone(),
+            RouteFile::Archive { .. } => route_root.clone(),
         };
         let temp = create_temporary_work_directory(&source_parent)?;
         let file_path = source.materialize(temp.path())?;
         let xml_path = temp.path().join("route.xml");
         if is_binary {
             let bytes = std::fs::read(&file_path).map_err(|e| e.to_string())?;
-            let mut reader = crate::serz::SerzReader::new(&bytes);
+            let mut reader = SerzReader::new(&bytes);
             let node = reader.parse().map_err(|e| e.to_string())?;
-            let xml_text = crate::serz::SerzReader::to_xml(&node, 0, true);
+            let xml_text = SerzReader::to_xml(&node, 0, true);
             fs::write(&xml_path, xml_text)
                 .map_err(|error| format!("Не удалось подготовить {}: {error}", source.display()))?;
         } else {
@@ -692,7 +695,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         }
         let mut xml = fs::read_to_string(&xml_path)
             .map_err(|error| format!("Не удалось прочитать {}: {error}", xml_path.display()))?;
-        let references = crate::reference::extract_asset_references_with_locations(&xml);
+        let references = extract_asset_references_with_locations(&xml);
         let mut edits = Vec::new();
         for reference in references
             .into_iter()
@@ -724,16 +727,16 @@ pub(crate) fn repair_umlaut_asset_chain(
             staged.set_extension(source.extension().unwrap());
             let xml = fs::read_to_string(&xml_path).map_err(|e| e.to_string())?;
             let (node, preamble) =
-                crate::serz::SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
+                SerzNode::from_xml_str(&xml).map_err(|e| e.to_string())?;
             let bytes =
-                crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
+                encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
             if bytes.len() < 1024 {
                 return Err(format!(
                     "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена.",
                     bytes.len()
                 ));
             }
-            let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+            let mut validation_reader = SerzReader::new(&bytes);
             if let Err(error) = validation_reader.parse() {
                 return Err(format!(
                     "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
@@ -769,8 +772,8 @@ pub(crate) fn repair_umlaut_asset_chain(
             ));
         }
         let original_path = match &staged.source {
-            crate::domain::RouteFile::Path(path) => Some(path.clone()),
-            crate::domain::RouteFile::Archive { .. } => None,
+            RouteFile::Path(path) => Some(path.clone()),
+            RouteFile::Archive { .. } => None,
         };
         if staged.target.exists() && original_path.as_deref() != Some(staged.target.as_path()) {
             return Err(format!(
@@ -794,8 +797,8 @@ pub(crate) fn repair_umlaut_asset_chain(
         // Файл из архива .ap: оригинал остаётся в архиве, а изменённая копия
         // кладётся рядом и перекроет его, поэтому резервная копия не нужна.
         let original = match &staged.source {
-            crate::domain::RouteFile::Path(path) => Some(path.clone()),
-            crate::domain::RouteFile::Archive { .. } => None,
+            RouteFile::Path(path) => Some(path.clone()),
+            RouteFile::Archive { .. } => None,
         };
         let _backup = match &original {
             Some(original) => {
@@ -830,7 +833,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         let _ = fs::remove_dir(folder);
     }
     transaction.commit();
-    Ok(crate::domain::UmlautRepairReport {
+    Ok(UmlautRepairReport {
         new_asset_path: new_relative_asset,
     })
 }
@@ -841,7 +844,7 @@ pub(crate) fn repair_umlaut_asset_chain(
 /// изменённая копия, которую игра прочитает вместо записи архива.
 pub struct StagedUmlautFile {
     /// Исходный файл: запись архива .ap или файл на диске.
-    pub source: crate::domain::RouteFile,
+    pub source: RouteFile,
     /// Куда класть результат.
     pub target: PathBuf,
     pub staged: PathBuf,

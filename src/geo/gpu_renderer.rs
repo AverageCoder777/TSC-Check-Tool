@@ -37,25 +37,18 @@ pub(crate) struct GpuRenderer {
     alpha_pipeline_cw: wgpu::RenderPipeline,
     alpha_pipeline_ccw: wgpu::RenderPipeline,
     wire_pipeline: wgpu::RenderPipeline,
-    /// Group 0: persistent camera uniform buffer + bind group, updated via `write_buffer`.
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    /// One bind group per texture (group 1), built at load time.
     texture_bind_groups: Vec<wgpu::BindGroup>,
-    /// Group 2: per-batch material uniform (alpha_cutoff), one per submesh.
     material_bind_groups: Vec<wgpu::BindGroup>,
     vertex_buffer: wgpu::Buffer,
     triangle_indices: wgpu::Buffer,
     wire_indices: wgpu::Buffer,
     submeshes: Vec<GeoSubmesh>,
-    /// Safe clamped (start, count) index ranges per submesh for triangle and wireframe draws.
     triangle_ranges: Vec<(u32, u32)>,
     wire_ranges: Vec<(u32, u32)>,
-    /// Centroid of each submesh in RH space, used to sort blended submeshes back-to-front.
     submesh_centers: Vec<Vec3>,
-    /// Per-batch draw flags, kept separate so toggling never touches GPU buffers.
     visible: Vec<bool>,
-    /// Cached render targets and CPU readback buffer, recreated only when the size changes.
     color_texture: Option<wgpu::Texture>,
     color_view: Option<wgpu::TextureView>,
     depth_texture: Option<wgpu::Texture>,
@@ -113,10 +106,6 @@ impl GpuRenderer {
             .map_err(|error| format!("Failed to create GPU device: {error}"))?;
         let max_texture_dimension = device.limits().max_texture_dimension_2d;
         let max_render_dimension = max_texture_dimension.min(4096);
-
-        // Train Simulator (DirectX 9) uses Left-Handed coordinates; wgpu uses Right-Handed.
-        // Flip X on both positions and normals at load time so world_position, normals,
-        // lighting, and screen-space derivatives stay consistent in RH space.
         let packed_vertices = vertices
             .iter()
             .map(|vertex| {
@@ -138,9 +127,6 @@ impl GpuRenderer {
             contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-
-        // Build wireframe indices and bounding centroids per submesh so non-multiple-of-3
-        // offsets or truncated submesh ranges can never read past the index buffer.
         let mut wire_lines = Vec::with_capacity(indices.len() * 2);
         let mut triangle_ranges = Vec::with_capacity(submeshes.len());
         let mut wire_ranges = Vec::with_capacity(submeshes.len());
@@ -277,8 +263,6 @@ impl GpuRenderer {
             anisotropy_clamp: 16,
             ..Default::default()
         });
-
-        // Group 0: persistent camera uniform buffer + bind group.
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("GeoPcDx camera bindings"),
@@ -309,8 +293,6 @@ impl GpuRenderer {
                 resource: camera_buffer.as_entire_binding(),
             }],
         });
-
-        // Group 1: per-texture texture + sampler.
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("GeoPcDx texture bindings"),
@@ -333,7 +315,6 @@ impl GpuRenderer {
                     },
                 ],
             });
-
         let texture_bind_groups = texture_views
             .iter()
             .map(|texture_view| {
@@ -353,8 +334,6 @@ impl GpuRenderer {
                 })
             })
             .collect::<Vec<_>>();
-
-        // Group 2: per-batch material uniform (alpha_cutoff).
         let material_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("GeoPcDx material bindings"),
@@ -623,8 +602,6 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             *slot = visible;
         }
     }
-
-    /// `"lod0"`, `"all"`, `"none"`; unknown presets change nothing.
     pub(crate) fn apply_batch_preset(&mut self, preset: &str) {
         self.visible = self
             .submeshes
@@ -633,7 +610,6 @@ fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
             .collect();
     }
 
-    /// Ensure render targets and readback buffer exist for `size`, recreating only on resize.
     fn ensure_render_targets(&mut self, width: u32, height: u32) {
         if self.last_size == Some((width, height))
             && self.color_view.is_some()
@@ -934,5 +910,5 @@ fn downscale_rgba(
 }
 
 #[cfg(test)]
-#[path = "tests/gpu_renderer.rs"]
+#[path = "../tests/gpu_renderer.rs"]
 mod tests;

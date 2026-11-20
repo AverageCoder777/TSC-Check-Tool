@@ -5,16 +5,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::ScenarioWindow;
+use crate::app::app_controller::LogLevel;
+use crate::common::windows::*;
+use crate::scenarios::scenario::{
+    ScenarioVehicle, analyze_consists_parallel, is_hidden_scenario_type, load_consists,
+    load_scenario_metadata, weather_display_name,
+};
+use crate::scenarios::blueprint::{resolve_blueprint_file_cached_free, vehicle_blueprint_exists};
 
 pub struct ScenarioController {
     pub window: ScenarioWindow,
     pub weak: Weak<ScenarioWindow>,
-    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
+    pub app: Arc<Mutex<crate::app::CheckerApp>>,
     pub scenario_generation: Arc<AtomicU64>,
 }
 
 impl ScenarioController {
-    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<crate::app::CheckerApp>>) -> Self {
         let window = ScenarioWindow::new().unwrap();
         let weak = window.as_weak();
         Self {
@@ -59,9 +66,7 @@ impl ScenarioController {
                         .scenarios
                         .iter()
                         .enumerate()
-                        .filter(|(_, s)| {
-                            !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type)
-                        })
+                        .filter(|(_, s)| !hide || !is_hidden_scenario_type(&s.scenario_type))
                         .map(|(i, _)| i)
                         .collect();
                     let ui_idx = idx as usize;
@@ -71,14 +76,12 @@ impl ScenarioController {
                     if scen_idx >= app.scenarios.len() {
                         return;
                     }
-                    crate::scenario::load_scenario_metadata(&mut app.scenarios[scen_idx]);
+                    load_scenario_metadata(&mut app.scenarios[scen_idx]);
 
                     let scen_items: Vec<crate::ScenarioItem> = app
                         .scenarios
                         .iter()
-                        .filter(|s| {
-                            !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type)
-                        })
+                        .filter(|s| !hide || !is_hidden_scenario_type(&s.scenario_type))
                         .map(|s| crate::ScenarioItem {
                             name: s.name.clone().into(),
                             scenario_type: s.scenario_type.clone().into(),
@@ -88,7 +91,7 @@ impl ScenarioController {
                     let needs_load = app.scenarios[scen_idx].consists.is_none();
                     if needs_load {
                         let scenario_path = app.scenarios[scen_idx].path.clone();
-                        let consists = crate::scenario::load_consists(&scenario_path);
+                        let consists = load_consists(&scenario_path);
                         app.scenarios[scen_idx].consists = Some(consists);
                     }
 
@@ -136,7 +139,7 @@ impl ScenarioController {
                     let mut info = Vec::new();
                     let mut vf = Vec::new();
                     if let Some(consists) = scenario.consists.as_ref() {
-                        let (i, v) = crate::scenario::analyze_consists_parallel(consists, &rw_path);
+                        let (i, v) = analyze_consists_parallel(consists, &rw_path);
                         info = i;
                         vf = v;
                     }
@@ -145,7 +148,7 @@ impl ScenarioController {
                     (None, None)
                 };
 
-                let weather_name = crate::scenario::weather_display_name(
+                let weather_name = weather_display_name(
                     &PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')),
                     std::path::Path::new(&route_path),
                     &scenario.weather,
@@ -351,10 +354,10 @@ impl ScenarioController {
                             "Открыта папка сценария в Проводнике: {}.",
                             scenario.path.display()
                         ),
-                        crate::app_controller::LogLevel::Info,
+                        LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
-                    crate::windows::open_in_file_explorer(&scenario.path);
+                    open_in_file_explorer(&scenario.path);
                 }
             });
         }
@@ -371,9 +374,7 @@ impl ScenarioController {
                 let scen: Vec<crate::ScenarioItem> = app
                     .scenarios
                     .iter()
-                    .filter(|s| {
-                        !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type)
-                    })
+                    .filter(|s| !hide || !is_hidden_scenario_type(&s.scenario_type))
                     .map(|s| crate::ScenarioItem {
                         name: s.name.clone().into(),
                         scenario_type: s.scenario_type.clone().into(),
@@ -383,9 +384,7 @@ impl ScenarioController {
                     app.scenarios
                         .iter()
                         .enumerate()
-                        .filter(|(_, s)| {
-                            !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type)
-                        })
+                        .filter(|(_, s)| !hide || !is_hidden_scenario_type(&s.scenario_type))
                         .position(|(i, _)| i == si)
                 });
                 if let Some(ui) = ui_handle.upgrade() {
@@ -401,7 +400,7 @@ impl ScenarioController {
                 if path.is_empty() {
                     app.log_event(
                         "Locoswap не настроен: укажите путь к Locoswap в настройках.".to_owned(),
-                        crate::app_controller::LogLevel::Warning,
+                        LogLevel::Warning,
                     );
                     crate::schedule_ui_sync();
                     return;
@@ -409,7 +408,7 @@ impl ScenarioController {
                 if !Path::new(&path).is_file() {
                     app.log_event(
                         format!("Locoswap не найден по пути: {}.", path),
-                        crate::app_controller::LogLevel::Error,
+                        LogLevel::Error,
                     );
                     crate::schedule_ui_sync();
                     return;
@@ -425,7 +424,7 @@ impl ScenarioController {
                     let scenario_name = scenario.name.clone();
                     app.log_event(
                         format!("Запущен Locoswap для сценария: {}.", scenario_name),
-                        crate::app_controller::LogLevel::Info,
+                        LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                 }
@@ -503,7 +502,7 @@ impl ScenarioController {
                     )
                 };
                 let (provider, product, blueprint, number) = vehicle;
-                let vehicle = crate::scenario::ScenarioVehicle {
+                let vehicle = ScenarioVehicle {
                     provider: provider.clone(),
                     product: product.clone(),
                     blueprint: blueprint.clone(),
@@ -511,14 +510,14 @@ impl ScenarioController {
                     number: number.clone(),
                 };
 
-                let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
+                let resolved = resolve_blueprint_file_cached_free(
                     &rw_path,
                     &route_path,
                     &blueprint,
                     &provider,
                     &product,
                 );
-                let exists = crate::blueprint::vehicle_blueprint_exists(
+                let exists = vehicle_blueprint_exists(
                     &rw_path, &provider, &product, &blueprint,
                 );
                 let path_text = if exists {
@@ -592,7 +591,7 @@ impl ScenarioController {
                     .and_then(|i| app.routes.get(i))
                     .map(|r| r.path.clone())
                     .unwrap_or_default();
-                let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
+                let resolved = resolve_blueprint_file_cached_free(
                     &PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')),
                     Path::new(&route_path),
                     &blueprint,
@@ -602,12 +601,12 @@ impl ScenarioController {
                 if let Some(path) = resolved {
                     app.log_event(
                         format!("Открыт путь объекта в Проводнике: {}.", path.display()),
-                        crate::app_controller::LogLevel::Info,
+                        LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                     if path.is_file() {
                         #[cfg(windows)]
-                        crate::windows::open_in_explorer(&path);
+                        open_in_explorer(&path);
                     } else {
                         let mut cur = path.as_path();
                         while !cur.exists() {
@@ -617,7 +616,7 @@ impl ScenarioController {
                             }
                         }
                         #[cfg(windows)]
-                        crate::windows::open_in_file_explorer(cur);
+                        open_in_file_explorer(cur);
                     }
                 } else {
                     app.log_event(
@@ -625,7 +624,7 @@ impl ScenarioController {
                             "Не удалось найти блюпринт объекта в маршруте: {}/{}.",
                             provider, product
                         ),
-                        crate::app_controller::LogLevel::Error,
+                        LogLevel::Error,
                     );
                     crate::schedule_ui_sync();
                 }
@@ -661,7 +660,7 @@ impl ScenarioController {
                     .and_then(|i| app.routes.get(i))
                     .map(|r| r.path.clone())
                     .unwrap_or_default();
-                let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
+                let resolved = resolve_blueprint_file_cached_free(
                     &PathBuf::from(rw_path.trim().trim_matches('"').trim_matches('\'')),
                     Path::new(&route_path),
                     &vehicle.blueprint,
@@ -674,12 +673,12 @@ impl ScenarioController {
                             "Открыт путь транспортного средства в Проводнике: {}.",
                             path.display()
                         ),
-                        crate::app_controller::LogLevel::Info,
+                        LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                     if path.is_file() {
                         #[cfg(windows)]
-                        crate::windows::open_in_explorer(&path);
+                        open_in_explorer(&path);
                     } else {
                         let mut cur = path.as_path();
                         while !cur.exists() {
@@ -689,7 +688,7 @@ impl ScenarioController {
                             }
                         }
                         #[cfg(windows)]
-                        crate::windows::open_in_file_explorer(cur);
+                        open_in_file_explorer(cur);
                     }
                 } else {
                     let provider = vehicle.provider.clone();
@@ -699,7 +698,7 @@ impl ScenarioController {
                             "Не удалось найти блюпринт транспортного средства: {}/{}.",
                             provider, product
                         ),
-                        crate::app_controller::LogLevel::Error,
+                        LogLevel::Error,
                     );
                     crate::schedule_ui_sync();
                 }
@@ -711,11 +710,11 @@ impl ScenarioController {
 pub fn load_vehicle_preview_image(
     rw_path: &Path,
     route_path: &Path,
-    vehicle: &crate::scenario::ScenarioVehicle,
+    vehicle: &ScenarioVehicle,
     resolved: Option<&PathBuf>,
 ) -> slint::Image {
     let resolved = resolved.cloned().or_else(|| {
-        crate::blueprint::resolve_blueprint_file_cached_free(
+        resolve_blueprint_file_cached_free(
             rw_path,
             route_path,
             &vehicle.blueprint,

@@ -1,4 +1,9 @@
-use super::*;
+use std::path::{Path, PathBuf};
+use std::fs;
+
+use crate::common::serz::{SerzNode, encode_to_vec};
+use crate::common::domain::RouteFile;
+use crate::assets::{scanner::create_temporary_work_directory,umlaut::StagedUmlautFile};
 
 #[derive(Default)]
 pub(crate) struct FileTransaction {
@@ -97,8 +102,8 @@ pub fn stage_serz_xml(source: &Path, target: &Path, xml: &str) -> Result<StagedU
     fs::write(&xml_path, xml)
         .map_err(|error| format!("Не удалось записать временный XML: {error}"))?;
     // Нативная сериализация XML -> BIN в памяти.
-    let (node, preamble) = crate::serz::SerzNode::from_xml_str(xml)?;
-    let bytes = crate::serz::encode_to_vec(&node, preamble.as_ref()).map_err(|error| {
+    let (node, preamble) = SerzNode::from_xml_str(xml)?;
+    let bytes = encode_to_vec(&node, preamble.as_ref()).map_err(|error| {
         format!(
             "Не удалось подготовить изменённый файл {}: {error}",
             source.display()
@@ -112,7 +117,7 @@ pub fn stage_serz_xml(source: &Path, target: &Path, xml: &str) -> Result<StagedU
         )
     })?;
     Ok(StagedUmlautFile {
-        source: crate::domain::RouteFile::Path(source.to_path_buf()),
+        source: RouteFile::Path(source.to_path_buf()),
         target: target.to_path_buf(),
         staged,
         _temp: temp,
@@ -136,7 +141,7 @@ pub fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFi
         )
     })?;
     Ok(StagedUmlautFile {
-        source: crate::domain::RouteFile::Path(source.to_path_buf()),
+        source: RouteFile::Path(source.to_path_buf()),
         target: target.to_path_buf(),
         staged,
         _temp: temp,
@@ -145,9 +150,9 @@ pub fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFi
 
 pub fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
     match &staged.source {
-        crate::domain::RouteFile::Path(_) => fs::rename(&staged.staged, &staged.target)
+        RouteFile::Path(_) => fs::rename(&staged.staged, &staged.target)
             .map_err(|error| format!("Не удалось установить {}: {error}", staged.target.display())),
-        crate::domain::RouteFile::Archive { .. } => {
+        RouteFile::Archive { .. } => {
             if let Some(parent) = staged.target.parent() {
                 fs::create_dir_all(parent).map_err(|error| {
                     format!("Не удалось создать папку {}: {error}", parent.display())
@@ -164,13 +169,13 @@ pub fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
 
 pub fn install_route_file(
     route_path: &Path,
-    source_file: &crate::domain::RouteFile,
+    source_file: &RouteFile,
     converted_path: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let target = source_file.install_target(route_path);
     let original = match source_file {
-        crate::domain::RouteFile::Path(path) => Some(path.clone()),
-        crate::domain::RouteFile::Archive { .. } => None,
+        RouteFile::Path(path) => Some(path.clone()),
+        RouteFile::Archive { .. } => None,
     };
     if let Some(original) = original
         && target == original

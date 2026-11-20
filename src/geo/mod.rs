@@ -1,23 +1,18 @@
-//! Geometry parsing for GeoPcDx files.
-
-pub mod diagnostics;
-pub mod gpu_renderer;
-pub mod helpers;
-pub mod parse;
-pub mod texture;
-pub mod types;
-pub mod vertex;
-pub mod viewer3d;
-
 #[cfg(test)]
-pub mod assembly;
+mod assembly;
+mod diagnostics;
+mod gpu_renderer;
+mod helpers;
+mod parse;
+mod texture;
+mod types;
+mod vertex;
+
+pub(crate) mod viewer3d;
+
+pub(crate) use parse::*;
+pub(crate) use types::*;
+pub(crate) use viewer3d::show_geo_viewer;
 
 #[cfg(test)]
 mod tests;
-
-pub use types::{GeoModel, GeoRenderMode, GeoSubmesh, GeoVertex};
-
-#[cfg(test)]
-pub use types::{GeoAssembly, GeoAssemblyPart};
-
-pub use viewer3d::{show_geo_viewer, GeoViewerWindow};

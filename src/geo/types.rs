@@ -116,7 +116,6 @@ impl GeoModel {
         Ok(model)
     }
 
-    #[allow(dead_code)]
     pub fn parse(path: &Path, data: &[u8]) -> Result<Self, String> {
         parse_model(path, data)
     }

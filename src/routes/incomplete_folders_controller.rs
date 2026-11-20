@@ -4,21 +4,23 @@ use std::sync::{Arc, Mutex};
 use slint::ComponentHandle;
 
 use crate::{IncompleteFolderItem, IncompleteFoldersWindow};
+use crate::app::app_controller::{CheckerApp, LogLevel};
+use crate::common::domain::IncompleteRouteFolder;
 
 pub(crate) struct IncompleteFoldersController {
-    app: Arc<Mutex<crate::app_controller::CheckerApp>>,
+    app: Arc<Mutex<CheckerApp>>,
     window: IncompleteFoldersWindow,
 }
 
 impl IncompleteFoldersController {
-    pub(crate) fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
+    pub(crate) fn new(app: Arc<Mutex<CheckerApp>>) -> Self {
         Self {
             app,
             window: IncompleteFoldersWindow::new().unwrap(),
         }
     }
 
-    pub(crate) fn show(&self, app: &crate::app_controller::CheckerApp) {
+    pub(crate) fn show(&self, app: &CheckerApp) {
         update_window(&self.window, &app.incomplete_folders);
         let _ = self.window.show();
     }
@@ -51,7 +53,7 @@ impl IncompleteFoldersController {
                             app.incomplete_folders.remove(idx);
                             app.log_event(
                                 format!("Удалена неполная папка: {}.", path.display()),
-                                crate::app_controller::LogLevel::Info,
+                                LogLevel::Info,
                             );
                             if let Some(w) = weak_del.upgrade() {
                                 update_window(&w, &app.incomplete_folders);
@@ -61,14 +63,14 @@ impl IncompleteFoldersController {
                         Err(error) => {
                             app.log_event(
                                 format!("Не удалось удалить {}: {error}.", path.display()),
-                                crate::app_controller::LogLevel::Error,
+                                LogLevel::Error,
                             );
                         }
                     },
                     Err(e) => {
                         app.log_event(
                             format!("Ошибка безопасности при удалении {}: {e}.", path.display()),
-                            crate::app_controller::LogLevel::Error,
+                            LogLevel::Error,
                         );
                     }
                 }
@@ -101,7 +103,7 @@ impl IncompleteFoldersController {
                                     "Ошибка безопасности при удалении {}: {e}.",
                                     folder.path.display()
                                 ),
-                                crate::app_controller::LogLevel::Error,
+                                LogLevel::Error,
                             );
                             remaining.push(folder);
                         }
@@ -111,7 +113,7 @@ impl IncompleteFoldersController {
                 app.incomplete_folders = remaining;
                 app.log_event(
                     format!("Удалены все неполные папки ({removed} шт.)."),
-                    crate::app_controller::LogLevel::Info,
+                    LogLevel::Info,
                 );
                 if let Some(w) = weak_all.upgrade() {
                     update_window(&w, &app.incomplete_folders);
@@ -131,7 +133,7 @@ impl IncompleteFoldersController {
 
 fn update_window(
     window: &IncompleteFoldersWindow,
-    folders: &[crate::domain::IncompleteRouteFolder],
+    folders: &[IncompleteRouteFolder],
 ) {
     let items = build_incomplete_folder_items(folders);
     let total_bytes: u64 = folders.iter().map(|f| f.total_size_bytes).sum();
@@ -151,7 +153,7 @@ fn update_window(
 /// внутри `<game_path>/Content/Routes` и не быть самой этой папкой.
 fn validate_delete_path(
     path: &Path,
-    app: &crate::app_controller::CheckerApp,
+    app: &CheckerApp,
 ) -> Result<(), String> {
     if path.as_os_str().is_empty() {
         return Err("Путь к удалению пустой.".to_owned());
@@ -196,7 +198,7 @@ fn folder_count_word(count: usize) -> &'static str {
 }
 
 fn build_incomplete_folder_items(
-    folders: &[crate::domain::IncompleteRouteFolder],
+    folders: &[IncompleteRouteFolder],
 ) -> Vec<IncompleteFolderItem> {
     folders
         .iter()

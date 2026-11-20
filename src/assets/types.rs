@@ -1,7 +1,9 @@
+use crate::common::domain::AssetUse;
+
 #[derive(Clone)]
 pub struct RouteAssetItem {
     pub path: String,
-    pub uses: Vec<crate::domain::AssetUse>,
+    pub uses: Vec<AssetUse>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +33,7 @@ impl RouteAssetType {
     }
 }
 
-pub fn classify_route_asset_type(asset: &str, uses: &[crate::domain::AssetUse]) -> RouteAssetType {
+pub fn classify_route_asset_type(asset: &str, uses: &[AssetUse]) -> RouteAssetType {
     let mut track = false;
     let mut trackrules = false;
     let mut road = false;

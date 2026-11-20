@@ -5,6 +5,8 @@
 //! поездов — с указанием на объект поезда.
 
 use std::path::Path;
+use crate::common::translit::{decode_xml_text};
+use crate::common::domain::{AssetKind, RouteFile};
 
 pub(crate) struct AssetReference {
     pub(crate) path: String,
@@ -12,7 +14,7 @@ pub(crate) struct AssetReference {
     pub(crate) product_range: std::ops::Range<usize>,
     pub(crate) blueprint_range: std::ops::Range<usize>,
     /// Что за объект стоит по ссылкой: объект маршрута или файл состава.
-    pub(crate) kind: crate::domain::AssetKind,
+    pub(crate) kind: AssetKind,
 }
 /// Сколько символов отличается в двух именах. ///
 pub(crate) fn capture_value_range(capture: &regex::Match<'_>) -> std::ops::Range<usize> {
@@ -182,11 +184,11 @@ pub(crate) fn build_asset_reference(
     provider_range: std::ops::Range<usize>,
     product_range: std::ops::Range<usize>,
     blueprint_range: std::ops::Range<usize>,
-    kind: crate::domain::AssetKind,
+    kind: AssetKind,
 ) -> Option<AssetReference> {
-    let provider = crate::translit::decode_xml_text(provider.trim());
-    let product = crate::translit::decode_xml_text(product.trim());
-    let blueprint = crate::translit::decode_xml_text(blueprint.trim());
+    let provider = decode_xml_text(provider.trim());
+    let product = decode_xml_text(product.trim());
+    let blueprint = decode_xml_text(blueprint.trim());
     if provider.is_empty() || product.is_empty() || blueprint.is_empty() {
         return None;
     }
@@ -330,7 +332,7 @@ pub(crate) fn extract_asset_references(xml: &str) -> std::collections::HashSet<S
 /// /// Оставлена для сверки: ручной разбор обязан давать ровно тот же результат.
 pub(crate) fn route_tile_label(
     route_path: &Path,
-    source_file: &crate::domain::RouteFile,
+    source_file: &RouteFile,
 ) -> String {
     let file_name = source_file.file_name_str();
     let stem = Path::new(file_name)
@@ -388,21 +390,21 @@ fn kind_from_context_state(
     vehicle: &Option<usize>,
     scenery: &Option<usize>,
     loft: &Option<usize>,
-) -> crate::domain::AssetKind {
-    let mut best: Option<(usize, crate::domain::AssetKind)> = None;
+) -> AssetKind {
+    let mut best: Option<(usize, AssetKind)> = None;
     if let Some(index) = vehicle {
-        best = Some((*index, crate::domain::AssetKind::Vehicle));
+        best = Some((*index, AssetKind::Vehicle));
     }
     if let Some(index) = scenery
         && best.is_none_or(|(current, _)| *index > current)
     {
-        best = Some((*index, crate::domain::AssetKind::Scenery));
+        best = Some((*index, AssetKind::Scenery));
     }
     if let Some(index) = loft
         && best.is_none_or(|(current, _)| *index > current)
     {
-        best = Some((*index, crate::domain::AssetKind::Loft));
+        best = Some((*index, AssetKind::Loft));
     }
     best.map(|(_, kind)| kind)
-        .unwrap_or(crate::domain::AssetKind::Other)
+        .unwrap_or(AssetKind::Other)
 }

@@ -1,35 +1,27 @@
-use super::*;
+use std::path::{Path};
+use regex::Regex;
 use std::sync::OnceLock;
 
-/// Ссылка на объект ассета внутри XML RailWorks.
-///
-/// В игре такая ссылка выглядит как `Provider\Product\папка\[00]имя`: без
-/// расширения и с суффиксом варианта. Иногда расширение в ссылке всё же есть,
-/// поэтому разбираются оба вида.
+use crate::assets::reference::capture_value_range;
+use crate::common::translit::decode_xml_text;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GeometryReference {
-    /// Путь без суффикса варианта и без расширения.
     pub path: String,
-    /// Суффикс варианта, например `[00]`.
     pub variant: String,
-    /// Расширение из ссылки, если оно там было.
     pub extension: Option<String>,
 }
 
 impl GeometryReference {
-    /// Разбирает текст ссылки из XML.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         if text.is_empty() {
             return None;
         }
-        // Ссылка состоит из папки, суффикса варианта, имени файла и иногда
-        // расширения: `Provider\Product\папка\[00]имя.GeoPcDx`.
         let (folder, name) = match text.rfind(['\\', '/']) {
             Some(index) => (&text[..index], &text[index + 1..]),
             None => ("", text),
         };
-        // Суффикс варианта стоит в начале имени файла: [00], [01] и так далее.
         let (variant, name) = match name.find(']') {
             Some(index) if name.starts_with('[') && index > 1 => {
                 let digits = &name[1..index];
@@ -41,7 +33,6 @@ impl GeometryReference {
             }
             _ => ("", name),
         };
-        // Расширение тоже может быть указано явно.
         let (name, extension) = match Path::new(name).extension() {
             Some(extension) => {
                 let extension = extension.to_string_lossy().into_owned();
@@ -66,15 +57,10 @@ impl GeometryReference {
         })
     }
 
-    /// Указывает ли ссылка на объект ассета.
     pub fn is_geometry_reference(&self) -> bool {
         self.extension.is_some() || !self.variant.is_empty()
     }
 
-    /// Расширение, с которым файл лежит на диске.
-    ///
-    /// Если расширения в ссылке не было, файл может оказаться и геометрией, и
-    /// текстурой: проверяются оба варианта.
     pub fn disk_extensions(&self) -> Vec<String> {
         match &self.extension {
             Some(extension) => vec![extension.clone()],
@@ -82,7 +68,6 @@ impl GeometryReference {
         }
     }
 
-    /// Текст ссылки в исходном виде.
     pub fn to_text(&self) -> String {
         let mut text = String::new();
         let (folder, name) = match self.path.rfind(['\\', '/']) {
@@ -100,14 +85,10 @@ impl GeometryReference {
     }
 }
 
-/// Относительно чего задан путь в ссылке на объект.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReferenceBase {
-    /// Относительно папки Assets.
     Assets,
-    /// Относительно папки продукта.
     Product,
-    /// Относительно папки файла, в котором встретилась ссылка.
     Folder,
 }
 
@@ -127,10 +108,6 @@ pub fn variant_reference_regex() -> &'static Regex {
     })
 }
 
-/// Находит в XML ссылки на объекты ассетов.
-///
-/// Учитываются оба вида ссылок: с расширением (`.GeoPcDx`) и без него, но с
-/// суффиксом варианта (`[00]`) — именно так их пишет игра.
 pub fn referenced_geometry_paths(xml: &str) -> Vec<(GeometryReference, std::ops::Range<usize>)> {
     let mut found: Vec<(GeometryReference, std::ops::Range<usize>)> = Vec::new();
     for regex in [geometry_reference_regex(), variant_reference_regex()] {
@@ -138,14 +115,14 @@ pub fn referenced_geometry_paths(xml: &str) -> Vec<(GeometryReference, std::ops:
             let Some(matched) = captures.get(1) else {
                 continue;
             };
-            let text = crate::translit::decode_xml_text(matched.as_str().trim());
+            let text = decode_xml_text(matched.as_str().trim());
             let Some(reference) = GeometryReference::parse(&text) else {
                 continue;
             };
             if !reference.is_geometry_reference() {
                 continue;
             }
-            let range = crate::reference::capture_value_range(&matched);
+            let range = capture_value_range(&matched);
             if found
                 .iter()
                 .any(|(_, existing_range)| existing_range == &range)

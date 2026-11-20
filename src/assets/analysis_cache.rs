@@ -13,6 +13,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use crate::common::domain::AssetKind;
+
 pub(crate) const ANALYSIS_CACHE_FILE_NAME: &str = ".ts-checker-analysis-cache.json";
 const CACHE_VERSION: u32 = 4;
 
@@ -92,7 +94,7 @@ fn compute_file_hash(path: &Path, size: u64) -> Option<u64> {
 
 pub(crate) struct CachedFile {
     pub(crate) stamp: FileStamp,
-    pub(crate) uses: Vec<(String, u32, crate::domain::AssetKind)>,
+    pub(crate) uses: Vec<(String, u32, AssetKind)>,
 }
 
 pub(crate) struct AnalysisCache {
@@ -123,7 +125,7 @@ impl AnalysisCache {
                 .into_iter()
                 .filter_map(|[asset, count, kind]| {
                     let path = cache.assets.get(asset as usize)?.clone();
-                    Some((path, count, crate::domain::AssetKind::from_code(kind as u8)))
+                    Some((path, count, AssetKind::from_code(kind as u8)))
                 })
                 .collect();
             files.insert(
@@ -217,5 +219,5 @@ struct StoredFile {
 }
 
 #[cfg(test)]
-#[path = "tests/analysis_cache.rs"]
+#[path = "../tests/analysis_cache.rs"]
 mod tests;

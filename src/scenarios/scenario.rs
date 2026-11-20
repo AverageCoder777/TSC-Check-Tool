@@ -7,6 +7,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::common::translit::decode_xml_text;
+use crate::scenarios::blueprint::{resolve_blueprint_file_cached_free, vehicle_blueprint_exists};
+
 /// Вид состава: игрок, ИИ или статический (loose).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) enum ConsistKind {
@@ -19,32 +22,18 @@ pub(crate) enum ConsistKind {
 /// Сценарий маршрута: папка и данные из её файлов.
 #[derive(Clone, Default)]
 pub(crate) struct RouteScenario {
-    /// Папка сценария.
     pub(crate) path: PathBuf,
-    /// Название сценария.
     pub(crate) name: String,
-    /// Тип сценария: Standard, Career, Free Roam, Quick Drive.
     pub(crate) scenario_type: String,
-    /// Метаданные уже прочитаны.
     pub(crate) metadata_loaded: bool,
-    /// Дата сценария.
     pub(crate) date: String,
-    /// Автор сценария.
     pub(crate) author: String,
-    /// Сезон.
     pub(crate) season: String,
-    /// Погода (блюпринт/имя).
     pub(crate) weather: String,
-    /// Длительность в минутах.
     pub(crate) duration: String,
-    /// Время начала суток.
     pub(crate) start_time: String,
-    /// Состояние сценария.
     pub(crate) state: String,
-    /// Состав игрока.
     pub(crate) player_consist: String,
-    /// Подвижные составы сценария: в них перечислена техника.
-    /// `None` пока не открыто окно сценария (загружается лениво).
     pub(crate) consists: Option<Vec<ScenarioConsist>>,
 }
 
@@ -54,8 +43,6 @@ pub(crate) struct ScenarioConsist {
     pub(crate) name: String,
     pub(crate) vehicles: Vec<ScenarioVehicle>,
     pub(crate) is_player: bool,
-    /// Порядковый номер cConsist в исходном XML (с учётом пустых составов),
-    /// нужен для открытия нужного состава в LocoSwap.
     pub(crate) index: usize,
 }
 
@@ -150,7 +137,7 @@ fn consist_name(consist: &str) -> String {
             .find('<')
             .map(|i| value_start + i)
             .unwrap_or(loc_block.len());
-        let value = crate::translit::decode_xml_text(&loc_block[value_start..value_end])
+        let value = decode_xml_text(&loc_block[value_start..value_end])
             .trim()
             .to_owned();
         if !value.is_empty() {
@@ -378,7 +365,7 @@ pub(crate) fn analyze_consists_parallel(
             let mut all_ok = true;
             let mut flags = Vec::with_capacity(c.vehicles.len());
             for veh in &c.vehicles {
-                let exists = crate::blueprint::vehicle_blueprint_exists(
+                let exists = vehicle_blueprint_exists(
                     std::path::Path::new(rw_path),
                     &veh.provider,
                     &veh.product,
@@ -509,7 +496,7 @@ pub(crate) fn element_text(xml: &str, element: &str) -> String {
                 Some(index) => &value[..index],
                 None => value,
             };
-            return crate::translit::decode_xml_text(text).trim().to_owned();
+            return decode_xml_text(text).trim().to_owned();
         }
         search_from = abs + open.len();
     }
@@ -566,9 +553,7 @@ pub(crate) fn weather_display_name(rw_path: &Path, route_path: &Path, blueprint:
     if blueprint.is_empty() {
         return String::new();
     }
-    let resolved = crate::blueprint::resolve_blueprint_file_cached_free(
-        rw_path, route_path, blueprint, "", "",
-    );
+    let resolved = resolve_blueprint_file_cached_free(rw_path, route_path, blueprint, "", "");
     if let Some(path) = resolved {
         let ext = path
             .extension()
@@ -752,5 +737,5 @@ pub(crate) fn is_hidden_scenario_type(scenario_type: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/scenario.rs"]
+#[path = "../tests/scenario.rs"]
 mod tests;

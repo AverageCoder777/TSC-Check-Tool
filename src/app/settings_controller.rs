@@ -5,17 +5,19 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::SettingsWindow;
+use crate::app::app_controller::{CheckerApp, LogLevel};
+use crate::app::settings::*;
 
 pub struct SettingsController {
     pub window: SettingsWindow,
     pub weak: Weak<SettingsWindow>,
-    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
+    pub app: Arc<Mutex<CheckerApp>>,
 }
 
 /// Сохраняет текущие значения из окна настроек в конфиг и состояние приложения.
 /// Вызывается и при нажатии «Сохранить», и при закрытии окна крестиком.
 fn save_ui_settings(
-    app: Arc<Mutex<crate::app_controller::CheckerApp>>,
+    app: Arc<Mutex<CheckerApp>>,
     weak: slint::Weak<SettingsWindow>,
 ) -> Result<(), String> {
     let sw = weak
@@ -31,7 +33,7 @@ fn save_ui_settings(
     let langs = ["ru", "en", "de"];
     let language = langs.get(lang_idx).copied().unwrap_or("ru").to_owned();
 
-    let mut config = crate::settings::AppConfig::load();
+    let mut config = AppConfig::load();
     config.game_path = (!game_path.is_empty()).then_some(PathBuf::from(&game_path));
     config.locoswap_path = (!locoswap_path.is_empty()).then_some(PathBuf::from(&locoswap_path));
     config.serz_process_limit = limit;
@@ -51,10 +53,10 @@ fn save_ui_settings(
         app.hide_quick_drive_free_roam = hide_scenarios;
         app.language = language.clone();
 
-        crate::settings::apply_saved_language(&language);
+        apply_saved_language(&language);
         app.log_event(
             "Настройки сохранены.".to_owned(),
-            crate::app_controller::LogLevel::Info,
+            LogLevel::Info,
         );
         if path_changed {
             app.start_route_scan();
@@ -65,7 +67,7 @@ fn save_ui_settings(
 }
 
 impl SettingsController {
-    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<CheckerApp>>) -> Self {
         let window = SettingsWindow::new().unwrap();
         let weak = window.as_weak();
         Self { window, weak, app }
@@ -74,7 +76,7 @@ impl SettingsController {
     /// Синхронизирует текущие настройки приложения с компонентами окна Slint.
     pub fn sync_from_app(&self) {
         let Ok(app) = self.app.lock() else { return };
-        let available = crate::settings::maximum_serz_processes();
+        let available = maximum_serz_processes();
         let all_presets: [usize; 9] = [1, 2, 4, 6, 8, 12, 16, 24, 32];
         let presets: Vec<slint::SharedString> = all_presets
             .iter()
@@ -188,8 +190,8 @@ impl SettingsController {
             if let Ok(mut app) = app.lock() {
                 app.language = lang.clone();
             }
-            crate::settings::apply_saved_language(&lang);
-            let _ = crate::settings::save_language(&lang);
+            apply_saved_language(&lang);
+            let _ = save_language(&lang);
             if let Some(sw) = settings_handle5.upgrade() {
                 let langs = ["ru", "en", "de"];
                 let idx = langs.iter().position(|&l| l == lang).unwrap_or(0);

@@ -1,5 +1,7 @@
 use super::*;
-use crate::serz::{SerzNode, SerzPreamble};
+use crate::common::serz::{
+    SerzNode, SerzPreamble, SerzReader, encode_tgpcdx_to_vec, encode_to_vec, validate_tgpcdx_binary,
+};
 use std::fs;
 use tempfile;
 
@@ -64,8 +66,7 @@ fn texture_editor_xml_round_trip_preserves_binary_blob() {
         flag: 0x01,
         val: 0x1234_5678,
     };
-    let original =
-        crate::serz::encode_tgpcdx_to_vec(&texture_node(blob.clone()), Some(&preamble)).unwrap();
+    let original = encode_tgpcdx_to_vec(&texture_node(blob.clone()), Some(&preamble)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let target = directory.path().join("texture.TgPcDx");
     let temp_xml = generate_temp_xml_path(&target);
@@ -82,13 +83,13 @@ fn texture_editor_xml_round_trip_preserves_binary_blob() {
     assert!(compile_xml_for_target(&target, &invalid_blob_size).is_err());
 
     assert_eq!(&saved[..10], b"SERZ\0\0\x01\0\xFF\x43");
-    let root = crate::serz::validate_tgpcdx_binary(&saved, Some(&[blob.len()])).unwrap();
+    let root = validate_tgpcdx_binary(&saved, Some(&[blob.len()])).unwrap();
     assert_eq!(find_property(&root, "Name"), Some("RenamedTexture"));
     let mut saved_blobs = Vec::new();
     collect_blobs(&root, &mut saved_blobs);
     assert_eq!(saved_blobs, vec![blob.as_slice()]);
     let parsed_preamble = {
-        let mut reader = crate::serz::SerzReader::new(&saved);
+        let mut reader = SerzReader::new(&saved);
         reader.parse().unwrap();
         reader.preamble.unwrap()
     };
@@ -103,8 +104,7 @@ fn geometry_editor_xml_round_trip_preserves_binary_blob() {
         flag: 0x01,
         val: 0x1234_5678,
     };
-    let original =
-        crate::serz::encode_to_vec(&texture_node(blob.clone()), Some(&preamble)).unwrap();
+    let original = encode_to_vec(&texture_node(blob.clone()), Some(&preamble)).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let target = directory.path().join("model.GeoPcDx");
     let temp_xml = generate_temp_xml_path(&target);
@@ -114,7 +114,7 @@ fn geometry_editor_xml_round_trip_preserves_binary_blob() {
     let edited_xml = xml.replace("OldTexture", "RenamedTexture");
     let saved = compile_xml_for_target(&target, &edited_xml).unwrap();
 
-    let mut reader = crate::serz::SerzReader::new(&saved);
+    let mut reader = SerzReader::new(&saved);
     let root = reader.parse().unwrap();
     assert_eq!(find_property(&root, "Name"), Some("RenamedTexture"));
     let mut saved_blobs = Vec::new();

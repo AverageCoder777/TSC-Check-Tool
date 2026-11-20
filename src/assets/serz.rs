@@ -1,9 +1,13 @@
-use super::*;
+use std::io::{Error};
+use std::fs;
+use std::path::Path;
+
+use crate::common::serz::SerzReader;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SerzError {
     #[error(transparent)]
-    Io(#[from] std::io::Error),
+    Io(#[from] Error),
     #[error("Invalid output: {0}")]
     InvalidOutput(String),
 }
@@ -11,7 +15,7 @@ pub(crate) enum SerzError {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum AssetError {
     #[error(transparent)]
-    Io(#[from] std::io::Error),
+    Io(#[from] Error),
     #[error("{0}")]
     Message(String),
 }
@@ -33,9 +37,9 @@ pub(crate) fn read_serz_xml(asset_path: &Path) -> Result<String, SerzError> {
     if !bytes.starts_with(b"SERZ") {
         return Ok(decode_xml_bytes(&bytes));
     }
-    let mut reader = crate::serz::SerzReader::new(&bytes);
+    let mut reader = SerzReader::new(&bytes);
     let node = reader.parse().map_err(SerzError::InvalidOutput)?;
-    Ok(crate::serz::SerzReader::to_xml(&node, 0, true))
+    Ok(SerzReader::to_xml(&node, 0, true))
 }
 
 pub(crate) fn decode_xml_bytes(bytes: &[u8]) -> String {

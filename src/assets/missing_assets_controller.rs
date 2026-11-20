@@ -5,7 +5,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::MissingAssetsWindow;
-use crate::app_controller::CheckerApp;
+use crate::common::domain::{TileKind, RouteFile};
+use crate::app::app_controller::{CheckerApp, LogLevel};
+use crate::assets::inventory_ui::{asset_directory, existing_directory_upwards};
+use crate::scenarios::blueprint::ap_archive_entries;
+use crate::assets::ap_picker_controller::ApPickerState;
+use crate::assets::RouteAssetType;
 
 pub struct MissingAssetsController {
     pub window: MissingAssetsWindow,
@@ -69,7 +74,7 @@ impl MissingAssetsController {
             ));
             corrupted.push(m.is_corrupted_link);
             types.push(slint::SharedString::from(
-                crate::assets::RouteAssetType::label(m.asset_type),
+                RouteAssetType::label(m.asset_type),
             ));
             safe.push(crate::assets::is_safe_for_global_replacement(
                 &m.path, &m.uses,
@@ -185,7 +190,7 @@ impl MissingAssetsController {
                     );
                     app.log_event(
                         format!("Починен путь {} -> {}.", corrupted, clean_repair),
-                        crate::app_controller::LogLevel::Info,
+                        LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
                 }
@@ -223,7 +228,7 @@ impl MissingAssetsController {
                         "Массовая починка путей: исправлено {} объектов.",
                         repairable_count
                     ),
-                    crate::app_controller::LogLevel::Info,
+                    LogLevel::Info,
                 );
                 app.start_next_asset_replacement();
             });
@@ -251,14 +256,14 @@ impl MissingAssetsController {
                             .missing_assets
                             .iter()
                             .find(|m| m.path.eq_ignore_ascii_case(&selected_path))?;
-                        let mut counts: BTreeMap<&str, (crate::domain::TileKind, usize, String)> =
+                        let mut counts: BTreeMap<&str, (TileKind, usize, String)> =
                             BTreeMap::new();
                         for usage in &missing.uses {
                             let file_path = match &usage.source_file {
-                                crate::domain::RouteFile::Path(path) => {
+                                RouteFile::Path(path) => {
                                     path.to_string_lossy().to_string()
                                 }
-                                crate::domain::RouteFile::Archive { name, .. } => name.clone(),
+                                RouteFile::Archive { name, .. } => name.clone(),
                             };
                             counts
                                 .entry(usage.tile.as_str())
@@ -269,14 +274,14 @@ impl MissingAssetsController {
                             .into_iter()
                             .map(|(tile, (kind, count, file_path))| {
                                 let badge = match kind {
-                                    crate::domain::TileKind::Scenery => "[Scenery]",
-                                    crate::domain::TileKind::Loft => "[Loft]",
-                                    crate::domain::TileKind::Road => "[Road]",
-                                    crate::domain::TileKind::Track => "[Track]",
-                                    crate::domain::TileKind::TracksMaster => "[Tracks.bin]",
-                                    crate::domain::TileKind::LoftsMaster => "[Lofts.bin]",
-                                    crate::domain::TileKind::RoadsMaster => "[Roads.bin]",
-                                    crate::domain::TileKind::RouteProps => "[Properties]",
+                                    TileKind::Scenery => "[Scenery]",
+                                    TileKind::Loft => "[Loft]",
+                                    TileKind::Road => "[Road]",
+                                    TileKind::Track => "[Track]",
+                                    TileKind::TracksMaster => "[Tracks.bin]",
+                                    TileKind::LoftsMaster => "[Lofts.bin]",
+                                    TileKind::RoadsMaster => "[Roads.bin]",
+                                    TileKind::RouteProps => "[Properties]",
                                 };
                                 crate::TileEntry {
                                     label: format!("{badge} {tile} ({count})").into(),
@@ -317,15 +322,15 @@ impl MissingAssetsController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Замена путевых объектов заблокирована для предотвращения повреждения маршрута.".to_owned(),
-                            crate::app_controller::LogLevel::Warning,
+                            LogLevel::Warning,
                         );
                         crate::schedule_ui_sync();
                     }
                     return;
                 }
                 let assets_path = rw_path.join("Assets");
-                let start_dir = crate::inventory_ui::existing_directory_upwards(
-                    &crate::inventory_ui::asset_directory(&assets_path, &missing.path),
+                let start_dir = existing_directory_upwards(
+                    &asset_directory(&assets_path, &missing.path),
                 )
                 .unwrap_or_else(|| assets_path.clone());
                 let selected = rfd::FileDialog::new()
@@ -341,7 +346,7 @@ impl MissingAssetsController {
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| e.eq_ignore_ascii_case("ap"));
                 if is_ap {
-                    let entries = crate::blueprint::ap_archive_entries(&replacement);
+                    let entries = ap_archive_entries(&replacement);
                     let archive_name = replacement
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
@@ -350,7 +355,7 @@ impl MissingAssetsController {
                         let borrowed = cell.borrow();
                         let Some(pc) = borrowed.as_ref() else { return };
                         if let Ok(mut st) = pc.state.lock() {
-                            *st = Some(crate::ap_picker_controller::ApPickerState {
+                            *st = Some(ApPickerState {
                                 archive_path: replacement.clone(),
                                 missing: missing.clone(),
                                 rw_path: rw_path.to_string_lossy().to_string(),
@@ -427,7 +432,7 @@ impl MissingAssetsController {
                 }
                 if !matches!(
                     asset_type,
-                    crate::assets::RouteAssetType::Scenery | crate::assets::RouteAssetType::Loft
+                    RouteAssetType::Scenery | RouteAssetType::Loft
                 ) {
                     return;
                 }
@@ -442,10 +447,10 @@ impl MissingAssetsController {
                 }
 
                 let outcome = match asset_type {
-                    crate::assets::RouteAssetType::Scenery => {
+                    RouteAssetType::Scenery => {
                         crate::assets::delete_scenery_asset(&route_path, &selected_path, &uses)
                     }
-                    crate::assets::RouteAssetType::Loft => {
+                    RouteAssetType::Loft => {
                         crate::assets::delete_loft_asset(&route_path, &selected_path, &uses)
                     }
                     _ => return,
@@ -463,7 +468,7 @@ impl MissingAssetsController {
                                     "Удален объект {} из {} тайлов ({} вхождений).",
                                     selected_path, files, occurrences
                                 ),
-                                crate::app_controller::LogLevel::Info,
+                                LogLevel::Info,
                             );
                             if !untouched.is_empty() {
                                 app.log_event(
@@ -472,7 +477,7 @@ impl MissingAssetsController {
                                         selected_path,
                                         untouched.join(", ")
                                     ),
-                                    crate::app_controller::LogLevel::Warning,
+                                    LogLevel::Warning,
                                 );
                             }
                             let remaining: Vec<String> = app
@@ -495,7 +500,7 @@ impl MissingAssetsController {
                     }
                     Err(error) => {
                         if let Ok(mut app) = app.lock() {
-                            app.log_event(error, crate::app_controller::LogLevel::Error);
+                            app.log_event(error, LogLevel::Error);
                             crate::schedule_ui_sync();
                         }
                     }

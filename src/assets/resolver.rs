@@ -1,4 +1,8 @@
-use super::*;
+use std::path::{Path, PathBuf};
+use std::fs;
+
+use crate::common::translit::*;
+use crate::assets::{xml_reference::{GeometryReference, ReferenceBase}, fuzzy::names_match};
 
 pub fn resolve_asset_path(
     assets_path: &Path,
@@ -8,27 +12,27 @@ pub fn resolve_asset_path(
     if exact.is_file() {
         return Ok(Some(exact));
     }
-    if !crate::translit::has_broken_character(relative_asset) {
+    if !has_broken_character(relative_asset) {
         // Файла нет по точному имени: ищем ближайший по сходству. В игре
         // встречаются имена с кириллическими буквами вместо латинских.
         return Ok(find_similar_asset_path(assets_path, relative_asset));
     }
     let broken_count = relative_asset
         .chars()
-        .filter(|character| crate::translit::BROKEN_CHARACTERS.contains(character))
+        .filter(|character| BROKEN_CHARACTERS.contains(character))
         .count();
-    if broken_count > crate::translit::MAX_BROKEN_CHARACTERS {
+    if broken_count > MAX_BROKEN_CHARACTERS {
         return Ok(None);
     }
 
     let tiers = [
-        crate::translit::replace_broken_characters_combinations(
+        replace_broken_characters_combinations(
             relative_asset,
-            &crate::translit::TRANSLITERATED_CHARACTERS,
+            &TRANSLITERATED_CHARACTERS,
         ),
-        crate::translit::replace_broken_characters_combinations(
+        replace_broken_characters_combinations(
             relative_asset,
-            &crate::translit::UMLAUT_CHARACTERS,
+            &UMLAUT_CHARACTERS,
         ),
     ];
 
@@ -155,18 +159,18 @@ pub fn resolve_product_reference(
 ) -> Option<(PathBuf, ReferenceBase)> {
     let base = reference.path.replace('/', "\\");
     let mut names = vec![base.clone()];
-    if crate::translit::has_broken_character(&base) {
+    if has_broken_character(&base) {
         let broken_count = base
             .chars()
-            .filter(|character| crate::translit::BROKEN_CHARACTERS.contains(character))
+            .filter(|character| BROKEN_CHARACTERS.contains(character))
             .count();
-        if broken_count <= crate::translit::MAX_REFERENCE_VARIANTS {
+        if broken_count <= MAX_REFERENCE_VARIANTS {
             // Испорченный символ в ссылке может означать и умляут, и уже
             // переписанное имя, причём в разных частях пути по-разному, поэтому
             // проверяются все сочетания.
-            let mut replacements: Vec<&str> = crate::translit::TRANSLITERATED_CHARACTERS.to_vec();
-            replacements.extend_from_slice(&crate::translit::UMLAUT_CHARACTERS);
-            names.extend(crate::translit::replace_broken_characters_combinations(
+            let mut replacements: Vec<&str> = TRANSLITERATED_CHARACTERS.to_vec();
+            replacements.extend_from_slice(&UMLAUT_CHARACTERS);
+            names.extend(replace_broken_characters_combinations(
                 &base,
                 &replacements,
             ));

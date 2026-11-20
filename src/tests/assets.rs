@@ -29,7 +29,7 @@ fn rechecks_route_using_analysis_cache() {
 
     let check = super::check_route(&route, &assets, true, 2, |_| {}).unwrap();
     assert_eq!(check.asset_inventory.len(), 2);
-    assert!(crate::analysis_cache::cache_path(&route).is_file());
+    assert!(crate::assets::analysis_cache::cache_path(&route).is_file());
     // Счётчик использований считает каждое вхождение, а не только файлы.
     let first_asset = check
         .asset_inventory
@@ -121,7 +121,7 @@ fn files_outside_archive_override_archive_members() {
     let outside = route.join("Scenery/route.xml");
     std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
     std::fs::write(&outside, b"<root/>").unwrap();
-    let name = crate::domain::RouteFile::Path(outside)
+    let name = crate::common::domain::RouteFile::Path(outside)
         .route_name(route)
         .unwrap();
     assert!(name.eq_ignore_ascii_case(&inside));
@@ -133,7 +133,7 @@ fn files_outside_archive_override_archive_members() {
 fn changed_archive_file_is_installed_next_to_the_archive() {
     let temp = tempfile::tempdir().unwrap();
     let route = temp.path();
-    let inside = crate::domain::RouteFile::Archive {
+    let inside = crate::common::domain::RouteFile::Archive {
         archive: route.join("MainContent.ap"),
         name: "Scenery/route.xml".to_owned(),
         stamp: None,
@@ -168,10 +168,10 @@ fn detects_vehicle_references_by_their_context() {
                 </iRailVehicleBlueprint>
             </root>
         "#;
-    let references = crate::reference::extract_asset_references_with_locations(xml);
+    let references = crate::assets::reference::extract_asset_references_with_locations(xml);
     assert_eq!(references.len(), 2);
-    assert_eq!(references[0].kind, crate::domain::AssetKind::Scenery);
-    assert_eq!(references[1].kind, crate::domain::AssetKind::Vehicle);
+    assert_eq!(references[0].kind, crate::common::domain::AssetKind::Scenery);
+    assert_eq!(references[1].kind, crate::common::domain::AssetKind::Vehicle);
 }
 
 /// Замена ассета в маршруте, упакованном в .ap: файл из архива читается
@@ -201,20 +201,20 @@ fn replaces_asset_in_route_packed_into_archive() {
     std::fs::create_dir_all(assets.join("Prov2/Prod2/Scenery")).unwrap();
     std::fs::write(assets.join("Prov2/Prod2/Scenery/New.bin"), b"new").unwrap();
 
-    let uses = [crate::domain::AssetUse {
-        source_file: crate::domain::RouteFile::Archive {
+    let uses = [crate::common::domain::AssetUse {
+        source_file: crate::common::domain::RouteFile::Archive {
             archive: archive.clone(),
             name: "Scenery/Grass.xml".to_owned(),
             stamp: None,
         },
         tile: "тайл X=+000000 Z=+000000".to_owned(),
-        tile_kind: crate::domain::RouteFile::Archive {
+        tile_kind: crate::common::domain::RouteFile::Archive {
             archive: archive.clone(),
             name: "Scenery/Grass.xml".to_owned(),
             stamp: None,
         }
         .tile_kind(),
-        kind: crate::domain::AssetKind::Scenery,
+        kind: crate::common::domain::AssetKind::Scenery,
         count: 1,
         tile_search: "тайл X=+000000 Z=+000000".to_lowercase(),
         source_file_search: "Scenery/Grass.xml".to_lowercase(),
@@ -333,7 +333,7 @@ fn extracts_locations_for_multiple_asset_references() {
             <Provider>Second</Provider><Product>ProductB</Product>
             <BlueprintID>Networks\second.xml</BlueprintID>
         "#;
-    let references = crate::reference::extract_asset_references_with_locations(xml);
+    let references = crate::assets::reference::extract_asset_references_with_locations(xml);
 
     assert_eq!(references.len(), 2);
     assert_eq!(references[0].path, "First/ProductA/Scenery/first.bin");
@@ -357,7 +357,7 @@ fn extracts_references_from_wrapped_absolute_blueprint_blocks() {
                 </iBlueprintLibrary-cAbsoluteBlueprintID>
             </BlueprintID>
         "#;
-    let references = crate::reference::extract_asset_references_with_locations(xml);
+    let references = crate::assets::reference::extract_asset_references_with_locations(xml);
 
     assert_eq!(references.len(), 1);
     assert_eq!(
@@ -424,7 +424,7 @@ fn empty_reskin_block_does_not_hide_the_next_object_reference() {
                 </ReskinBlueprintID>
             </cDynamicEntity>
         "#;
-    let references = crate::reference::extract_asset_references_with_locations(xml);
+    let references = crate::assets::reference::extract_asset_references_with_locations(xml);
 
     assert_eq!(references.len(), 2);
     assert_eq!(references[0].path, "First/ProductA/Scenery/first.bin");
@@ -438,14 +438,14 @@ fn detects_asset_paths_encoded_as_numeric_xml_entities() {
             <Product>Marchegger_Ostbahn</Product>
             <BlueprintID>Marchegg\Bruecke Fu&#223;ganger 5.xml</BlueprintID>
         "#;
-    let references = crate::reference::extract_asset_references_with_locations(xml);
+    let references = crate::assets::reference::extract_asset_references_with_locations(xml);
 
     assert_eq!(references.len(), 1);
     assert_eq!(
         references[0].path,
         "RWAustria_3/Marchegger_Ostbahn/Marchegg/Bruecke Fußganger 5.bin"
     );
-    assert!(crate::translit::has_umlauts(&references[0].path));
+    assert!(crate::common::translit::has_umlauts(&references[0].path));
 }
 
 /// Файл без `BlueprintID` не конвертируется: ссылок в нём быть не может.
@@ -466,7 +466,7 @@ fn extracts_tile_coordinates_from_route_file_names() {
     let route = Path::new(r"C:\Routes\RouteA");
     let source = route.join("Scenery").join("+000012-000034.bin");
     assert_eq!(
-        crate::reference::route_tile_label(route, &crate::domain::RouteFile::Path(source.clone())),
+        crate::assets::reference::route_tile_label(route, &crate::common::domain::RouteFile::Path(source.clone())),
         "+000012-000034"
     );
 }

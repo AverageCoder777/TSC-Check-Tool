@@ -5,7 +5,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::{ApAssetPickerWindow, domain};
+use crate::app::app_controller::{CheckerApp, LogLevel};
+use crate::common::{fs_utils::clean_rw_path, archive::extract_archive_member, domain};
+use crate::ApAssetPickerWindow;
+use crate::common::external_editor::show_native_error;
 
 #[derive(Clone)]
 pub struct ApPickerState {
@@ -18,12 +21,12 @@ pub struct ApPickerState {
 pub struct ApPickerController {
     pub window: ApAssetPickerWindow,
     pub weak: Weak<ApAssetPickerWindow>,
-    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
+    pub app: Arc<Mutex<CheckerApp>>,
     pub state: Arc<Mutex<Option<ApPickerState>>>,
 }
 
 impl ApPickerController {
-    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<CheckerApp>>) -> Self {
         let window = ApAssetPickerWindow::new().unwrap();
         let weak = window.as_weak();
         let state = Arc::new(Mutex::new(None::<ApPickerState>));
@@ -109,10 +112,10 @@ impl ApPickerController {
                 let app_t = app.clone();
                 let entry = selected_entry;
                 std::thread::spawn(move || {
-                    let assets_path = crate::app_controller::clean_rw_path(&rw_path).join("Assets");
+                    let assets_path = clean_rw_path(&rw_path).join("Assets");
                     let target_file_path =
                         resolve_extraction_path(&assets_path, &archive_path, &entry);
-                    let extract_result = crate::archive::extract_archive_member(
+                    let extract_result = extract_archive_member(
                         &archive_path,
                         &entry,
                         &target_file_path,
@@ -144,7 +147,7 @@ impl ApPickerController {
                             if let Ok(mut app) = app_t.lock() {
                                 app.log_event(
                                     format!("Ошибка распаковки: {err}"),
-                                    crate::app_controller::LogLevel::Error,
+                                    LogLevel::Error,
                                 );
                                 crate::schedule_ui_sync();
                             }
@@ -153,7 +156,7 @@ impl ApPickerController {
                                     pw.set_extracting(false);
                                 }
                             });
-                            crate::external_editor::show_native_error("Ошибка распаковки", &err);
+                            show_native_error("Ошибка распаковки", &err);
                         }
                     }
                 });

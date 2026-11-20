@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::common::translit::*;
 /// Буквы, которые выглядят одинаково, но различаются кодом.
 ///
 /// В именах файлов игры встречается кириллическая «Е» вместо латинской: такой
@@ -74,15 +75,15 @@ pub(crate) fn names_match(expected: &str, candidate: &str) -> bool {
         .all(|(left, right)| {
             left == right
                 || left.eq_ignore_ascii_case(&right)
-                || crate::translit::BROKEN_CHARACTERS.contains(&left)
-                || crate::translit::BROKEN_CHARACTERS.contains(&right)
+                || BROKEN_CHARACTERS.contains(&left)
+                || BROKEN_CHARACTERS.contains(&right)
                 || is_homoglyph(left, right)
         })
 }
 
 pub(crate) fn has_corrupted_or_nonascii(value: &str) -> bool {
     !value.is_ascii()
-        || crate::translit::has_broken_character(value)
+        || has_broken_character(value)
         || value.chars().any(|character| {
             matches!(character, '\u{FFFD}' | '?' | '¦' | '¢') || character.is_control()
         })

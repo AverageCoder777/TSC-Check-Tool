@@ -1,9 +1,9 @@
 //! Serz conversion and asset-reference checks.
 
-use super::*;
-
+mod analysis_cache;
 mod checker;
 mod fuzzy;
+mod reference;
 mod replacement;
 mod resolver;
 mod scanner;
@@ -13,8 +13,15 @@ mod types;
 mod umlaut;
 mod xml_reference;
 
+pub(crate) mod ap_picker_controller;
+pub(crate) mod inventory_controller;
+pub(crate) mod inventory_ui;
+pub(crate) mod missing_assets_controller;
+
+pub(crate) use analysis_cache::*;
 pub(crate) use checker::*;
 pub(crate) use fuzzy::*;
+pub(crate) use reference::*;
 pub(crate) use replacement::*;
 pub(crate) use resolver::*;
 pub(crate) use scanner::*;

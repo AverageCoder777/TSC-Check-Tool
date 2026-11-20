@@ -5,7 +5,7 @@ use std::fs;
 fn appends_replacement_records_as_json_lines() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("logs").join("replacement_log.jsonl");
-    let mut entry = crate::domain::AssetReplacementLogEntry {
+    let mut entry = crate::common::domain::AssetReplacementLogEntry {
         timestamp_unix_seconds: 0,
         operation: "Замена отсутствующего ассета".to_owned(),
         route_id: Some("route-id".to_owned()),
@@ -21,7 +21,7 @@ fn appends_replacement_records_as_json_lines() {
         replacement_asset: Some("A/B/Scenery/new.bin".to_owned()),
         replaced_files: 1,
         replaced_instances: 2,
-        uses: vec![crate::domain::AssetReplacementLogUse {
+        uses: vec![crate::common::domain::AssetReplacementLogUse {
             tile: "тайл X=+000001 Z=-000002".to_owned(),
             source_file: temp
                 .path()

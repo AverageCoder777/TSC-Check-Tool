@@ -1,7 +1,3 @@
-use crate::common::external_editor;
-use crate::geo::{GeoModel, GeoRenderMode, GeoVertex};
-use crate::texture::decode_tgpcdx_to_rgba;
-use GeoViewerWindow;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slint::ComponentHandle;
@@ -9,8 +5,15 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
-use super::gpu_renderer::GpuRenderer;
-use super::texture::resolve_texture_data;
+
+use crate::geo::gpu_renderer::GpuRenderer;
+use crate::geo::texture::resolve_texture_data;
+use crate::GeoViewerWindow;
+use crate::common::external_editor;
+use crate::geo::{GeoModel, GeoRenderMode, GeoVertex};
+use crate::texture::decode_tgpcdx_to_rgba;
+use crate::BatchEntry;
+
 
 #[derive(Clone, Copy)]
 pub(crate) struct Camera {
@@ -815,5 +818,5 @@ fn draw_line(pixels: &mut [u8], width: u32, height: u32, start: Vec3, end: Vec3)
 }
 
 #[cfg(test)]
-#[path = "tests/viewer3d.rs"]
+#[path = "../tests/viewer3d.rs"]
 mod tests;

@@ -1,10 +1,14 @@
 use super::*;
+use crate::common::{
+    domain::{AssetUse, RouteFile, TileKind, AssetReplacementReport},
+    serz::{SerzReader, encode_to_vec},
+};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::fs;
+use crate::assets::reference::extract_asset_references_with_locations;
 
-pub fn is_safe_for_global_replacement(
-    relative_path: &str,
-    uses: &[crate::domain::AssetUse],
-) -> bool {
+pub fn is_safe_for_global_replacement(relative_path: &str, uses: &[AssetUse]) -> bool {
     let item = RouteAssetItem {
         path: relative_path.to_owned(),
         uses: uses.to_vec(),
@@ -15,13 +19,13 @@ pub fn is_safe_for_global_replacement(
 pub fn delete_scenery_asset(
     route_path: &Path,
     asset_path: &str,
-    uses: &[crate::domain::AssetUse],
+    uses: &[AssetUse],
 ) -> Result<(usize, usize, Vec<String>), String> {
     if uses.is_empty() {
         return Err("Для объекта не найдены места использования.".to_owned());
     }
     for usage in uses {
-        if usage.tile_kind != crate::domain::TileKind::Scenery {
+        if usage.tile_kind != TileKind::Scenery {
             return Err(
                 "Удаление путевых объектов и параметров маршрута доступно только в редакторе игры."
                     .to_owned(),
@@ -56,7 +60,7 @@ pub fn delete_scenery_asset(
                 source.display()
             ));
         }
-        if let crate::domain::RouteFile::Path(path) = &source {
+        if let RouteFile::Path(path) = &source {
             let canonical_source = path.canonicalize().map_err(|error| {
                 format!(
                     "Не удалось проверить файл маршрута {}: {error}",
@@ -87,11 +91,11 @@ pub fn delete_scenery_asset(
             ));
         }
         let source_parent = match &source_file {
-            crate::domain::RouteFile::Path(path) => path
+            RouteFile::Path(path) => path
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| route_path.to_path_buf()),
-            crate::domain::RouteFile::Archive { .. } => route_path.to_path_buf(),
+            RouteFile::Archive { .. } => route_path.to_path_buf(),
         };
         let temp = create_temporary_work_directory(&source_parent)?;
         let file_path = source_file.materialize(temp.path())?;
@@ -101,7 +105,7 @@ pub fn delete_scenery_asset(
                 source_file.display()
             )
         })?;
-        let mut reader = crate::serz::SerzReader::new(&bytes);
+        let mut reader = SerzReader::new(&bytes);
         let mut root = reader.parse().map_err(|error| {
             format!(
                 "Не удалось прочитать {} перед удалением: {error}",
@@ -116,7 +120,7 @@ pub fn delete_scenery_asset(
             continue;
         }
         let bytes =
-            crate::serz::encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+            encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
                     source_file.display()
@@ -128,7 +132,7 @@ pub fn delete_scenery_asset(
                 bytes.len()
             ));
         }
-        let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+        let mut validation_reader = SerzReader::new(&bytes);
         if let Err(error) = validation_reader.parse() {
             return Err(format!(
                 "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
@@ -186,7 +190,7 @@ pub fn delete_scenery_asset(
 pub fn delete_loft_asset(
     route_path: &Path,
     asset_path: &str,
-    uses: &[crate::domain::AssetUse],
+    uses: &[AssetUse],
 ) -> Result<(usize, usize, Vec<String>), String> {
     if uses.is_empty() {
         return Err("Для объекта не найдены места использования.".to_owned());
@@ -195,8 +199,8 @@ pub fn delete_loft_asset(
         if usage.source_file.is_protected_pathway() {
             return Err("Удаление этого объекта запрещено (путевая инфраструктура).".to_owned());
         }
-        if usage.tile_kind != crate::domain::TileKind::Loft
-            && usage.tile_kind != crate::domain::TileKind::Road
+        if usage.tile_kind != TileKind::Loft
+            && usage.tile_kind != TileKind::Road
         {
             return Err(format!(
                 "Удаление поддерживается только для тайлов Loft/Road: {}",
@@ -219,7 +223,7 @@ pub fn delete_loft_asset(
                 source.display()
             ));
         }
-        if let crate::domain::RouteFile::Path(path) = &source {
+        if let RouteFile::Path(path) = &source {
             let canonical_source = path.canonicalize().map_err(|error| {
                 format!(
                     "Не удалось проверить файл маршрута {}: {error}",
@@ -250,11 +254,11 @@ pub fn delete_loft_asset(
             ));
         }
         let source_parent = match &source_file {
-            crate::domain::RouteFile::Path(path) => path
+            RouteFile::Path(path) => path
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| route_path.to_path_buf()),
-            crate::domain::RouteFile::Archive { .. } => route_path.to_path_buf(),
+            RouteFile::Archive { .. } => route_path.to_path_buf(),
         };
         let temp = create_temporary_work_directory(&source_parent)?;
         let file_path = source_file.materialize(temp.path())?;
@@ -264,7 +268,7 @@ pub fn delete_loft_asset(
                 source_file.display()
             )
         })?;
-        let mut reader = crate::serz::SerzReader::new(&bytes);
+        let mut reader = SerzReader::new(&bytes);
         let mut root = reader.parse().map_err(|error| {
             format!(
                 "Не удалось прочитать {} перед удалением: {error}",
@@ -277,7 +281,7 @@ pub fn delete_loft_asset(
             continue;
         }
         let bytes =
-            crate::serz::encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+            encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
                 format!(
                     "Не удалось подготовить изменённый BIN {}: {error}",
                     source_file.display()
@@ -289,7 +293,7 @@ pub fn delete_loft_asset(
                 bytes.len()
             ));
         }
-        let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+        let mut validation_reader = SerzReader::new(&bytes);
         if let Err(error) = validation_reader.parse() {
             return Err(format!(
                 "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
@@ -371,8 +375,8 @@ pub(crate) fn replace_missing_asset(
     assets_path: &Path,
     old_asset: &str,
     replacement_path: &Path,
-    uses: &[crate::domain::AssetUse],
-) -> Result<crate::domain::AssetReplacementReport, String> {
+    uses: &[AssetUse],
+) -> Result<AssetReplacementReport, String> {
     let replacement_path = replacement_path
         .canonicalize()
         .map_err(|error| format!("Не удалось проверить новый ассет: {error}"))?;
@@ -513,7 +517,7 @@ pub(crate) fn replace_missing_asset(
                 source.display()
             ));
         }
-        if let crate::domain::RouteFile::Path(path) = &source {
+        if let RouteFile::Path(path) = &source {
             let canonical_source = path.canonicalize().map_err(|error| {
                 format!(
                     "Не удалось проверить файл маршрута {}: {error}",
@@ -567,11 +571,11 @@ pub(crate) fn replace_missing_asset(
         // Запись из архива лежит только внутри архива: папки с таким именем на
         // диске нет, поэтому временные файлы кладём в папку маршрута.
         let source_parent = match &source_file {
-            crate::domain::RouteFile::Path(path) => path
+            RouteFile::Path(path) => path
                 .parent()
                 .map(Path::to_path_buf)
                 .unwrap_or_else(|| route_path.to_path_buf()),
-            crate::domain::RouteFile::Archive { .. } => route_path.to_path_buf(),
+            RouteFile::Archive { .. } => route_path.to_path_buf(),
         };
         let temp = create_temporary_work_directory(&source_parent)?;
         let file_path = source_file.materialize(temp.path())?;
@@ -584,7 +588,7 @@ pub(crate) fn replace_missing_asset(
                     source_file.display()
                 )
             })?;
-            let mut reader = crate::serz::SerzReader::new(&bytes);
+            let mut reader = SerzReader::new(&bytes);
             let mut root = reader.parse().map_err(|error| {
                 format!(
                     "Не удалось прочитать {} перед заменой: {error}",
@@ -611,7 +615,7 @@ pub(crate) fn replace_missing_asset(
                 continue;
             }
             let bytes =
-                crate::serz::encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
+                encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
                     format!(
                         "Не удалось подготовить изменённый BIN {}: {error}",
                         source_file.display()
@@ -623,7 +627,7 @@ pub(crate) fn replace_missing_asset(
                     bytes.len()
                 ));
             }
-            let mut validation_reader = crate::serz::SerzReader::new(&bytes);
+            let mut validation_reader = SerzReader::new(&bytes);
             if let Err(error) = validation_reader.parse() {
                 return Err(format!(
                     "Ошибка сериализации: сгенерированный бинарник поврежден и не может быть прочитан обратно: {error}"
@@ -657,7 +661,8 @@ pub(crate) fn replace_missing_asset(
                     source_file.display()
                 )
             })?;
-            let references = crate::reference::extract_asset_references_with_locations(&xml);
+            let references =
+                extract_asset_references_with_locations(&xml);
             let edits: Vec<_> = references
                 .into_iter()
                 .filter(|reference| reference.path.eq_ignore_ascii_case(old_asset))
@@ -743,7 +748,7 @@ pub(crate) fn replace_missing_asset(
         }
     }
     transaction.commit();
-    Ok(crate::domain::AssetReplacementReport {
+    Ok(AssetReplacementReport {
         replaced_files,
         replaced_instances,
         backups,
