@@ -11,7 +11,7 @@ use super::format::{
 };
 use super::serz_parse::{
     find_all_elements, find_element_mut, find_texture_dimensions, set_blob_data,
-    set_or_insert_property, image_mips_from_bytes,
+    set_or_insert_property, image_mips_from_bytes, collect_serz_image_mips,
 };
 
 /// Converts DDS file to TgPcDx.
@@ -94,8 +94,6 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
             .first()
             .is_some_and(|image| image.width == width && image.height == height)
         {
-            let expected_lengths: Vec<usize> = mips.iter().map(|(_, _, bytes)| bytes.len()).collect();
-
             let existing_layout_matches = existing_images.len() == mips.len()
                 && existing_images
                     .iter()
