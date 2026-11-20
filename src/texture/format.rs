@@ -56,11 +56,9 @@ pub fn dds_compression_of(dds: &ddsfile::Dds) -> DdsCompression {
     }
     if let Some(d3d) = dds.get_d3d_format() {
         return match d3d {
-            ddsfile::D3DFormat::DXT5 => DdsCompression::Dxt5,
-            ddsfile::D3DFormat::DXT3 => DdsCompression::Dxt3,
-            ddsfile::D3DFormat::DXT1 | ddsfile::D3DFormat::DXT2 | ddsfile::D3DFormat::DXT4 => {
-                DdsCompression::Dxt1
-            }
+            ddsfile::D3DFormat::DXT5 | ddsfile::D3DFormat::DXT4 => DdsCompression::Dxt5,
+            ddsfile::D3DFormat::DXT3 | ddsfile::D3DFormat::DXT2 => DdsCompression::Dxt3,
+            ddsfile::D3DFormat::DXT1 => DdsCompression::Dxt1,
             ddsfile::D3DFormat::A8R8G8B8
             | ddsfile::D3DFormat::A8B8G8R8
             | ddsfile::D3DFormat::X8R8G8B8
@@ -103,6 +101,14 @@ pub fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
     if u.contains("DXT1") || u.contains("BC1") || u.contains("COMPRESSED") {
         return ("DXT1 (BC1, без альфы / 1-bit альфа)".into(), Some("DXT1"));
     }
+    if u.contains("8888")
+        || u.contains("ARGB")
+        || u.contains("RGBA")
+        || u.contains("BGRA")
+        || u.contains("UNCOMPRESSED")
+    {
+        return ("RGBA8888 (без сжатия)".into(), Some("RGBA8888"));
+    }
     if u.contains("L8") || u.contains("A8") {
         return ("L8 / A8 (8-bit градации серого)".into(), {
             if u.contains("L8") {
@@ -111,15 +117,6 @@ pub fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
                 Some("A8")
             }
         });
-    }
-
-    if u.contains("8888")
-        || u.contains("ARGB")
-        || u.contains("RGBA")
-        || u.contains("BGRA")
-        || u.contains("UNCOMPRESSED")
-    {
-        return ("RGBA8888 (без сжатия)".into(), Some("RGBA8888"));
     }
     (fmt.to_owned(), None)
 }
@@ -196,7 +193,7 @@ pub fn tgpcdx_format_to_d3d(fmt: &str) -> ddsfile::D3DFormat {
     if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
         return ddsfile::D3DFormat::DXT5;
     }
-    if u.contains("DXT3") || u.contains("BC2") {
+    if u.contains("EXPL_ALPHA") || u.contains("DXT3") || u.contains("BC2") {
         return ddsfile::D3DFormat::DXT3;
     }
     if u.contains("DXT1") || u.contains("BC1") || u.contains("COMPRESSED") {
