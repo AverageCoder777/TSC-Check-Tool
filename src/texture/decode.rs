@@ -34,7 +34,9 @@ pub fn decode_tgpcdx_with_max_dimension(
     let is_bc2 = format_upper.contains("EXPL_ALPHA")
         || format_upper.contains("BC2")
         || format_upper.contains("DXT3");
-    let is_bc1 = format_upper.contains("COMPRESSED") && !is_bc3;
+    let is_bc1 = (format_upper.contains("COMPRESSED") || format_upper.contains("BC1") || format_upper.contains("DXT1"))
+        && !is_bc3
+        && !is_bc2;
     let is_uncompressed = format_upper.contains("RGBA")
         || format_upper.contains("BGRA")
         || format_upper.contains("ARGB")
@@ -42,7 +44,7 @@ pub fn decode_tgpcdx_with_max_dimension(
 
     let mut rgba = Vec::with_capacity(rgba_bytes);
 
-    if is_uncompressed || (!is_bc3 && !is_bc1 && bytes.len() >= pixels * 4) {
+    if is_uncompressed || (!is_bc3 && !is_bc2 && !is_bc1 && bytes.len() >= pixels * 4) {
         // Uncompressed 32-bit (RGBA/BGRA)
         let bgra = format_upper.contains("BGRA");
         let argb = format_upper.contains("ARGB");
@@ -73,7 +75,7 @@ pub fn decode_tgpcdx_with_max_dimension(
             rgba.push((px & 0xff) as u8);
             rgba.push(((px >> 24) & 0xff) as u8);
         }
-    } else if is_bc3 || bytes.len() >= pixels {
+    } else if is_bc3 || (!is_bc1 && bytes.len() >= pixels) {
         // BC3 / DXT5 (16 bytes per 4x4 block)
         let mut image_u32 = vec![0u32; pixels];
         texture2ddecoder::decode_bc3(bytes, width as usize, height as usize, &mut image_u32)
