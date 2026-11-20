@@ -1,6 +1,8 @@
 //! Texture reference resolution and material classification.
 
 use std::path::{Path, PathBuf};
+use crate::common::serz::SerzNode;
+use crate::common::archive::normalize_member;
 
 /// Explicit shader-level signals for geometry that must never be rendered as visible
 /// surface. Node and material *names* are deliberately not inspected: in rolling stock
@@ -16,12 +18,12 @@ pub(crate) fn is_hidden_shader_name(name: &str) -> bool {
 /// A node opts out only through the explicit `Visible` flag (0/false), not through its
 /// name. Collision subtrees are pruned separately by their `collisionroot` ancestor.
 pub(crate) fn node_is_explicitly_hidden(
-    children: &[crate::serz::SerzNode],
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    children: &[SerzNode],
+    ids: &std::collections::HashMap<u32, &SerzNode>,
 ) -> bool {
     ["visible", "isvisible", "visibleflag"]
         .iter()
-        .find_map(|field| crate::geo::helpers::direct_text(children, &[*field], ids))
+        .find_map(|field| super::helpers::direct_text(children, &[*field], ids))
         .is_some_and(|value| {
             let value = value.trim();
             value == "0" || value.eq_ignore_ascii_case("false")
@@ -140,7 +142,7 @@ pub(crate) fn texture_priority(reference: &str) -> u8 {
     }
 }
 
-pub(crate) fn classify_shader(shader_name: &str) -> crate::geo::types::GeoRenderMode {
+pub(crate) fn classify_shader(shader_name: &str) -> super::types::GeoRenderMode {
     let shader = shader_name.to_ascii_lowercase();
     // Explicit cutout shaders (alpha-tested foliage, decals, flora). "mask" is NOT a cutout trigger:
     // TrainBumpSpecEnvMask.fx, TrainBumpSpec.fx, TrainSpecEnvMask.fx, TrainBasicObjectDiffuse.fx
@@ -160,14 +162,14 @@ pub(crate) fn classify_shader(shader_name: &str) -> crate::geo::types::GeoRender
     .iter()
     .any(|marker| shader.contains(marker))
     {
-        crate::geo::types::GeoRenderMode::Cutout
+        super::types::GeoRenderMode::Cutout
     } else if ["glass", "trans", "alpha", "blend", "decal"]
         .iter()
         .any(|marker| shader.contains(marker))
     {
-        crate::geo::types::GeoRenderMode::Blended
+        super::types::GeoRenderMode::Blended
     } else {
-        crate::geo::types::GeoRenderMode::Opaque
+        super::types::GeoRenderMode::Opaque
     }
 }
 
@@ -231,7 +233,7 @@ pub(crate) fn resolve_texture_data(
     }
     let targets = relative_paths
         .iter()
-        .map(|relative| crate::archive::normalize_member(relative))
+        .map(|relative| normalize_member(relative))
         .collect::<Vec<_>>();
     for ancestor in ancestors {
         let Ok(entries) = std::fs::read_dir(ancestor) else {
@@ -267,7 +269,7 @@ pub(crate) fn resolve_texture_data(
                         .unwrap_or_default()
                 });
             let found = member_names.iter().find_map(|name| {
-                let normalized = crate::archive::normalize_member(name);
+                let normalized = normalize_member(name);
                 targets
                     .iter()
                     .any(|target| {

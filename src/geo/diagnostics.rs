@@ -4,15 +4,15 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
-use crate::geo::parse::{IndexBuffer, VertexBuffer};
-use crate::geo::types::GeoParseDiagnostics;
+use super::parse::{IndexBuffer, VertexBuffer, MaterialBinding, RawSubmesh};
+use super::types::GeoParseDiagnostics;
 
 /// Best-effort warning channel for recoverable per-buffer/per-batch parse failures.
 /// A single broken buffer must not abort the whole model, so the reason is logged and
 /// only the offending buffer or batch is skipped.
 pub(crate) fn warn_parse_skip(message: String) {
     eprintln!("[GeoPcDx] {message}");
-    let log_path = crate::settings::log_file();
+    let log_path = crate::app::settings::log_file();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -33,7 +33,7 @@ pub(crate) fn warn_parse_skip(message: String) {
 /// Diagnostic log for every material binding resolved during parsing.
 pub(crate) fn log_material_diagnostics(
     path: &Path,
-    bindings: &HashMap<u32, crate::geo::parse::MaterialBinding>,
+    bindings: &HashMap<u32, MaterialBinding>,
 ) {
     use std::io::Write;
 
@@ -59,7 +59,7 @@ pub(crate) fn log_material_diagnostics(
         lines.join("; ")
     );
     eprintln!("{message}");
-    let log_path = crate::settings::log_file();
+    let log_path = crate::app::settings::log_file();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -114,7 +114,7 @@ pub(crate) fn log_vertex_buffer_diagnostics(
         ib_lines.join("; ")
     );
     eprintln!("{message}");
-    let log_path = crate::settings::log_file();
+    let log_path = crate::app::settings::log_file();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -133,7 +133,7 @@ pub(crate) fn log_vertex_buffer_diagnostics(
 }
 
 /// Diagnostic log for every raw batch before submesh conversion.
-pub(crate) fn log_batch_diagnostics(path: &Path, batches: &[crate::geo::parse::RawSubmesh]) {
+pub(crate) fn log_batch_diagnostics(path: &Path, batches: &[RawSubmesh]) {
     use std::io::Write;
 
     let mut lines = Vec::new();
@@ -159,7 +159,7 @@ pub(crate) fn log_batch_diagnostics(path: &Path, batches: &[crate::geo::parse::R
         lines.join("; ")
     );
     eprintln!("{message}");
-    let log_path = crate::settings::log_file();
+    let log_path = crate::app::settings::log_file();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -202,7 +202,7 @@ pub(crate) fn log_parse_diagnostics(path: &Path, diagnostics: &GeoParseDiagnosti
         diagnostics.primitive_type,
         ranges,
     );
-    let log_path = crate::settings::log_file();
+    let log_path = crate::app::settings::log_file();
     let result = (|| {
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;

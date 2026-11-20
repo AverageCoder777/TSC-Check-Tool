@@ -1,31 +1,35 @@
 use crate::AssetInventoryWindow;
-use crate::domain::TileKind;
-use slint::ComponentHandle;
-use slint::Model;
-use slint::Weak;
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use crate::common::domain::TileKind;
+use crate::app::app_controller::CheckerApp;
+use crate::assets::build_inventory_rows;
+use crate::common::windows::open_in_explorer;
+use crate::common::windows::open_in_file_explorer;
+use crate::common::external_editor::open_and_sync_with_vscode;
+use crate::app::app_controller::LogLevel;
+use schedule_ui_sync;
+use crate::assets::{delete_scenery_asset, delete_loft_asset, is_safe_for_global_replacement, classify_route_asset_type};
+use crate::assets::inventory_ui::{has_suspicious_chars, existing_directory_upwards, asset_directory};
+use crate::common::domain::MissingAsset;
 
 pub struct InventoryController {
     pub window: AssetInventoryWindow,
     pub weak: Weak<AssetInventoryWindow>,
-    pub app: Arc<Mutex<crate::app_controller::CheckerApp>>,
+    pub app: Arc<Mutex<CheckerApp>>,
 }
 
 impl InventoryController {
-    pub fn new(app: Arc<Mutex<crate::app_controller::CheckerApp>>) -> Self {
+    pub fn new(app: Arc<Mutex<CheckerApp>>) -> Self {
         let window = AssetInventoryWindow::new().unwrap();
         let weak = window.as_weak();
         Self { window, weak, app }
     }
     pub(crate) fn update_inventory_view(
         inv: &AssetInventoryWindow,
-        state: &mut crate::app_controller::AssetInventoryWindowState,
+        state: &mut AssetInventoryWindowState,
     ) {
         let show_missing = inv.get_show_missing_only();
         let (rows, safe, delete_flags, filtered_indices) =
-            crate::inventory_ui::build_inventory_rows(state, show_missing);
+            build_inventory_rows(state, show_missing);
         inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
         inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
         inv.set_inventory_can_delete(slint::ModelRc::new(slint::VecModel::from(delete_flags)));
@@ -56,11 +60,11 @@ impl InventoryController {
                 {
                     match column {
                         0 => {
-                            state.sort.column = crate::inventory_ui::InventorySortColumn::Path;
+                            state.sort.column = InventorySortColumn::Path;
                             state.sort.descending = false;
                         }
                         1 => {
-                            state.sort.column = crate::inventory_ui::InventorySortColumn::Usage;
+                            state.sort.column = InventorySortColumn::Usage;
                             state.sort.descending = false;
                         }
                         _ => {}
@@ -79,11 +83,11 @@ impl InventoryController {
                 {
                     match column {
                         0 => {
-                            state.sort.column = crate::inventory_ui::InventorySortColumn::Path;
+                            state.sort.column = InventorySortColumn::Path;
                             state.sort.descending = true;
                         }
                         1 => {
-                            state.sort.column = crate::inventory_ui::InventorySortColumn::Usage;
+                            state.sort.column = InventorySortColumn::Usage;
                             state.sort.descending = true;
                         }
                         _ => {}
@@ -145,11 +149,11 @@ impl InventoryController {
                 {
                     let full = rw_path.join("Assets").join(path_text.replace('/', "\\"));
                     if full.exists() {
-                        crate::windows::open_in_explorer(&full);
+                        open_in_explorer(&full);
                     } else if let Some(target) =
-                        crate::inventory_ui::existing_directory_upwards(&full)
+                        existing_directory_upwards(&full)
                     {
-                        crate::windows::open_in_file_explorer(&target);
+                        open_in_file_explorer(&target);
                     }
                 }
                 #[cfg(not(windows))]
@@ -186,16 +190,16 @@ impl InventoryController {
                 if full.is_file() {
                     let app_for_status = app.clone();
                     let _ =
-                        crate::external_editor::open_and_sync_with_vscode(&full, move |result| {
+                        open_and_sync_with_vscode(&full, move |result| {
                             if let Ok(mut app) = app_for_status.lock() {
                                 let (msg, level) = match result {
-                                    Ok(msg) => (msg, crate::app_controller::LogLevel::Info),
+                                    Ok(msg) => (msg, LogLevel::Info),
                                     Err(err) => {
-                                        (format!("✗ {err}"), crate::app_controller::LogLevel::Error)
+                                        (format!("✗ {err}"), LogLevel::Error)
                                     }
                                 };
                                 app.log_event(msg, level);
-                                crate::schedule_ui_sync();
+                                schedule_ui_sync();
                             }
                         });
                 }
@@ -248,9 +252,9 @@ impl InventoryController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
-                            crate::app_controller::LogLevel::Warning,
+                            LogLevel::Warning,
                         );
-                        crate::schedule_ui_sync();
+                        schedule_ui_sync();
                     }
                     return;
                 }
@@ -294,9 +298,9 @@ impl InventoryController {
                                     "Для объекта {} не найдено подходящих тайлов для удаления.",
                                     asset.path
                                 ),
-                                crate::app_controller::LogLevel::Warning,
+                                LogLevel::Warning,
                             );
-                            crate::schedule_ui_sync();
+                            schedule_ui_sync();
                         }
                         return;
                     }
@@ -317,7 +321,7 @@ impl InventoryController {
                 let mut untouched_files = Vec::new();
 
                 if !scenery_uses.is_empty() {
-                    match crate::assets::delete_scenery_asset(
+                    match delete_scenery_asset(
                         &route_path,
                         &asset.path,
                         &scenery_uses,
@@ -331,7 +335,7 @@ impl InventoryController {
                     }
                 }
                 if !loft_road_uses.is_empty() {
-                    match crate::assets::delete_loft_asset(
+                    match delete_loft_asset(
                         &route_path,
                         &asset.path,
                         &loft_road_uses,
@@ -355,7 +359,7 @@ impl InventoryController {
                                 "Удален объект {} из {} тайлов ({} вхождений)",
                                 asset.path, total_tiles, total_occurrences
                             ),
-                            crate::app_controller::LogLevel::Info,
+                            LogLevel::Info,
                         );
                         if !untouched_files.is_empty() {
                             app.log_event(
@@ -364,15 +368,15 @@ impl InventoryController {
                                     asset.path,
                                     untouched_files.join(", ")
                                 ),
-                                crate::app_controller::LogLevel::Warning,
+                                LogLevel::Warning,
                             );
                         }
                     } else {
                         for error in &errors {
-                            app.log_event(error.clone(), crate::app_controller::LogLevel::Error);
+                            app.log_event(error.clone(), LogLevel::Error);
                         }
                     }
-                    crate::schedule_ui_sync();
+                    schedule_ui_sync();
                 }
                 if let Some(inv) = handle.upgrade()
                     && let Ok(app) = app.lock()
@@ -419,19 +423,19 @@ impl InventoryController {
                 let Some(asset) = asset else {
                     return;
                 };
-                if !crate::assets::is_safe_for_global_replacement(&asset.path, &asset.uses) {
+                if !is_safe_for_global_replacement(&asset.path, &asset.uses) {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             "Замена этого ассета запрещена (путевая инфраструктура).".to_owned(),
-                            crate::app_controller::LogLevel::Warning,
+                            LogLevel::Warning,
                         );
-                        crate::schedule_ui_sync();
+                        schedule_ui_sync();
                     }
                     return;
                 }
                 let assets_dir = rw_path.join("Assets");
-                let start_dir = crate::inventory_ui::existing_directory_upwards(
-                    &crate::inventory_ui::asset_directory(&assets_dir, &asset.path),
+                let start_dir = existing_directory_upwards(
+                    &asset_directory(&assets_dir, &asset.path),
                 )
                 .unwrap_or_else(|| assets_dir.clone());
                 let selected_file = rfd::FileDialog::new()
@@ -447,7 +451,7 @@ impl InventoryController {
                     .map(|rel| rel.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_else(|_| picked.to_string_lossy().replace('\\', "/"));
 
-                let asset_type = crate::assets::classify_route_asset_type(&asset.path, &asset.uses);
+                let asset_type = classify_route_asset_type(&asset.path, &asset.uses);
                 let uses: Vec<_> = asset
                     .uses
                     .into_iter()
@@ -460,7 +464,7 @@ impl InventoryController {
                 if uses.is_empty() {
                     return;
                 }
-                let missing = crate::domain::MissingAsset {
+                let missing = MissingAsset {
                     path: asset.path,
                     uses,
                     suggested_repair: None,
@@ -489,10 +493,10 @@ impl InventoryController {
                         .assets
                         .iter()
                         .filter(|a| {
-                            crate::inventory_ui::has_suspicious_chars(&a.path)
+                            has_suspicious_chars(&a.path)
                                 || a.uses.iter().any(|u| {
-                                    crate::inventory_ui::has_suspicious_chars(&u.tile)
-                                        || crate::inventory_ui::has_suspicious_chars(
+                                    has_suspicious_chars(&u.tile)
+                                        || has_suspicious_chars(
                                             &u.source_file_search,
                                         )
                                 })
@@ -517,7 +521,7 @@ impl InventoryController {
                     } else {
                         app.status = "Фильтр по символам отключен.".to_owned();
                     }
-                    crate::schedule_ui_sync();
+                    schedule_ui_sync();
                 }
             });
         }

@@ -1,20 +1,26 @@
 use super::*;
+use crate::common::domain::*;
+use crate::common::serz::SerzNode;
+use crate::common::translit::decode_xml_text;
+use crate::assets::reference::*;
+use crate::assets::analysis_cache::*;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 pub struct FileAnalysis {
     /// Разбор взят из кэша: файл не менялся с прошлой проверки.
     from_cache: bool,
-    file: crate::domain::RouteFile,
+    file: RouteFile,
     /// Сколько раз каждый ассет встречается в файле.
-    uses: Vec<(String, u32, crate::domain::AssetKind)>,
+    uses: Vec<(String, u32, AssetKind)>,
     error: Option<String>,
 }
 
 pub(crate) fn analyze_route_file(
-    route_file: &crate::domain::RouteFile,
+    route_file: &RouteFile,
     temp_dir: &Path,
 ) -> FileAnalysis {
-    let is_archive = matches!(route_file, crate::domain::RouteFile::Archive { .. });
+    let is_archive = matches!(route_file, RouteFile::Archive { .. });
     // Запись архива читается через временный файл: конвертеру Serz нужен
     // настоящий файл на диске.
     let file_path = match route_file.materialize(temp_dir) {
@@ -81,7 +87,7 @@ pub(crate) fn analyze_route_file(
                 };
             }
         };
-        let mut reader = crate::serz::SerzReader::new(&xml_bytes);
+        let mut reader = SerzReader::new(&xml_bytes);
         let node = match reader.parse() {
             Ok(node) => node,
             Err(error) => {
@@ -131,7 +137,7 @@ pub(crate) fn analyze_route_file(
     }
     let xml_text = decode_xml_bytes(&xml_data);
 
-    let references = crate::reference::extract_asset_references_with_locations(&xml_text);
+    let references = extract_asset_references_with_locations(&xml_text);
 
     FileAnalysis {
         from_cache: false,
@@ -145,10 +151,10 @@ pub(crate) fn analyze_route_file(
 /// без промежуточной сериализации в XML. Результат идентичен
 /// `extract_asset_references_with_locations`, но без аллокации большой строки.
 pub(crate) fn extract_asset_references_from_serz(
-    node: &crate::serz::SerzNode,
-) -> Vec<(String, u32, crate::domain::AssetKind)> {
-    let mut raw_refs: Vec<(String, crate::domain::AssetKind)> = Vec::new();
-    let mut context: Option<crate::domain::AssetKind> = None;
+    node: &SerzNode,
+) -> Vec<(String, u32, AssetKind)> {
+    let mut raw_refs: Vec<(String, AssetKind)> = Vec::new();
+    let mut context: Option<AssetKind> = None;
     walk_serz_for_blueprints(node, &mut raw_refs, &mut context);
     count_asset_uses_from_pairs(raw_refs)
 }
@@ -157,29 +163,29 @@ pub(crate) fn extract_asset_references_from_serz(
 /// определяется ближайшим ранее встреченным элементом контекста и сохраняется
 /// до перезаписи другим контекстным элементом — аналогично линейному сканированию XML.
 fn walk_serz_for_blueprints(
-    node: &crate::serz::SerzNode,
-    refs: &mut Vec<(String, crate::domain::AssetKind)>,
-    context: &mut Option<crate::domain::AssetKind>,
+    node: &SerzNode,
+    refs: &mut Vec<(String, AssetKind)>,
+    context: &mut Option<AssetKind>,
 ) {
-    if let crate::serz::SerzNode::Element { name, children, .. } = node {
+    if let SerzNode::Element { name, children, .. } = node {
         let clean = name.replace("::", "-");
         let prev_context = *context;
 
         // Устанавливаем контекст при входе в соответствующий элемент.
         if clean == "iRailVehicleBlueprint" {
-            *context = Some(crate::domain::AssetKind::Vehicle);
+            *context = Some(AssetKind::Vehicle);
         } else if clean == "SceneryRenderBlueprint" {
-            *context = Some(crate::domain::AssetKind::Scenery);
+            *context = Some(AssetKind::Scenery);
         } else if clean == "RenderBlueprint" {
-            *context = Some(crate::domain::AssetKind::Loft);
+            *context = Some(AssetKind::Loft);
         }
 
         // Блок абсолютного блюпринта: извлекаем Provider/Product/BlueprintID.
         if clean == "iBlueprintLibrary-cAbsoluteBlueprintID" {
             if let Some((provider, product, blueprint)) = extract_blueprint_ids(children) {
-                let kind = context.unwrap_or(crate::domain::AssetKind::Other);
+                let kind = context.unwrap_or(AssetKind::Other);
                 if let Some(path) =
-                    crate::reference::asset_relative_path(&provider, &product, &blueprint)
+                    asset_relative_path(&provider, &product, &blueprint)
                 {
                     refs.push((path, kind));
                 }
@@ -190,7 +196,7 @@ fn walk_serz_for_blueprints(
             check_bare_blueprint_children(
                 children,
                 refs,
-                context.unwrap_or(crate::domain::AssetKind::Other),
+                context.unwrap_or(AssetKind::Other),
             );
         }
 
@@ -205,14 +211,14 @@ fn walk_serz_for_blueprints(
 /// Извлекает (Provider, Product, BlueprintID) из потомков элемента
 /// `iBlueprintLibrary-cAbsoluteBlueprintID`, повторяя логику из
 /// `serz::replace_blueprint_references` / `collect_from_absolute_blueprint_id`.
-fn extract_blueprint_ids(children: &[crate::serz::SerzNode]) -> Option<(String, String, String)> {
+fn extract_blueprint_ids(children: &[SerzNode]) -> Option<(String, String, String)> {
     let mut provider: Option<String> = None;
     let mut product: Option<String> = None;
     let mut blueprint: Option<String> = None;
 
     for child in children {
         // BlueprintSetID → iBlueprintLibrary-cBlueprintSetID с Provider/Product.
-        if let crate::serz::SerzNode::Element {
+        if let SerzNode::Element {
             name,
             children: bs_children,
             ..
@@ -221,7 +227,7 @@ fn extract_blueprint_ids(children: &[crate::serz::SerzNode]) -> Option<(String, 
             let clean = name.replace("::", "-");
             if clean == "BlueprintSetID" {
                 for bs_child in bs_children {
-                    if let crate::serz::SerzNode::Element {
+                    if let SerzNode::Element {
                         name: ibs_name,
                         children: ibs_children,
                         ..
@@ -230,14 +236,14 @@ fn extract_blueprint_ids(children: &[crate::serz::SerzNode]) -> Option<(String, 
                         let ibs_clean = ibs_name.replace("::", "-");
                         if ibs_clean == "iBlueprintLibrary-cBlueprintSetID" {
                             for prop in ibs_children {
-                                if let crate::serz::SerzNode::Property { name, value, .. } = prop {
+                                if let SerzNode::Property { name, value, .. } = prop {
                                     if provider.is_none() && name == "Provider" {
                                         provider =
-                                            Some(crate::translit::decode_xml_text(value.trim()));
+                                            Some(decode_xml_text(value.trim()));
                                     }
                                     if product.is_none() && name == "Product" {
                                         product =
-                                            Some(crate::translit::decode_xml_text(value.trim()));
+                                            Some(decode_xml_text(value.trim()));
                                     }
                                 }
                             }
@@ -247,11 +253,11 @@ fn extract_blueprint_ids(children: &[crate::serz::SerzNode]) -> Option<(String, 
             }
         }
         // BlueprintID как прямое свойство текущего блока.
-        if let crate::serz::SerzNode::Property { name, value, .. } = child
+        if let SerzNode::Property { name, value, .. } = child
             && blueprint.is_none()
             && name == "BlueprintID"
         {
-            blueprint = Some(crate::translit::decode_xml_text(value.trim()));
+            blueprint = Some(decode_xml_text(value.trim()));
         }
     }
 
@@ -269,32 +275,32 @@ fn extract_blueprint_ids(children: &[crate::serz::SerzNode]) -> Option<(String, 
 /// Проверяет прямых потомков элемента на последовательность
 /// Provider → Product → BlueprintID (без обёртки iBlueprintLibrary-cAbsoluteBlueprintID).
 fn check_bare_blueprint_children(
-    children: &[crate::serz::SerzNode],
-    refs: &mut Vec<(String, crate::domain::AssetKind)>,
-    kind: crate::domain::AssetKind,
+    children: &[SerzNode],
+    refs: &mut Vec<(String, AssetKind)>,
+    kind: AssetKind,
 ) {
     let mut i = 0;
     while i < children.len() {
-        if let crate::serz::SerzNode::Property { name, value, .. } = &children[i]
+        if let SerzNode::Property { name, value, .. } = &children[i]
             && name == "Provider"
-            && let Some(crate::serz::SerzNode::Property {
+            && let Some(SerzNode::Property {
                 name: n2,
                 value: v2,
                 ..
             }) = children.get(i + 1)
             && n2 == "Product"
-            && let Some(crate::serz::SerzNode::Property {
+            && let Some(SerzNode::Property {
                 name: n3,
                 value: v3,
                 ..
             }) = children.get(i + 2)
             && n3 == "BlueprintID"
         {
-            let provider = crate::translit::decode_xml_text(value.trim());
-            let product = crate::translit::decode_xml_text(v2.trim());
-            let blueprint = crate::translit::decode_xml_text(v3.trim());
+            let provider = decode_xml_text(value.trim());
+            let product = decode_xml_text(v2.trim());
+            let blueprint = decode_xml_text(v3.trim());
             if let Some(path) =
-                crate::reference::asset_relative_path(&provider, &product, &blueprint)
+                asset_relative_path(&provider, &product, &blueprint)
             {
                 refs.push((path, kind));
             }
@@ -307,11 +313,11 @@ fn check_bare_blueprint_children(
 
 /// Считает вхождения пар (путь, тип), сохраняя порядок первого появления.
 fn count_asset_uses_from_pairs(
-    refs: Vec<(String, crate::domain::AssetKind)>,
-) -> Vec<(String, u32, crate::domain::AssetKind)> {
+    refs: Vec<(String, AssetKind)>,
+) -> Vec<(String, u32, AssetKind)> {
     struct Entry {
         count: u32,
-        kind: crate::domain::AssetKind,
+        kind: AssetKind,
     }
 
     let mut order = Vec::new();
@@ -344,10 +350,10 @@ fn count_asset_uses_from_pairs(
 /// представляет: объект маршрута или файл состава.
 pub fn count_asset_uses(
     references: Vec<crate::reference::AssetReference>,
-) -> Vec<(String, u32, crate::domain::AssetKind)> {
+) -> Vec<(String, u32, AssetKind)> {
     struct Entry {
         count: u32,
-        kind: crate::domain::AssetKind,
+        kind: AssetKind,
     }
 
     let mut order = Vec::new();
@@ -391,7 +397,7 @@ pub fn may_contain_asset_reference(file_path: &Path) -> bool {
     let Ok(mut file) = fs::File::open(file_path) else {
         return true;
     };
-    let marker = crate::translit::BLUEPRINT_ID_MARKER.as_bytes();
+    let marker = crate::common::translit::BLUEPRINT_ID_MARKER.as_bytes();
     if marker.is_empty() {
         return true;
     }
@@ -431,7 +437,7 @@ pub(crate) fn check_route<F>(
     ignore_scenarios: bool,
     max_concurrent_serz: usize,
     report_progress: F,
-) -> Result<crate::domain::CheckResult, String>
+) -> Result<CheckResult, String>
 where
     F: Fn(&str) + Sync,
 {
@@ -442,9 +448,9 @@ where
         validate_route_structure(route_path, assets_path, &collected_route_files);
 
     // Основные файлы маршрута могут быть упакованы в .ap...
-    let mut route_files: Vec<crate::domain::RouteFile> = collected_route_files
+    let mut route_files: Vec<RouteFile> = collected_route_files
         .into_iter()
-        .map(crate::domain::RouteFile::Path)
+        .map(RouteFile::Path)
         .collect();
     let outside: HashSet<String> = route_files
         .iter()
@@ -463,7 +469,7 @@ where
     // Тяжёлый глобальный файл сети путей проверяем отдельно и в самом конце:
     // его конвертация занимает минуты и не должна задерживать остальные файлы
     // и отчёты о ходе проверки.
-    let is_tracks_bin = |route_file: &crate::domain::RouteFile| {
+    let is_tracks_bin = |route_file: &RouteFile| {
         route_file
             .route_name(route_path)
             .map(|name| name.eq_ignore_ascii_case("Networks/Tracks.bin"))
@@ -499,7 +505,7 @@ where
     let mut analyses = Vec::with_capacity(all_files.len());
     // Кэш разбора лежит в папке маршрута: неизменившиеся файлы берутся из
     // него, а заново разбираются только те, что изменились или появились.
-    let mut cache = crate::analysis_cache::AnalysisCache::load(route_path);
+    let mut cache = AnalysisCache::load(route_path);
     for (chunk_index, chunk) in all_files.chunks(32).enumerate() {
         let start_index = chunk_index * 32;
         report_progress(&format!(
@@ -531,7 +537,7 @@ where
         });
         analyses.extend(chunk_analyses);
     }
-    let mut asset_uses: HashMap<String, Vec<crate::domain::AssetUse>> = HashMap::new();
+    let mut asset_uses: HashMap<String, Vec<AssetUse>> = HashMap::new();
     // Написание пути, как оно встретилось в маршруте: ключ в asset_uses приведён
     // к нижнему регистру, потому что игра регистр не различает.
     let mut asset_names: HashMap<String, String> = HashMap::new();
@@ -545,14 +551,14 @@ where
             {
                 cache.put(
                     name,
-                    crate::analysis_cache::CachedFile {
+                    CachedFile {
                         stamp,
                         uses: analysis.uses.clone(),
                     },
                 );
             }
         }
-        let tile = crate::reference::route_tile_label(route_path, &analysis.file);
+        let tile = route_tile_label(route_path, &analysis.file);
         let tile_search = tile.to_lowercase();
         let source_file_search = analysis.file.display().to_lowercase();
         for (asset, count, kind) in analysis.uses {
@@ -563,7 +569,7 @@ where
                 .entry(key.clone())
                 .or_insert_with(|| asset.clone());
             let uses = asset_uses.entry(key).or_default();
-            uses.push(crate::domain::AssetUse {
+            uses.push(AssetUse {
                 source_file: analysis.file.clone(),
                 tile: tile.clone(),
                 tile_kind: analysis.file.tile_kind(),
@@ -629,7 +635,7 @@ where
     report_progress("Проверка имён и строк ассетов на умляуты...");
     let inventory_seed: Vec<_> = asset_uses
         .iter()
-        .map(|(path, uses)| crate::domain::ReferencedAsset {
+        .map(|(path, uses)| ReferencedAsset {
             path: asset_names
                 .get(path)
                 .cloned()
@@ -694,7 +700,7 @@ where
         &mut structure_issues,
     );
 
-    Ok(crate::domain::CheckResult {
+    Ok(CheckResult {
         missing_assets,
         asset_inventory,
         umlaut_assets,
@@ -749,12 +755,12 @@ fn route_properties_exists(route_path: &Path) -> bool {
 }
 
 /// Читает RouteProperties.xml с диска или из .ap-архива, декодируя
-/// UTF-8/UTF-16 (с BOM) через crate::routes::decode_xml_bytes.
+/// UTF-8/UTF-16 (с BOM) через crate::routes::routes::decode_xml_bytes.
 fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
     use std::io::Read;
     let properties_path = route_path.join("RouteProperties.xml");
     if let Ok(data) = fs::read(&properties_path) {
-        return Ok(crate::routes::decode_xml_bytes(&data));
+        return Ok(crate::routes::routes::decode_xml_bytes(&data));
     }
     let entries = fs::read_dir(route_path)
         .map_err(|error| format!("Не удалось прочитать {}: {error}", route_path.display()))?;
@@ -797,7 +803,7 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
             if member.read_to_end(&mut bytes).is_err() {
                 continue;
             }
-            return Ok(crate::routes::decode_xml_bytes(&bytes));
+            return Ok(crate::routes::routes::decode_xml_bytes(&bytes));
         }
     }
     Err("RouteProperties.xml не найден".to_owned())
@@ -823,12 +829,12 @@ fn parse_preload_pairs(xml: &str) -> HashSet<(String, String)> {
         let providers: Vec<String> = provider_re
             .captures_iter(block)
             .filter_map(|c| c.get(1))
-            .map(|m| crate::translit::decode_xml_text(m.as_str().trim()))
+            .map(|m| decode_xml_text(m.as_str().trim()))
             .collect();
         let products: Vec<String> = product_re
             .captures_iter(block)
             .filter_map(|c| c.get(1))
-            .map(|m| crate::translit::decode_xml_text(m.as_str().trim()))
+            .map(|m| decode_xml_text(m.as_str().trim()))
             .collect();
         for (p, pr) in providers.into_iter().zip(products) {
             if !p.is_empty() && !pr.is_empty() {
@@ -949,14 +955,14 @@ pub(crate) fn scan_product_ap_archives(
 }
 
 pub(crate) fn resolve_missing_and_corrupted(
-    asset_uses: HashMap<String, Vec<crate::domain::AssetUse>>,
+    asset_uses: HashMap<String, Vec<AssetUse>>,
     asset_names: &HashMap<String, String>,
     ap_cache: &ApCache,
     assets_path: &Path,
     structure_issues: &mut Vec<String>,
 ) -> (
-    Vec<crate::domain::MissingAsset>,
-    Vec<crate::domain::ReferencedAsset>,
+    Vec<MissingAsset>,
+    Vec<ReferencedAsset>,
 ) {
     let mut asset_inventory = Vec::with_capacity(asset_uses.len());
     let mut missing_assets = Vec::new();
@@ -983,8 +989,8 @@ pub(crate) fn resolve_missing_and_corrupted(
             let full_path = relative_asset.replace('/', "\\").to_lowercase();
             let mut variants = vec![inner_path.clone(), product_path.clone(), full_path.clone()];
             for base in [inner_path, product_path, full_path] {
-                variants.push(crate::translit::replace_broken_characters(&base, "ss"));
-                variants.push(crate::translit::replace_broken_characters(&base, "ß"));
+                variants.push(replace_broken_characters(&base, "ss"));
+                variants.push(replace_broken_characters(&base, "ß"));
             }
             let mut texture_variants = Vec::new();
             for variant in &variants {
@@ -1027,7 +1033,7 @@ pub(crate) fn resolve_missing_and_corrupted(
             };
         let is_missing = !is_in_archive && resolved_disk_path.is_none() && !is_corrupted;
         if is_missing || is_corrupted {
-            missing_assets.push(crate::domain::MissingAsset {
+            missing_assets.push(MissingAsset {
                 path: display_path.clone(),
                 uses: uses.clone(),
                 suggested_repair,
@@ -1036,7 +1042,7 @@ pub(crate) fn resolve_missing_and_corrupted(
             });
         }
         let path_search = display_path.to_lowercase();
-        asset_inventory.push(crate::domain::ReferencedAsset {
+        asset_inventory.push(ReferencedAsset {
             path: display_path,
             uses,
             missing: is_missing,

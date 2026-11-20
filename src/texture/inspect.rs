@@ -10,7 +10,7 @@ use super::serz_parse::{
     all_image_blocks, count_c_hc_textures, extract_blob, extract_blob_size, extract_format,
     extract_tag, extract_unnamed_u16, hex_decode, parse_bool_tag, ImageMip,
 };
-use crate::serz::SerzNode;
+use crate::common::serz::SerzNode;
 
 /// Экстрагированные метаданные тектуры .TgPcDx для панели информации.
 #[derive(Debug, Clone)]
@@ -39,13 +39,13 @@ pub struct TextureInfo {
 pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<TextureInfo, String> {
     let (xml, total_blob_bytes) = if data.starts_with(b"SERZ") {
         // Single SERZ parse: get XML for metadata and blob sizes before clearing.
-        let mut reader = crate::serz::SerzReader::new(data);
+        let mut reader = crate::common::serz::SerzReader::new(data);
         let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
         
         // Collect blob sizes BEFORE clearing blobs for XML generation.
         let total_blob_bytes = collect_blob_bytes_and_clear(&mut root);
         
-        let xml = crate::serz::SerzReader::to_xml(&root, 0, true);
+        let xml = crate::common::serz::SerzReader::to_xml(&root, 0, true);
         (xml, total_blob_bytes)
     } else {
         let xml = String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?;
@@ -53,7 +53,7 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
         let mips = blocks
             .into_iter()
             .map(|block| -> Result<ImageMip, String> {
-                let (width, height) = crate::texture::serz_parse::image_dimensions(block).ok_or("invalid mip dimensions")?;
+                let (width, height) = super::serz_parse::image_dimensions(block).ok_or("invalid mip dimensions")?;
                 let bytes = extract_blob(block)
                     .map(|blob| hex_decode(&blob))
                     .unwrap_or_default();
@@ -263,30 +263,6 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
     Ok(normalized)
 }
 
-/// Вычисляет путь относительно папки Assets для файла.
-/// Возвращает путь от Assets без расширения, с обратными слэшами.
-pub fn compute_internal_name_from_path(tgpcdx_path: &Path, assets_root: Option<&Path>) -> Option<String> {
-    let assets_root = assets_root?;
-    let path = tgpcdx_path.canonicalize().ok()?;
-    let assets_root = assets_root.canonicalize().ok()?;
-
-    let rel = path.strip_prefix(&assets_root).ok()?;
-    // Убираем расширение (любой регистр) через PathBuf, затем в строку.
-    let rel_no_ext = rel.with_extension("");
-    let mut rel_str = rel_no_ext.to_string_lossy().replace('/', "\\");
-
-    // Убираем ведущий слэш если есть
-    if rel_str.starts_with('\\') {
-        rel_str = rel_str[1..].to_string();
-    }
-
-    if rel_str.is_empty() {
-        None
-    } else {
-        Some(rel_str)
-    }
-}
-
 pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result<(), String> {
     append_tgpcdx_log(&format!(
         "update_tgpcdx_internal_name: path={}, new_name={}",
@@ -310,14 +286,14 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
         return Err("TgPcDx save requires a binary SERZ file".into());
     }
 
-    let mut reader = crate::serz::SerzReader::new(&data);
+    let mut reader = crate::common::serz::SerzReader::new(&data);
     let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
     let preamble = reader.preamble.clone();
 
     // Обновляем имена с учётом групп текстур.
     update_tgpcdx_internal_names(&mut root, &normalized)?;
 
-    let out_bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())
+    let out_bytes = crate::common::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())
         .map_err(|e| format!("serz encode: {e}"))?;
 
     if out_bytes.is_empty() {
@@ -514,7 +490,7 @@ fn find_common_prefix(names: &[String]) -> String {
 /// Writes output bytes atomically.
 pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     if bytes.starts_with(b"SERZ") {
-        crate::serz::validate_tgpcdx_binary(bytes, None)?;
+        crate::common::serz::validate_tgpcdx_binary(bytes, None)?;
     }
     let tmp = PathBuf::from(format!("{}.tmp", output.display()));
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
@@ -536,11 +512,11 @@ pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Собирает суммарный размер всех Blob и очищает их (для генерации XML без блобов).
-fn collect_blob_bytes_and_clear(node: &mut crate::serz::SerzNode) -> u64 {
+fn collect_blob_bytes_and_clear(node: &mut crate::common::serz::SerzNode) -> u64 {
     let mut total = 0u64;
-    if let crate::serz::SerzNode::Element { children, .. } = node {
+    if let crate::common::serz::SerzNode::Element { children, .. } = node {
         for child in children {
-            if let crate::serz::SerzNode::Blob { data } = child {
+            if let crate::common::serz::SerzNode::Blob { data } = child {
                 total += data.len() as u64;
                 data.clear();
             } else {
@@ -554,7 +530,7 @@ fn collect_blob_bytes_and_clear(node: &mut crate::serz::SerzNode) -> u64 {
 /// Appends a log message to the TgPcDx log file.
 pub fn append_tgpcdx_log(message: &str) {
     use std::io::Write;
-    let log_path = crate::settings::log_file();
+    let log_path = crate::app::settings::log_file();
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

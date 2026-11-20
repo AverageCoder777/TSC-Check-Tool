@@ -6,12 +6,14 @@
 //! - `dds` — DDS import/export, mip chain validation, SERZ tree modification
 //! - `inspect` — metadata extraction, inspection, and internal name editing
 //! - `serz_parse` — common SERZ/XML parsing helpers
+//! - `texture_controller` — texture viewer controller
 
 pub mod dds;
 pub mod decode;
 pub mod format;
 pub mod inspect;
 pub mod serz_parse;
+pub mod texture_controller;
 
 pub use decode::{decode_tgpcdx_to_rgba, rgba_to_slint_image};
 

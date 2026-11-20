@@ -54,9 +54,9 @@ impl GeoSubmesh {
         match preset {
             "lod0" => {
                 self.lod_level == 0
-                    && !crate::geo::texture::is_auxiliary_node(&self.node_name)
-                    && !crate::geo::texture::is_auxiliary_node(&self.material_name)
-                    && !crate::geo::texture::is_auxiliary_node(&self.shader_name)
+                    && !super::texture::is_auxiliary_node(&self.node_name)
+                    && !super::texture::is_auxiliary_node(&self.material_name)
+                    && !super::texture::is_auxiliary_node(&self.shader_name)
             }
             "all" => true,
             "none" => false,
@@ -106,13 +106,13 @@ impl std::fmt::Display for PrimitiveTopology {
 }
 
 // Re-exported by parse.rs when `GeoModel::parse` / `GeoModel::load` are implemented there.
-pub(crate) use crate::geo::parse::parse_model;
+pub(crate) use super::parse::parse_model;
 
 impl GeoModel {
     pub fn load(path: &Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         let model = parse_model(path, &bytes)?;
-        crate::geo::diagnostics::log_parse_diagnostics(path, &model.diagnostics);
+        super::diagnostics::log_parse_diagnostics(path, &model.diagnostics);
         Ok(model)
     }
 
@@ -140,13 +140,13 @@ pub struct GeoAssembly {
 #[cfg(test)]
 impl GeoAssembly {
     pub fn load(path: &Path) -> Result<Self, String> {
-        crate::geo::assembly::load_assembly(path)
+        super::assembly::load_assembly(path)
     }
 
     pub fn compose(
         &self,
         side_by_side: bool,
     ) -> Result<(GeoModel, Vec<(PathBuf, String)>), String> {
-        crate::geo::assembly::compose_assembly(self, side_by_side)
+        super::assembly::compose_assembly(self, side_by_side)
     }
 }

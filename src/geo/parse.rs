@@ -5,24 +5,24 @@ use std::path::Path;
 
 use glam::{Mat4, Vec3};
 
-use crate::geo::diagnostics::{
+use super::diagnostics::{
     log_batch_diagnostics, log_material_diagnostics, log_vertex_buffer_diagnostics, warn_parse_skip,
 };
-use crate::geo::helpers::{
+use super::helpers::{
     build_id_map, collect_float_values, collect_i32_values, collect_transform_names,
     compute_world_transforms, decode_indices, direct_text, find_direct_number, find_named_values,
     find_number, find_reference, find_text, find_transform_id, matrix_from_values,
     parse_float_values, parse_fvf, parse_serz_document, position_format_from_type,
     resolve_ref_node, resolve_ref_text, vertex_element_size,
 };
-use crate::geo::texture::{classify_shader, is_auxiliary_node, is_hidden_shader_name};
-use crate::geo::types::{
+use super::texture::{classify_shader, is_auxiliary_node, is_hidden_shader_name};
+use super::types::{
     GeoModel, GeoParseDiagnostics, GeoRenderMode, GeoSubmesh, GeoVertex, PrimitiveTopology,
 };
-use crate::geo::vertex::{
+use super::vertex::{
     PositionFormat, fill_missing_normals, read_position, read_vec2, read_vec3,
 };
-use crate::serz::SerzNode;
+use crate::common::serz::SerzNode;
 
 #[derive(Clone, Debug)]
 pub(crate) struct VertexBuffer {
@@ -114,13 +114,13 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
         .flat_map(collect_i32_values)
         .collect::<Vec<_>>();
     let world_transforms = compute_world_transforms(&local_transforms, &transform_dependencies);
-    let xml = crate::serz::SerzReader::to_xml(&root, 0, true);
+    let xml = crate::common::serz::SerzReader::to_xml(&root, 0, true);
     let xml = if data.starts_with(b"SERZ") {
         xml
     } else {
         String::from_utf8_lossy(data).into_owned()
     };
-    let textures = crate::auditor::extract_geo_texture_references(&xml);
+    let textures = crate::auditor::auditor::extract_geo_texture_references(&xml);
     let material_bindings = find_material_bindings(&root, &textures, &id_map);
     log_material_diagnostics(path, &material_bindings);
     let transform_names = collect_transform_names(&root);
@@ -441,7 +441,7 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
 #[derive(Clone, Debug)]
 pub(crate) struct NodeContext<'a> {
     pub material_bindings: &'a HashMap<u32, MaterialBinding>,
-    pub ids: &'a HashMap<u32, &'a crate::serz::SerzNode>,
+    pub ids: &'a HashMap<u32, &'a SerzNode>,
     pub world_transforms: &'a [Mat4],
     pub transform_names: &'a [String],
     pub vb_id_to_index: &'a HashMap<u32, u32>,
@@ -449,7 +449,7 @@ pub(crate) struct NodeContext<'a> {
 }
 
 pub(crate) fn find_submeshes(
-    node: &crate::serz::SerzNode,
+    node: &SerzNode,
     inherited_material: Option<u32>,
     context: &NodeContext<'_>,
     parent_transform: Mat4,
@@ -504,15 +504,15 @@ pub(crate) fn find_submeshes(
         return;
     }
     let node_label =
-        crate::geo::helpers::direct_text(children, &["name", "nodename", "transformname"], ids)
+        direct_text(children, &["name", "nodename", "transformname"], ids)
             .unwrap_or_default();
-    let has_lower_lod_name = crate::geo::texture::lod_name_is_nonzero(name)
+    let has_lower_lod_name = lod_name_is_nonzero(name)
         || ["name", "nodename", "transformname"]
             .iter()
-            .filter_map(|field| crate::geo::helpers::direct_text(children, &[*field], ids))
-            .any(crate::geo::texture::lod_name_is_nonzero);
-    let lod = crate::geo::texture::lod_from_name(name)
-        .or_else(|| crate::geo::texture::lod_from_name(node_label))
+            .filter_map(|field| direct_text(children, &[*field], ids))
+            .any(lod_name_is_nonzero);
+    let lod = lod_from_name(name)
+        .or_else(|| lod_from_name(node_label))
         .or_else(|| {
             clean_name
                 .contains("lod")
@@ -529,7 +529,7 @@ pub(crate) fn find_submeshes(
     let excluded = inherited_excluded
         || lod.is_some_and(|level| level > 0)
         || has_lower_lod_name
-        || crate::geo::texture::node_is_explicitly_hidden(children, ids)
+        || node_is_explicitly_hidden(children, ids)
         || material_reference
             .and_then(|reference| material_bindings.get(&reference))
             .is_some_and(|binding| binding.excluded);
@@ -774,7 +774,7 @@ pub(crate) fn find_submeshes(
         } else {
             // Then check for References to known vertex buffer IDs
             next_inherited_vbuf =
-                crate::geo::helpers::find_vbuf_ref_in_subtree(children, vb_id_to_index)
+                find_vbuf_ref_in_subtree(children, vb_id_to_index)
                     .or(next_inherited_vbuf);
         }
     }
@@ -858,8 +858,8 @@ pub(crate) fn deduplicate_submeshes(batches: &mut Vec<RawSubmesh>) {
     });
 }
 
-pub(crate) fn find_local_transform(children: &[crate::serz::SerzNode]) -> Mat4 {
-    fn parse_matrix(node: &crate::serz::SerzNode) -> Option<Mat4> {
+pub(crate) fn find_local_transform(children: &[SerzNode]) -> Mat4 {
+    fn parse_matrix(node: &SerzNode) -> Option<Mat4> {
         matrix_from_values(&collect_float_values(node))
     }
 
@@ -964,8 +964,8 @@ fn resolve_implicit_vertex_buffers(batches: &mut [RawSubmesh], vertex_data: &[Ve
 }
 
 pub(crate) fn find_index_data(
-    children: &[crate::serz::SerzNode],
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    children: &[SerzNode],
+    ids: &std::collections::HashMap<u32, &SerzNode>,
     index_buffer_index: usize,
     batches: &[RawSubmesh],
     _vertex_counts: &[usize],
@@ -1025,12 +1025,12 @@ pub(crate) fn find_index_data(
 }
 
 pub(crate) fn find_index_array(
-    children: &[crate::serz::SerzNode],
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    children: &[SerzNode],
+    ids: &std::collections::HashMap<u32, &SerzNode>,
 ) -> Option<(Vec<u32>, String)> {
     fn find(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
     ) -> Option<(Vec<u32>, String)> {
         if let SerzNode::Reference { target_id, .. } = node {
@@ -1109,12 +1109,12 @@ pub(crate) fn type_name_from_width(width: usize) -> &'static str {
 }
 
 pub(crate) fn find_primitive_topology(
-    node: &crate::serz::SerzNode,
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    node: &SerzNode,
+    ids: &std::collections::HashMap<u32, &SerzNode>,
 ) -> PrimitiveTopology {
     fn find(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
     ) -> Option<PrimitiveTopology> {
         match node {
@@ -1353,13 +1353,13 @@ pub(crate) fn append_transformed_submesh(
 }
 
 pub(crate) fn find_blob(
-    children: &[crate::serz::SerzNode],
+    children: &[SerzNode],
     expected: &str,
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    ids: &std::collections::HashMap<u32, &SerzNode>,
 ) -> Option<(Vec<u8>, String)> {
     fn find_any_blob(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
     ) -> Option<Vec<u8>> {
         if let SerzNode::Reference { target_id, .. } = node {
@@ -1387,9 +1387,9 @@ pub(crate) fn find_blob(
     }
 
     fn find_named_blob(
-        node: &crate::serz::SerzNode,
+        node: &SerzNode,
         expected: &str,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
     ) -> Option<(Vec<u8>, String)> {
         match node {
@@ -1458,8 +1458,8 @@ pub(crate) fn find_blob(
 }
 
 pub(crate) fn collect_vertex_buffers(
-    node: &crate::serz::SerzNode,
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    node: &SerzNode,
+    ids: &std::collections::HashMap<u32, &SerzNode>,
     vertices: &mut Vec<VertexBuffer>,
 ) -> (HashMap<u32, u32>, HashMap<u32, u32>) {
     let mut vertex_buffer_id_map = HashMap::new();
@@ -1467,8 +1467,8 @@ pub(crate) fn collect_vertex_buffers(
     let mut vertex_data_counter = 0u32;
 
     fn collect(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         vertices: &mut Vec<VertexBuffer>,
         reference_stack: &mut HashSet<u32>,
         visited_elements: &mut HashSet<u32>,
@@ -1528,8 +1528,8 @@ pub(crate) fn collect_vertex_buffers(
             // Collect all SerzNode::Reference children inside this cHcGeometryVertexDataDx
             // (excluding references to the vertex buffer itself and vertex type declaration)
             fn collect_prim_refs(
-                node: &crate::serz::SerzNode,
-                ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+                node: &SerzNode,
+                ids: &std::collections::HashMap<u32, &SerzNode>,
                 reference_stack: &mut HashSet<u32>,
                 vb_idx: u32,
                 vb_id: u32,
@@ -1724,15 +1724,15 @@ pub(crate) fn collect_vertex_buffers(
 
 /// Collect index buffers (requires batches for vertex count inference).
 pub(crate) fn collect_index_buffers(
-    node: &crate::serz::SerzNode,
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    node: &SerzNode,
+    ids: &std::collections::HashMap<u32, &SerzNode>,
     batches: &[RawSubmesh],
     vertices: &[VertexBuffer],
     indices: &mut Vec<IndexBuffer>,
 ) {
     fn collect(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         batches: &[RawSubmesh],
         vertices: &[VertexBuffer],
         indices: &mut Vec<IndexBuffer>,
@@ -1817,8 +1817,8 @@ pub(crate) fn collect_index_buffers(
 }
 
 fn find_vertex_attribute_offsets(
-    children: &[crate::serz::SerzNode],
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    children: &[SerzNode],
+    ids: &std::collections::HashMap<u32, &SerzNode>,
 ) -> VertexAttributeOffsets {
     let mut attributes = VertexAttributeOffsets {
         position: None,
@@ -1836,10 +1836,10 @@ fn find_vertex_attribute_offsets(
     // Recursively search for cHcVertexTypeDeclarationDx, resolving References via ids.
     // Stop recursion when hitting another cHcVertexBufferDx.
     fn process_declaration_node(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
-        attributes: &mut crate::geo::parse::VertexAttributeOffsets,
+        attributes: &mut VertexAttributeOffsets,
         stream_offsets: &mut HashMap<u32, usize>,
         stream_sizes: &mut HashMap<u32, usize>,
         declaration: &mut Vec<String>,
@@ -1977,13 +1977,13 @@ pub(crate) struct VertexAttributeOffsets {
 }
 
 pub(crate) fn find_material_bindings(
-    node: &crate::serz::SerzNode,
+    node: &SerzNode,
     textures: &[String],
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    ids: &std::collections::HashMap<u32, &SerzNode>,
 ) -> std::collections::HashMap<u32, MaterialBinding> {
     fn collect_delta_strings(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
         output: &mut Vec<String>,
     ) {
@@ -2033,9 +2033,9 @@ pub(crate) fn find_material_bindings(
     }
 
     fn collect(
-        node: &crate::serz::SerzNode,
+        node: &SerzNode,
         textures: &[String],
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         next_index: &mut u32,
         bindings: &mut std::collections::HashMap<u32, MaterialBinding>,
         visited_elements: &mut HashSet<u32>,
@@ -2106,11 +2106,11 @@ pub(crate) fn find_material_bindings(
             let texture_index = texture_references
                 .iter()
                 .filter_map(|reference| {
-                    let reference = crate::auditor::normalize_texture_reference(reference);
+                    let reference = crate::auditor::auditor::normalize_texture_reference(reference);
                     textures
                         .iter()
                         .position(|texture| texture.eq_ignore_ascii_case(&reference))
-                        .map(|index| (index, crate::geo::texture::texture_priority(&reference)))
+                        .map(|index| (index, texture_priority(&reference)))
                 })
                 .min_by_key(|(_, priority)| *priority)
                 .map(|(index, _)| index)
@@ -2211,14 +2211,14 @@ pub(crate) fn find_material_bindings(
 }
 
 fn collect_text_values(
-    children: &[crate::serz::SerzNode],
+    children: &[SerzNode],
     expected: &[&str],
-    ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+    ids: &std::collections::HashMap<u32, &SerzNode>,
 ) -> Vec<String> {
     fn collect(
-        node: &crate::serz::SerzNode,
+        node: &SerzNode,
         expected: &[&str],
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
         output: &mut Vec<String>,
     ) {
@@ -2271,8 +2271,8 @@ fn collect_text_values(
     }
 
     fn collect_descendant_text(
-        node: &crate::serz::SerzNode,
-        ids: &std::collections::HashMap<u32, &crate::serz::SerzNode>,
+        node: &SerzNode,
+        ids: &std::collections::HashMap<u32, &SerzNode>,
         reference_stack: &mut HashSet<u32>,
         output: &mut Vec<String>,
     ) {

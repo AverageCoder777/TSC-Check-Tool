@@ -4,12 +4,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::serz::SerzNode;
+use crate::common::serz::SerzNode;
 use glam::Mat4;
 
 pub(crate) fn parse_serz_document(data: &[u8]) -> Result<SerzNode, String> {
     if data.starts_with(b"SERZ") {
-        crate::serz::SerzReader::new(data).parse()
+        crate::common::serz::SerzReader::new(data).parse()
     } else {
         let xml = std::str::from_utf8(data).map_err(|error| error.to_string())?;
         SerzNode::from_xml_str(xml).map(|(root, _)| root)
@@ -343,15 +343,15 @@ pub(crate) fn find_transform_id(
         .map(|value| value as usize)
 }
 
-pub(crate) fn position_format_from_type(type_name: &str) -> crate::geo::vertex::PositionFormat {
+pub(crate) fn position_format_from_type(type_name: &str) -> super::vertex::PositionFormat {
     let type_name = type_name.to_ascii_lowercase();
     if type_name.contains("float16") || type_name.contains("half") {
-        return crate::geo::vertex::PositionFormat::Float16_4;
+        return super::vertex::PositionFormat::Float16_4;
     }
     if type_name.contains("short4n") {
-        return crate::geo::vertex::PositionFormat::Short4N;
+        return super::vertex::PositionFormat::Short4N;
     }
-    crate::geo::vertex::PositionFormat::Float3
+    super::vertex::PositionFormat::Float3
 }
 
 pub(crate) fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {

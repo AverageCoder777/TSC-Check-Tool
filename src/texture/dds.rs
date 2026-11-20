@@ -12,7 +12,7 @@ use super::serz_parse::{
     collect_serz_image_mips, find_all_elements, find_element_mut, find_texture_dimensions,
     image_mips_from_bytes, set_blob_data, set_or_insert_property,
 };
-use crate::serz::SerzNode;
+use crate::common::serz::SerzNode;
 
 /// Converts DDS file to TgPcDx.
 pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<ImportReport, String> {
@@ -104,25 +104,25 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
                             && existing.format == fmt_str
                     });
             if existing_layout_matches
-                && let Ok(patched) = crate::serz::patch_tgpcdx_blobs(&target_bytes, &mips)
+                && let Ok(patched) = crate::common::serz::patch_tgpcdx_blobs(&target_bytes, &mips)
             {
                 validate_imported_tgpcdx(&patched, width, height, &fmt_str, &mips)?;
                 return write_output_bytes(output, &patched).map(|()| report);
             }
         }
         // Rebuild mip nodes whenever their layout or format does not match the DDS.
-        let mut reader = crate::serz::SerzReader::new(&target_bytes);
+        let mut reader = crate::common::serz::SerzReader::new(&target_bytes);
         let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
         let preamble = reader.preamble.clone();
         modify_tgpcdx_tree(&mut root, width, height, &fmt_str, &mips)?;
-        let bytes = crate::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())?;
+        let bytes = crate::common::serz::encode_tgpcdx_to_vec(&root, preamble.as_ref())?;
         validate_imported_tgpcdx(&bytes, width, height, &fmt_str, &mips)?;
         return write_output_bytes(output, &bytes).map(|()| report);
     }
 
     // Build the AST directly when creating a new texture.
     let node = new_tgpcdx_tree(width, height, &fmt_str, &mips);
-    let bytes = crate::serz::encode_tgpcdx_to_vec(&node, None)?;
+    let bytes = crate::common::serz::encode_tgpcdx_to_vec(&node, None)?;
     validate_imported_tgpcdx(&bytes, width, height, &fmt_str, &mips)?;
     if bytes.is_empty() {
         return Err("empty output".into());
@@ -254,7 +254,7 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
 /// Writes output bytes atomically.
 fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     if bytes.starts_with(b"SERZ") {
-        crate::serz::validate_tgpcdx_binary(bytes, None)?;
+        crate::common::serz::validate_tgpcdx_binary(bytes, None)?;
     }
     // Use unique temp name to avoid conflicts and preserve original extension.
     let tmp = output.with_extension(format!(
@@ -365,7 +365,7 @@ fn new_tgpcdx_tree(
     fmt_str: &str,
     mips: &[(u32, u32, Vec<u8>)],
 ) -> SerzNode {
-    use crate::serz::SerzNode::{Blob, Element, Property};
+    use crate::common::serz::SerzNode::{Blob, Element, Property};
 
     let image_nodes = mips
         .iter()
@@ -464,7 +464,7 @@ fn validate_imported_tgpcdx(
     format: &str,
     expected_mips: &[(u32, u32, Vec<u8>)],
 ) -> Result<(), String> {
-    let mut reader = crate::serz::SerzReader::new(bytes);
+    let mut reader = crate::common::serz::SerzReader::new(bytes);
     let root = reader
         .parse()
         .map_err(|e| format!("SERZ validation: {e}"))?;

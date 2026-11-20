@@ -2,6 +2,12 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
+use crate::app::app_controller::AssetInventoryWindowState;
+use crate::common::domain::ReferencedAsset;
+use is_safe_for_global_replacement;
+use crate::common::domain::TileKind;
+use crate::assets::has_suspicious_chars;
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum InventorySortColumn {
     #[default]
@@ -42,7 +48,7 @@ pub(crate) fn existing_directory_upwards(path: &Path) -> Option<PathBuf> {
 }
 
 pub fn build_inventory_rows(
-    state: &crate::app_controller::AssetInventoryWindowState,
+    state: &AssetInventoryWindowState,
     show_missing: bool,
 ) -> (
     Vec<slint::ModelRc<slint::StandardListViewItem>>,
@@ -51,16 +57,16 @@ pub fn build_inventory_rows(
     Vec<usize>,
 ) {
     let search = state.search.trim().to_lowercase();
-    let mut matched: Vec<(&crate::domain::ReferencedAsset, usize, usize)> = Vec::new();
+    let mut matched: Vec<(&ReferencedAsset, usize, usize)> = Vec::new();
     for (index, a) in state.assets.iter().enumerate() {
         if show_missing && !a.missing {
             continue;
         }
         if state.umlaut_filter {
-            let suspicious = crate::inventory_ui::has_suspicious_chars(&a.path)
+            let suspicious = has_suspicious_chars(&a.path)
                 || a.uses.iter().any(|u| {
-                    crate::inventory_ui::has_suspicious_chars(&u.tile)
-                        || crate::inventory_ui::has_suspicious_chars(&u.source_file_search)
+                    has_suspicious_chars(&u.tile)
+                        || has_suspicious_chars(&u.source_file_search)
                 });
             if !suspicious {
                 continue;
@@ -121,7 +127,7 @@ pub fn build_inventory_rows(
         rows.push(slint::ModelRc::new(slint::VecModel::from(vec![
             item0, item1, item2,
         ])));
-        safe_flags.push(crate::assets::is_safe_for_global_replacement(
+        safe_flags.push(is_safe_for_global_replacement(
             &a.path, &a.uses,
         ));
         delete_flags.push(
@@ -129,9 +135,9 @@ pub fn build_inventory_rows(
                 && a.uses.iter().all(|u| {
                     matches!(
                         u.tile_kind,
-                        crate::domain::TileKind::Scenery
-                            | crate::domain::TileKind::Loft
-                            | crate::domain::TileKind::Road
+                        TileKind::Scenery
+                            | TileKind::Loft
+                            | TileKind::Road
                     )
                 }),
         );

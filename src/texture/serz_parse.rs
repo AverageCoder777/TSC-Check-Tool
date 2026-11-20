@@ -1,6 +1,6 @@
 //! Common SERZ/XML parsing helpers for texture handling.
 
-use crate::serz::SerzNode;
+use crate::common::serz::SerzNode;
 
 /// Структура мипмапа с извлечёнными данными.
 #[derive(Debug, Clone)]
@@ -14,7 +14,7 @@ pub struct ImageMip {
 /// Извлекает мипмапы из байтов (SERZ или XML).
 pub fn image_mips_from_bytes(data: &[u8]) -> Result<Vec<ImageMip>, String> {
     if data.starts_with(b"SERZ") {
-        let mut reader = crate::serz::SerzReader::new(data);
+        let mut reader = crate::common::serz::SerzReader::new(data);
         let root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
         let mut mips = Vec::new();
         collect_serz_image_mips(&root, &mut mips)?;

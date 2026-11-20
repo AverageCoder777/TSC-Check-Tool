@@ -1,6 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //#![deny(clippy::all)]
 #![allow(clippy::type_complexity, reason = "required for some essential types")]
+
+mod app;
+mod assets;
+mod auditor;
+mod common;
+mod geo;
+mod routes;
+mod scenarios;
+mod texture;
+
 slint::include_modules!();
 
 use rayon::prelude::*;
@@ -16,51 +26,19 @@ use std::thread;
 use tempfile::tempdir;
 use zip::ZipArchive;
 
-mod analysis_cache;
-mod ap_picker_controller;
-mod app_controller;
-mod archive;
-mod assets;
-mod auditor;
-mod auditor_controller;
-mod blueprint;
-mod domain;
-mod external_editor;
-mod fs_utils;
-mod geo;
-mod gpu_renderer;
-mod graph_view;
-mod incomplete_folders_controller;
-mod inventory_controller;
-mod inventory_ui;
-mod missing_assets_controller;
-mod reference;
-mod route_icon_cache;
-mod routes;
-mod scenario;
-mod scenario_controller;
-mod serz;
-mod settings;
-mod settings_controller;
-mod texture;
-mod texture_controller;
-mod translit;
-mod viewer3d;
-mod windows;
-
 pub(crate) use route_icon_cache::{
     clear_route_icon_cache, request_route_icon_load, try_get_route_icon,
 };
 
 static UI_WEAK: OnceLock<slint::Weak<MainWindow>> = OnceLock::new();
 static UI_SYNC_PENDING: AtomicBool = AtomicBool::new(false);
-static APP: OnceLock<Arc<Mutex<app_controller::CheckerApp>>> = OnceLock::new();
+static APP: OnceLock<Arc<Mutex<app::CheckerApp>>> = OnceLock::new();
 
 thread_local! {
-    static INVENTORY_CONTROLLER: RefCell<Option<inventory_controller::InventoryController>> = const { RefCell::new(None) };
-    static MISSING_ASSETS_CONTROLLER: RefCell<Option<missing_assets_controller::MissingAssetsController>> = const { RefCell::new(None) };
-    static AP_PICKER_CONTROLLER: RefCell<Option<ap_picker_controller::ApPickerController>> = const { RefCell::new(None) };
-    static INCOMPLETE_FOLDERS_CONTROLLER: RefCell<Option<incomplete_folders_controller::IncompleteFoldersController>> = const { RefCell::new(None) };
+    static INVENTORY_CONTROLLER: RefCell<Option<assets::InventoryController>> = const { RefCell::new(None) };
+    static MISSING_ASSETS_CONTROLLER: RefCell<Option<assets::MissingAssetsController>> = const { RefCell::new(None) };
+    static AP_PICKER_CONTROLLER: RefCell<Option<assets::ApPickerController>> = const { RefCell::new(None) };
+    static INCOMPLETE_FOLDERS_CONTROLLER: RefCell<Option<routes::IncompleteFoldersController>> = const { RefCell::new(None) };
     static ROUTE_PROPERTIES_WARNING_WINDOW: RefCell<Option<RoutePropertiesWarningWindow>> = const { RefCell::new(None) };
 }
 
@@ -79,11 +57,11 @@ pub(crate) fn schedule_ui_sync() {
     });
 }
 
-fn app_state() -> Arc<Mutex<app_controller::CheckerApp>> {
+fn app_state() -> Arc<Mutex<app::CheckerApp>> {
     APP.get().cloned().expect("app state not initialized")
 }
 
-pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app_controller::LogLevel) {
+pub(crate) fn log_event(ui: &MainWindow, message: &str, level: app::LogLevel) {
     if let Ok(mut app) = app_state().lock() {
         app.status = message.to_owned();
         app.log_event(message.to_owned(), level);
@@ -93,13 +71,13 @@ pub(crate) fn log_event(ui: &MainWindow, message: &str, level: crate::app_contro
             .map(|e| LogLine {
                 text: e.text.clone().into(),
                 color: match e.level {
-                    crate::app_controller::LogLevel::Error => {
+                    app::LogLevel::Error => {
                         slint::Color::from_rgb_u8(239, 68, 68)
                     }
-                    crate::app_controller::LogLevel::Warning => {
+                    app::LogLevel::Warning => {
                         slint::Color::from_rgb_u8(245, 158, 11)
                     }
-                    crate::app_controller::LogLevel::Success => {
+                    app::LogLevel::Success => {
                         slint::Color::from_rgb_u8(34, 197, 94)
                     }
                     _ => slint::Color::from_rgb_u8(204, 204, 204),
@@ -294,13 +272,13 @@ fn open_texture_viewer(path: &Path) {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
-            crate::external_editor::show_native_error("Ошибка", &e.to_string());
+            common::show_native_error("Ошибка", &e.to_string());
             std::process::exit(1);
         }
     };
-    match crate::texture::decode_tgpcdx_to_rgba(&data) {
+    match texture::decode_tgpcdx_to_rgba(&data) {
         Ok((w, h, rgba)) => {
-            let controller = texture_controller::TextureController::new(Arc::new(Mutex::new(
+            let controller = texture::texture_controller::TextureController::new(Arc::new(Mutex::new(
                 AuditorState::default(),
             )));
             if let Ok(mut st) = controller.tex_state.lock() {
@@ -308,7 +286,7 @@ fn open_texture_viewer(path: &Path) {
             }
             controller.bind_buttons();
             let viewer = controller.window;
-            viewer.set_texture_image(crate::texture::rgba_to_slint_image(w, h, &rgba));
+            viewer.set_texture_image(texture::rgba_to_slint_image(w, h, &rgba));
             viewer.set_texture_orig_width(w as i32);
             viewer.set_texture_orig_height(h as i32);
             viewer.set_zoom_factor(if w > 640 || h > 480 {
@@ -319,13 +297,13 @@ fn open_texture_viewer(path: &Path) {
             viewer.set_pan_x(0.0);
             viewer.set_pan_y(0.0);
             viewer.set_show_alpha(false);
-            let info = match crate::texture::inspect_tgpcdx_with_path(&data, Some(path)) {
-                Ok(info) => crate::texture::texture_info_text(&info, path, false),
+            let info = match texture::inspect_tgpcdx_with_path(&data, Some(path)) {
+                Ok(info) => texture::texture_info_text(&info, path, false),
                 Err(_) => format!("{} x {} px  TGPCDX  {}", w, h, path.display()),
             };
             viewer.set_info_text(info.into());
             // Имя текстуры для редактирования
-            if let Ok(info) = crate::texture::inspect_tgpcdx_with_path(&data, Some(path)) {
+            if let Ok(info) = texture::inspect_tgpcdx_with_path(&data, Some(path)) {
                 viewer.set_texture_name(info.name.into());
             }
             let enabled = !std::fs::metadata(path)
@@ -336,7 +314,7 @@ fn open_texture_viewer(path: &Path) {
             std::process::exit(0);
         }
         Err(e) => {
-            crate::external_editor::show_native_error("Ошибка", &e);
+            common::show_native_error("Ошибка", &e);
             std::process::exit(1);
         }
     }
@@ -386,7 +364,7 @@ fn handle_cli_args() {
                 .unwrap_or(false);
         if is_asset {
             println!("[ExternalEditor] Запуск синхронизации для: {:?}", path);
-            match crate::external_editor::run_headless(&path) {
+            match common::run_headless(&path) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
                     eprintln!("{}", e);
@@ -399,8 +377,8 @@ fn handle_cli_args() {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("geopcdx"))
         {
-            if let Err(error) = crate::viewer3d::show_geo_viewer(&path) {
-                crate::external_editor::show_native_error("GeoPcDx Viewer", &error);
+            if let Err(error) = geo::viewer3d::show_geo_viewer(&path) {
+                common::show_native_error("GeoPcDx Viewer", &error);
                 std::process::exit(1);
             }
             std::process::exit(0);
@@ -449,14 +427,14 @@ impl Default for AuditorState {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 4 && args[1] == "--serz-diff" {
-        serz::run_test(&args[2], &args[3]);
+        common::run_test(&args[2], &args[3]);
         return;
     }
     handle_cli_args();
 
     // Фоновый поток записи полного лога на диск (AppData\TSC Check Tool\app.log).
-    let (log_tx, log_rx) = mpsc::channel::<crate::app_controller::LogEntry>();
-    let log_path = crate::settings::log_file();
+    let (log_tx, log_rx) = mpsc::channel::<app::LogEntry>();
+    let log_path = app::log_file();
     thread::spawn(move || {
         if let Some(parent) = log_path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -478,9 +456,9 @@ fn main() {
         }
     });
 
-    route_icon_cache::init();
+    routes::init();
 
-    let mut app = app_controller::CheckerApp::default();
+    let mut app = app::CheckerApp::default();
     app.log_tx = Some(log_tx);
     let app = Arc::new(Mutex::new(app));
     let _ = APP.set(app.clone());
@@ -488,14 +466,14 @@ fn main() {
 
     let ui = MainWindow::new().unwrap();
     let _ = UI_WEAK.set(ui.as_weak());
-    crate::settings::apply_saved_language(&crate::settings::load_language());
+    app::apply_saved_language(&app::load_language());
     let ui_handle = ui.as_weak();
     if let Ok(mut app) = app.lock() {
         app.start_route_scan();
         ui.set_route_thumbnails_enabled(app.route_thumbnails_enabled);
     }
 
-    let incomplete_controller = incomplete_folders_controller::IncompleteFoldersController::new(
+    let incomplete_controller = routes::IncompleteFoldersController::new(
         app_for_controllers.clone(),
     );
     incomplete_controller.bind();
@@ -504,14 +482,14 @@ fn main() {
     });
 
     let missing_controller =
-        missing_assets_controller::MissingAssetsController::new(app_for_controllers.clone());
+        assets::MissingAssetsController::new(app_for_controllers.clone());
     missing_controller.bind();
     MISSING_ASSETS_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(missing_controller);
     });
 
     let ap_picker_controller =
-        ap_picker_controller::ApPickerController::new(app_for_controllers.clone());
+        assets::ApPickerController::new(app_for_controllers.clone());
     ap_picker_controller.bind();
     AP_PICKER_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(ap_picker_controller);
@@ -525,7 +503,7 @@ fn main() {
         }
         if let Ok(mut app) = app.lock() {
             let q = app.search_query.trim().to_lowercase();
-            let filtered: Vec<&domain::Route> = app
+            let filtered: Vec<&common::Route> = app
                 .routes
                 .iter()
                 .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q))
@@ -537,12 +515,12 @@ fn main() {
                 app.selected_route = None;
             }
             app.refresh_scenarios();
-            crate::schedule_ui_sync();
+            schedule_ui_sync();
             let hide = app.hide_quick_drive_free_roam;
             let scen: Vec<ScenarioItem> = app
                 .scenarios
                 .iter()
-                .filter(|s| !hide || !crate::scenario::is_hidden_scenario_type(&s.scenario_type))
+                .filter(|s| !hide || !scenarios::is_hidden_scenario_type(&s.scenario_type))
                 .map(|s| ScenarioItem {
                     name: s.name.clone().into(),
                     scenario_type: s.scenario_type.clone().into(),
@@ -566,7 +544,7 @@ fn main() {
     ui.on_search_changed(move |query| {
         if let Ok(mut app) = app.lock() {
             app.search_query = query.to_string();
-            crate::schedule_ui_sync();
+            schedule_ui_sync();
         }
     });
 
@@ -594,17 +572,17 @@ fn main() {
         }
     });
 
-    let inventory = inventory_controller::InventoryController::new(app_for_controllers.clone());
+    let inventory = assets::inventory_controller::InventoryController::new(app_for_controllers.clone());
     inventory.bind();
     let inventory_weak_for_show = inventory.weak.clone();
     INVENTORY_CONTROLLER.with(|cell| {
         *cell.borrow_mut() = Some(inventory);
     });
 
-    let settings = settings_controller::SettingsController::new(app_for_controllers.clone());
+    let settings = app::SettingsController::new(app_for_controllers.clone());
     settings.bind();
 
-    let scenario = scenario_controller::ScenarioController::new(app_for_controllers.clone());
+    let scenario = scenarios::ScenarioController::new(app_for_controllers.clone());
     scenario.bind(&ui);
 
     let ui_weak_open = ui.as_weak();
@@ -623,12 +601,12 @@ fn main() {
             let Some(path) = path else {
                 return;
             };
-            windows::open_in_file_explorer(&path);
+            common::open_in_file_explorer(&path);
             if let Some(ui) = ui_weak_open.upgrade() {
-                crate::log_event(
+                log_event(
                     &ui,
                     &format!("Открыта папка в проводнике: {}.", path.display()),
-                    crate::app_controller::LogLevel::Info,
+                    app::LogLevel::Info,
                 );
             }
         }
@@ -644,7 +622,7 @@ fn main() {
                     inv.set_selected_asset(-1);
                     inv.set_search_query(state.search.clone().as_str().into());
                     let (rows, safe, delete_flags, filtered_indices) =
-                        crate::inventory_ui::build_inventory_rows(&state, false);
+                        assets::inventory_ui::build_inventory_rows(&state, false);
                     inv.set_inventory_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
                     inv.set_inventory_is_safe(slint::ModelRc::new(slint::VecModel::from(safe)));
                     inv.set_inventory_can_delete(slint::ModelRc::new(slint::VecModel::from(
@@ -667,15 +645,15 @@ fn main() {
             let _ = clipboard.set_text(guid.to_string());
         }
         if let Some(ui) = ui_handle_copy_guid.upgrade() {
-            crate::log_event(
+            log_event(
                 &ui,
                 &format!("GUID скопирован в буфер обмена: {guid}"),
-                crate::app_controller::LogLevel::Info,
+                app::LogLevel::Info,
             );
         }
     });
 
-    let auditor = auditor_controller::AuditorController::new(app_for_controllers.clone());
+    let auditor = auditor::AuditorController::new(app_for_controllers.clone());
     let auditor_weak_for_open_folder = auditor.weak.clone();
     ui.on_open_folder_auditor(move || {
         if let Some(w) = auditor_weak_for_open_folder.upgrade() {
@@ -684,14 +662,14 @@ fn main() {
     });
     auditor.bind(ui.as_weak());
 
-    let texture_controller = texture_controller::TextureController::new(auditor.state.clone());
+    let texture_controller = texture::texture_controller::TextureController::new(auditor.state.clone());
     texture_controller.bind(&auditor);
 
     let app = app_for_controllers.clone();
     ui.on_dismiss_incomplete_warning_once(move || {
         if let Ok(mut app) = app.lock() {
             app.show_incomplete_warning = false;
-            crate::schedule_ui_sync();
+            schedule_ui_sync();
         }
     });
 
@@ -700,10 +678,10 @@ fn main() {
         if let Ok(mut app) = app.lock() {
             app.show_incomplete_warning = false;
             app.ignore_incomplete_warning = true;
-            let mut config = crate::settings::load_config();
+            let mut config = app::load_config();
             config.ignore_incomplete_warning = true;
-            let _ = crate::settings::save_config(&config);
-            crate::schedule_ui_sync();
+            let _ = app::save_config(&config);
+            schedule_ui_sync();
         }
     });
 
@@ -711,7 +689,7 @@ fn main() {
     ui.on_show_incomplete_folders_list(move || {
         if let Ok(mut app) = app.lock() {
             app.show_incomplete_warning = false;
-            crate::schedule_ui_sync();
+            schedule_ui_sync();
             INCOMPLETE_FOLDERS_CONTROLLER.with(|cell| {
                 if let Some(controller) = cell.borrow().as_ref() {
                     controller.show(&app);
@@ -727,15 +705,15 @@ fn main() {
 #[cfg(test)]
 pub(crate) use assets::*;
 #[cfg(test)]
-pub(crate) use domain::*;
+pub(crate) use common::domain::*;
 #[cfg(test)]
-pub(crate) use reference::*;
+pub(crate) use assets::reference::*;
 #[cfg(test)]
 pub(crate) use routes::*;
 #[cfg(test)]
-pub(crate) use settings::*;
+pub(crate) use app::*;
 #[cfg(test)]
-pub(crate) use translit::*;
+pub(crate) use common::translit::*;
 
 #[cfg(test)]
 #[path = "tests/main.rs"]

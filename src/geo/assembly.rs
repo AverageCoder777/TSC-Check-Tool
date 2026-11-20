@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use glam::{Mat4, Vec3};
 use std::sync::Arc;
 
-use crate::geo::helpers::{
+use super::helpers::{
     build_id_map, find_named_numbers, find_named_text, matrix_from_values, parse_serz_document,
 };
-use crate::geo::types::{GeoAssembly, GeoAssemblyPart, GeoModel};
-use crate::serz::SerzNode;
+use super::types::{GeoAssembly, GeoAssemblyPart, GeoModel};
+use crate::common::serz::SerzNode;
 
 #[derive(Clone)]
 pub(crate) struct AttachmentBlueprintRef {
@@ -341,7 +341,7 @@ pub(crate) fn matching_geometry_blueprint(
 }
 
 pub(crate) fn asset_reference_stem(reference: &str) -> String {
-    let reference = crate::geo::texture::strip_texture_slot_prefix(reference);
+    let reference = super::texture::strip_texture_slot_prefix(reference);
     Path::new(&reference.replace('\\', "/"))
         .file_stem()
         .unwrap_or_default()
@@ -585,7 +585,7 @@ pub(crate) fn resolve_asset_path(
         .into_iter()
         .flat_map(|variant| {
             let reference = variant.to_string_lossy().replace('/', "\\");
-            let stripped = crate::geo::texture::strip_texture_slot_prefix(&reference);
+            let stripped = super::texture::strip_texture_slot_prefix(&reference);
             if stripped == reference {
                 vec![variant]
             } else {
@@ -625,7 +625,7 @@ pub(crate) fn load_cached_geometry(
         .and_then(|bytes| GeoModel::parse(path, &bytes));
     match result {
         Ok(model) => {
-            crate::geo::diagnostics::log_parse_diagnostics(path, &model.diagnostics);
+            super::diagnostics::log_parse_diagnostics(path, &model.diagnostics);
             let model = Arc::new(model);
             cache.insert(key, Arc::clone(&model));
             Some(model)
@@ -704,7 +704,7 @@ pub(crate) fn transform_has_translation(transform: Mat4) -> bool {
 pub(crate) fn log_assembly_warning(path: &Path, message: &str) {
     use std::io::Write;
 
-    let log_path = crate::settings::log_file();
+    let log_path = crate::app::settings::log_file();
     let result = (|| {
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;

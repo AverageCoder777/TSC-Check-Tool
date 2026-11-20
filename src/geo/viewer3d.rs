@@ -1,4 +1,7 @@
+use crate::common::external_editor;
 use crate::geo::{GeoModel, GeoRenderMode, GeoVertex};
+use crate::texture::decode_tgpcdx_to_rgba;
+use GeoViewerWindow;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slint::ComponentHandle;
@@ -6,6 +9,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use super::gpu_renderer::GpuRenderer;
+use super::texture::resolve_texture_data;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Camera {
@@ -154,7 +159,7 @@ impl LoadedModel {
         let resolved = texture_sources
             .iter()
             .map(|(geo_path, name)| {
-                crate::geo::texture::resolve_texture_data(geo_path, name, &mut archive_toc_cache)
+                resolve_texture_data(geo_path, name, &mut archive_toc_cache)
             })
             .collect::<Vec<_>>();
         let mut unique_resolved = HashMap::<PathBuf, (String, Vec<u8>)>::new();
@@ -174,7 +179,7 @@ impl LoadedModel {
             .into_par_iter()
             .map(|(key, (resolved_path, bytes))| {
                 let result =
-                    crate::texture::decode_tgpcdx_to_rgba(&bytes).map(|(width, height, pixels)| {
+                    decode_tgpcdx_to_rgba(&bytes).map(|(width, height, pixels)| {
                         Arc::new(Texture {
                             width,
                             height,
@@ -285,14 +290,14 @@ impl LoadedModel {
 }
 
 pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
-    let window = crate::GeoViewerWindow::new().map_err(|error| error.to_string())?;
+    let window = GeoViewerWindow::new().map_err(|error| error.to_string())?;
     let weak = window.as_weak();
     let editor_weak = window.as_weak();
     let editor_path = path.to_path_buf();
     window.on_open_in_editor(move || {
         let callback_weak = editor_weak.clone();
         if let Err(error) =
-            crate::external_editor::open_and_sync_with_vscode(&editor_path, move |result| {
+            external_editor::open_and_sync_with_vscode(&editor_path, move |result| {
                 let status = match result {
                     Ok(message) => message,
                     Err(error) => format!("Ошибка редактора: {error}"),
@@ -331,7 +336,7 @@ pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
     window.run().map_err(|error| error.to_string())
 }
 
-fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
+fn bind_camera(window: &GeoViewerWindow, sender: Sender<ViewCommand>) {
     let weak = window.as_weak();
     window.on_camera_changed(
         move |yaw, pitch, distance, pan_x, pan_y, width, height, wireframe| {
@@ -354,7 +359,7 @@ fn bind_camera(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
     );
 }
 
-fn bind_batch_panel(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>) {
+fn bind_batch_panel(window: &GeoViewerWindow, sender: Sender<ViewCommand>) {
     let toggle_sender = sender.clone();
     window.on_toggle_batch(move |index, visible| {
         if index >= 0 {
@@ -374,7 +379,7 @@ fn bind_batch_panel(window: &crate::GeoViewerWindow, sender: Sender<ViewCommand>
 }
 
 fn push_frame(
-    window: &slint::Weak<crate::GeoViewerWindow>,
+    window: &slint::Weak<GeoViewerWindow>,
     width: u32,
     height: u32,
     pixels: Vec<u8>,
@@ -394,7 +399,7 @@ fn push_frame(
 
 fn render_worker(
     path: PathBuf,
-    window: slint::Weak<crate::GeoViewerWindow>,
+    window: slint::Weak<GeoViewerWindow>,
     receiver: Receiver<ViewCommand>,
 ) {
     let mut loaded = match LoadedModel::load(&path) {
@@ -516,7 +521,7 @@ fn render_worker(
 
 fn set_batch_visibility(
     loaded: &mut LoadedModel,
-    gpu: Option<&mut crate::gpu_renderer::GpuRenderer>,
+    gpu: Option<&mut GpuRenderer>,
     index: usize,
     visible: bool,
 ) {
@@ -530,7 +535,7 @@ fn set_batch_visibility(
 
 fn apply_batch_preset(
     loaded: &mut LoadedModel,
-    gpu: Option<&mut crate::gpu_renderer::GpuRenderer>,
+    gpu: Option<&mut GpuRenderer>,
     preset: &str,
 ) {
     for submesh in &mut loaded.model.submeshes {
@@ -542,7 +547,7 @@ fn apply_batch_preset(
     }
 }
 
-fn batch_entries(model: &GeoModel, filter: &str) -> Vec<crate::BatchEntry> {
+fn batch_entries(model: &GeoModel, filter: &str) -> Vec<BatchEntry> {
     let needle = filter.trim().to_ascii_lowercase();
     model
         .submeshes
@@ -558,7 +563,7 @@ fn batch_entries(model: &GeoModel, filter: &str) -> Vec<crate::BatchEntry> {
                 .iter()
                 .any(|value| value.to_ascii_lowercase().contains(&needle))
         })
-        .map(|(index, submesh)| crate::BatchEntry {
+        .map(|(index, submesh)| BatchEntry {
             index: index as i32,
             node_name: submesh.node_name.as_str().into(),
             material_name: submesh.material_name.as_str().into(),
@@ -570,8 +575,8 @@ fn batch_entries(model: &GeoModel, filter: &str) -> Vec<crate::BatchEntry> {
         .collect()
 }
 
-fn create_gpu_renderer(loaded: &LoadedModel) -> (Option<crate::gpu_renderer::GpuRenderer>, String) {
-    match crate::gpu_renderer::GpuRenderer::new(
+fn create_gpu_renderer(loaded: &LoadedModel) -> (Option<GpuRenderer>, String) {
+    match GpuRenderer::new(
         &loaded.model.vertices,
         &loaded.model.indices,
         &loaded.model.submeshes,
@@ -588,7 +593,7 @@ fn create_gpu_renderer(loaded: &LoadedModel) -> (Option<crate::gpu_renderer::Gpu
 
 fn render_frame(
     model: &LoadedModel,
-    gpu: Option<&mut crate::gpu_renderer::GpuRenderer>,
+    gpu: Option<&mut GpuRenderer>,
     camera: Camera,
 ) -> Result<(u32, u32, Vec<u8>), String> {
     if let Some(gpu) = gpu {
