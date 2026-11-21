@@ -134,11 +134,6 @@ pub fn extract_format(block: &str) -> String {
     String::new()
 }
 
-/// Извлекает hex-блоб из XML-блока.
-pub fn extract_blob(block: &str) -> Option<String> {
-    extract_blob_slice(block).map(str::to_owned)
-}
-
 fn extract_blob_slice(block: &str) -> Option<&str> {
     const MARKER: &str = "<d:blob d:size=\"";
     let start = block.find(MARKER)?;
