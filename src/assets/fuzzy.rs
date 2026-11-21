@@ -3,58 +3,6 @@ use std::path::{Path, PathBuf};
 
 use crate::common::translit::BROKEN_CHARACTERS;
 
-/// Буквы, которые выглядят одинаково, но различаются кодом.
-///
-/// В именах файлов игры встречается кириллическая «Е» вместо латинской: такой
-/// файл нужно найти, но спутать его с другим нельзя.
-pub(crate) const HOMOGLYPHS: [(char, char); 45] = [
-    ('а', 'a'),
-    ('б', 'b'),
-    ('в', 'b'),
-    ('г', 'r'),
-    ('д', 'd'),
-    ('е', 'e'),
-    ('ё', 'e'),
-    ('ж', 'x'),
-    ('з', '3'),
-    ('и', 'u'),
-    ('й', 'u'),
-    ('к', 'k'),
-    ('л', 'l'),
-    ('м', 'm'),
-    ('н', 'h'),
-    ('о', 'o'),
-    ('п', 'n'),
-    ('р', 'p'),
-    ('с', 'c'),
-    ('т', 't'),
-    ('у', 'y'),
-    ('ф', 'f'),
-    ('х', 'x'),
-    ('ц', 'u'),
-    ('ч', '4'),
-    ('ш', 'w'),
-    ('щ', 'w'),
-    ('ъ', 'b'),
-    ('ы', 'b'),
-    ('ь', 'b'),
-    ('э', 'e'),
-    ('ю', 'i'),
-    ('я', 'r'),
-    ('А', 'A'),
-    ('В', 'B'),
-    ('Е', 'E'),
-    ('К', 'K'),
-    ('М', 'M'),
-    ('Н', 'H'),
-    ('О', 'O'),
-    ('Р', 'P'),
-    ('С', 'C'),
-    ('Т', 'T'),
-    ('У', 'Y'),
-    ('Х', 'X'),
-];
-
 /// Являются ли две буквы похожими начертанием.
 pub(crate) fn is_homoglyph(left: char, right: char) -> bool {
     let (cyrillic, ascii) = match (left.is_ascii(), right.is_ascii()) {
@@ -146,13 +94,6 @@ pub(crate) fn glitch_match(query: &[char], candidate: &[char]) -> bool {
         return false;
     }
     glitch_match_inner(query, candidate, extra_budget, wildcards)
-}
-
-pub(crate) fn fuzzy_match_name(query: &str, candidate: &str) -> bool {
-    if !ascii_digits_equal(query, candidate) {
-        return false;
-    }
-    PreparedFuzzyQuery::new(query).is_some_and(|prepared| prepared.matches(candidate))
 }
 
 pub(crate) fn find_fuzzy_child(

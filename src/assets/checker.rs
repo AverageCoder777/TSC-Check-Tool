@@ -54,10 +54,6 @@ fn name_matches_dash(name: &str, expected_dash: &str) -> bool {
     }
 }
 
-pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> FileAnalysis {
-    analyze_route_file_with_stamp(route_file, temp_dir, None)
-}
-
 fn analyze_route_file_with_stamp(
     route_file: &RouteFile,
     temp_dir: &Path,
