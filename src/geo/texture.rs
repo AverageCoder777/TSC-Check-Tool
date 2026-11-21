@@ -224,8 +224,8 @@ fn ends_with_any_ignore_ascii_case(haystack: &str, suffixes: &[&str]) -> bool {
 }
 
 fn parse_leading_lod_number(after_lod: &str) -> Option<u32> {
-    let digits = after_lod
-        .trim_start_matches(|c: char| c == '_' || c == '-' || c.is_ascii_whitespace());
+    let digits =
+        after_lod.trim_start_matches(|c: char| c == '_' || c == '-' || c.is_ascii_whitespace());
     let end = digits.bytes().take_while(u8::is_ascii_digit).count();
     (end > 0).then(|| digits[..end].parse().ok()).flatten()
 }

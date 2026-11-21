@@ -217,8 +217,7 @@ pub(super) fn downscale_rgba(
         let src_y = (u64::from(y) * u64::from(height) / u64::from(scaled_height)) as usize;
         let src_row = &pixels[src_y * src_stride..(src_y + 1) * src_stride];
         for x in 0..scaled_width {
-            let src_x =
-                (u64::from(x) * u64::from(width) / u64::from(scaled_width)) as usize * 4;
+            let src_x = (u64::from(x) * u64::from(width) / u64::from(scaled_width)) as usize * 4;
             scaled.extend_from_slice(&src_row[src_x..src_x + 4]);
         }
     }

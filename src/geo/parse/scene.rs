@@ -124,8 +124,12 @@ pub(crate) fn find_submeshes(
     let is_same_state = contains_ignore_ascii_case(name, "geometrynodesamestate");
     let inherits_parent_transform = is_same_state
         && inherited_transform_id.is_some()
-        && direct_text(children, &["primarytransformid", "primarytransformids"], ids)
-            .and_then(parse_i32_trimmed)
+        && direct_text(
+            children,
+            &["primarytransformid", "primarytransformids"],
+            ids,
+        )
+        .and_then(parse_i32_trimmed)
             == Some(0)
         && direct_text(children, &["transformid", "transformids"], ids).is_none();
     let active_transform_id = if inherits_parent_transform {

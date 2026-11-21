@@ -384,7 +384,8 @@ pub(crate) fn find_transform_id(
             SerzNode::Reference { name, target_id }
                 if matches_any_ignore_ascii_case(name, ALIASES) =>
             {
-                ids.get(target_id).and_then(|t| first_non_negative_in_node(t))
+                ids.get(target_id)
+                    .and_then(|t| first_non_negative_in_node(t))
             }
             SerzNode::Element { name, children, .. }
                 if matches_any_ignore_ascii_case(name, ALIASES) =>
@@ -484,9 +485,7 @@ pub(crate) fn direct_text<'a>(
 ) -> Option<&'a str> {
     let mut reference_stack = HashSet::new();
     children.iter().find_map(|child| match child {
-        SerzNode::Property { name, value, .. }
-            if matches_any_ignore_ascii_case(name, expected) =>
-        {
+        SerzNode::Property { name, value, .. } if matches_any_ignore_ascii_case(name, expected) => {
             Some(value.as_str())
         }
         SerzNode::Array { name, values, .. } if matches_any_ignore_ascii_case(name, expected) => {

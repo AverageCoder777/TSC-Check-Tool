@@ -149,7 +149,12 @@ impl TextureController {
                 external_editor::open_and_sync_with_vscode(&path, move |result| match result {
                     Ok(message) => match load_texture_snapshot(&callback_path) {
                         Ok(snapshot) => {
-                            store_snapshot(&callback_state, &callback_info, &callback_path, &snapshot);
+                            store_snapshot(
+                                &callback_state,
+                                &callback_info,
+                                &callback_path,
+                                &snapshot,
+                            );
                             notify(&callback_viewer, &callback_ui, &message, LogLevel::Info);
                             let viewer = callback_viewer.clone();
                             let _ = slint::invoke_from_event_loop(move || {
@@ -346,25 +351,27 @@ impl TextureController {
             let tex_state = tex_state_for_name.clone();
             let tex_info = tex_info_for_name.clone();
             let new_name = new_name.to_string();
-            thread::spawn(move || match update_tgpcdx_internal_name(&path, &new_name) {
-                Ok(()) => {
-                    if let Ok(snapshot) = load_texture_snapshot(&path) {
-                        store_snapshot(&tex_state, &tex_info, &path, &snapshot);
-                        let vw = viewer_weak.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(v) = vw.upgrade() {
-                                apply_texture_to_viewer(&v, &snapshot, false);
-                            }
-                        });
+            thread::spawn(
+                move || match update_tgpcdx_internal_name(&path, &new_name) {
+                    Ok(()) => {
+                        if let Ok(snapshot) = load_texture_snapshot(&path) {
+                            store_snapshot(&tex_state, &tex_info, &path, &snapshot);
+                            let vw = viewer_weak.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(v) = vw.upgrade() {
+                                    apply_texture_to_viewer(&v, &snapshot, false);
+                                }
+                            });
+                        }
+                        let msg = format!("Внутреннее имя текстуры сохранено: {}", path.display());
+                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
                     }
-                    let msg = format!("Внутреннее имя текстуры сохранено: {}", path.display());
-                    notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
-                }
-                Err(e) => {
-                    let msg = format!("Ошибка сохранения имени: {e}");
-                    notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
-                }
-            });
+                    Err(e) => {
+                        let msg = format!("Ошибка сохранения имени: {e}");
+                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
+                    }
+                },
+            );
         });
 
         // Подстановка имени по имени файла

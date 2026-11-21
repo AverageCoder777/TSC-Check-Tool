@@ -158,7 +158,9 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
 
     let (file_size_bytes, has_bak, name_matches_filename) = match path {
         Some(p) => {
-            let fs_size = fs::metadata(p).map(|m| m.len()).unwrap_or(data.len() as u64);
+            let fs_size = fs::metadata(p)
+                .map(|m| m.len())
+                .unwrap_or(data.len() as u64);
             let has = fs::metadata(append_path_suffix(p, ".bak")).is_ok();
             let file_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let internal_tail = name.rsplit(['\\', '/']).next().unwrap_or(&name);
@@ -206,8 +208,7 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
 
     const FORBIDDEN_EXTS: [&str; 4] = [".tgpcdx", ".dds", ".ace", ".tgpc"];
     if FORBIDDEN_EXTS.iter().any(|ext| {
-        trimmed.len() >= ext.len()
-            && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
+        trimmed.len() >= ext.len() && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
     }) {
         return Err(format!(
             "Внутреннее имя не должно содержать расширение файла (.tgpcdx, .dds, .ace): {trimmed}"
@@ -250,8 +251,8 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
 
     update_tgpcdx_internal_names(&mut root, &normalized)?;
 
-    let out_bytes = encode_tgpcdx_to_vec(&root, preamble.as_ref())
-        .map_err(|e| format!("serz encode: {e}"))?;
+    let out_bytes =
+        encode_tgpcdx_to_vec(&root, preamble.as_ref()).map_err(|e| format!("serz encode: {e}"))?;
     if out_bytes.is_empty() {
         return Err("Пустой результат сериализации".into());
     }

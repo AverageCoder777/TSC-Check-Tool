@@ -108,10 +108,7 @@ pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
     if u.contains("BGRA") {
         return DdsCompression::Bgra8888;
     }
-    if u.contains("8888")
-        || u.contains("RGBA")
-        || u.contains("ARGB")
-        || u.contains("UNCOMPRESSED")
+    if u.contains("8888") || u.contains("RGBA") || u.contains("ARGB") || u.contains("UNCOMPRESSED")
     {
         return DdsCompression::Rgba8888;
     }

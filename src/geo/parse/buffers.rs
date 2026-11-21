@@ -87,8 +87,7 @@ pub(crate) fn collect_vertex_buffers(
                 return;
             }
 
-            let is_geometry_vertex_data =
-                contains_ignore_ascii_case(name, "chcgeometryvertexdata");
+            let is_geometry_vertex_data = contains_ignore_ascii_case(name, "chcgeometryvertexdata");
             let is_vertex_buffer = contains_ignore_ascii_case(name, "chcvertexbuffer");
             let pushed = if (is_geometry_vertex_data || is_vertex_buffer) && *id != 0 {
                 self.ancestor_ids.push(*id);
@@ -359,8 +358,8 @@ pub(crate) fn find_index_data(
 
     let inferred_u32 = max_index_end > 0 && {
         let byte_len = bytes.len() as u64;
-        let exact_u32 =
-            max_index_end.checked_mul(4) == Some(byte_len) && max_index_end.checked_mul(2) != Some(byte_len);
+        let exact_u32 = max_index_end.checked_mul(4) == Some(byte_len)
+            && max_index_end.checked_mul(2) != Some(byte_len);
         let local_exceeds_u16 = max_local_vertex_ref > u64::from(u16::MAX);
         let enough_for_u32 = max_index_end
             .checked_mul(4)
@@ -466,7 +465,9 @@ pub(crate) fn find_blob(
             return found;
         }
         match node {
-            SerzNode::Element { name, .. } if contains_ignore_ascii_case(name, "chcvertexbuffer") => {
+            SerzNode::Element { name, .. }
+                if contains_ignore_ascii_case(name, "chcvertexbuffer") =>
+            {
                 None
             }
             SerzNode::Element { children, .. } => children
@@ -504,7 +505,9 @@ pub(crate) fn find_blob(
                     .find_map(|child| find_any_blob(child, ids, reference_stack))
                     .map(|data| (data, name.clone()))
             }
-            SerzNode::Element { name, .. } if contains_ignore_ascii_case(name, "chcvertexbuffer") => {
+            SerzNode::Element { name, .. }
+                if contains_ignore_ascii_case(name, "chcvertexbuffer") =>
+            {
                 None
             }
             SerzNode::Element { children, .. } => children
@@ -587,10 +590,10 @@ fn find_vertex_attribute_offsets(
                             if !contains_ignore_ascii_case(decl_name, "elementdecl") {
                                 continue;
                             }
-                            let usage =
-                                direct_text(element_children, &["usage"], self.ids).unwrap_or_default();
-                            let type_name =
-                                direct_text(element_children, &["type"], self.ids).unwrap_or_default();
+                            let usage = direct_text(element_children, &["usage"], self.ids)
+                                .unwrap_or_default();
+                            let type_name = direct_text(element_children, &["type"], self.ids)
+                                .unwrap_or_default();
                             let stream_index =
                                 find_direct_number(element_children, &["streamindex"], self.ids)
                                     .and_then(|v| u32::try_from(v).ok())
@@ -601,12 +604,14 @@ fn find_vertex_attribute_offsets(
                                 self.ids,
                             )
                             .and_then(|value| usize::try_from(value).ok());
-                            let offset = explicit_offset
-                                .unwrap_or_else(|| *self.stream_offsets.entry(stream_index).or_default());
+                            let offset = explicit_offset.unwrap_or_else(|| {
+                                *self.stream_offsets.entry(stream_index).or_default()
+                            });
                             if let Some(size) = vertex_element_size(type_name) {
                                 self.stream_offsets
                                     .insert(stream_index, offset.saturating_add(size));
-                                let stream_size = self.stream_sizes.entry(stream_index).or_default();
+                                let stream_size =
+                                    self.stream_sizes.entry(stream_index).or_default();
                                 *stream_size = stream_size.saturating_add(size);
                             }
                             if stream_index == 0 {
@@ -625,8 +630,12 @@ fn find_vertex_attribute_offsets(
                                 {
                                     self.attributes.tangent = Some(offset);
                                 } else if contains_ignore_ascii_case(usage, "texcoord")
-                                    && find_direct_number(element_children, &["usageindex"], self.ids)
-                                        .unwrap_or(0)
+                                    && find_direct_number(
+                                        element_children,
+                                        &["usageindex"],
+                                        self.ids,
+                                    )
+                                    .unwrap_or(0)
                                         == 0
                                     && self.attributes.uv.is_none()
                                 {

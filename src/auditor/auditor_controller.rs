@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::app::app_controller::{CheckerApp, LogLevel};
-use crate::auditor::{graph_view::*,auditor_main::*};
+use crate::auditor::{auditor_main::*, graph_view::*};
 use crate::common::archive::ApArchiveCache;
 use crate::common::external_editor::open_and_sync_with_vscode;
 use crate::common::{
@@ -480,8 +480,7 @@ impl AuditorController {
                         .get(&key)
                         .cloned()
                         .unwrap_or_default();
-                    let missing_refs: Vec<PathBuf> = if item.kind
-                        != AssetResourceKind::Unused
+                    let missing_refs: Vec<PathBuf> = if item.kind != AssetResourceKind::Unused
                         && !item.expected_path.as_os_str().is_empty()
                         && !item.expected_path.is_file()
                     {

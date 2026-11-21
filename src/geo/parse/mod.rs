@@ -28,13 +28,10 @@ use crate::geo::vertex::{
     PositionFormat, fill_missing_normals, read_position, read_vec2, read_vec3,
 };
 
-pub(crate) use buffers::{
-    collect_index_buffers, collect_vertex_buffers, 
-};
+pub(crate) use buffers::{collect_index_buffers, collect_vertex_buffers};
 pub(crate) use materials::find_material_bindings;
 pub(crate) use scene::{
-    NodeContext, TraversalState, deduplicate_submeshes, 
-    find_primitive_topology, find_submeshes,
+    NodeContext, TraversalState, deduplicate_submeshes, find_primitive_topology, find_submeshes,
 };
 
 #[derive(Clone, Debug)]
@@ -235,10 +232,8 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
     }
 
     let has_batch_ranges = !raw_batches.is_empty();
-    let render_batches: Vec<&RawSubmesh> = raw_batches
-        .iter()
-        .filter(|batch| !batch.excluded)
-        .collect();
+    let render_batches: Vec<&RawSubmesh> =
+        raw_batches.iter().filter(|batch| !batch.excluded).collect();
     let primitive_type = render_batches
         .first()
         .map(|batch| batch.topology)
@@ -425,12 +420,16 @@ fn decode_vertex_buffer(buffer: &VertexBuffer) -> Result<Vec<GeoVertex>, String>
         return Err("length is not a nonzero multiple of the stride".into());
     }
 
-    let valid_normal_offset = buffer
-        .normal_offset
-        .filter(|offset| offset.checked_add(12).is_some_and(|end| end <= buffer.stride));
-    let valid_uv_offset = buffer
-        .uv_offset
-        .filter(|offset| offset.checked_add(8).is_some_and(|end| end <= buffer.stride));
+    let valid_normal_offset = buffer.normal_offset.filter(|offset| {
+        offset
+            .checked_add(12)
+            .is_some_and(|end| end <= buffer.stride)
+    });
+    let valid_uv_offset = buffer.uv_offset.filter(|offset| {
+        offset
+            .checked_add(8)
+            .is_some_and(|end| end <= buffer.stride)
+    });
 
     let mut decoded = Vec::with_capacity(vertex_count);
     for record in buffer.bytes.chunks_exact(buffer.stride) {

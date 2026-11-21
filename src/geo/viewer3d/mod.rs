@@ -167,7 +167,10 @@ fn bind_external_editor(window: &GeoViewerWindow, path: &Path) {
                 set_status(&callback_weak, status);
             })
         {
-            set_status(&editor_weak, format!("Не удалось открыть редактор: {error}"));
+            set_status(
+                &editor_weak,
+                format!("Не удалось открыть редактор: {error}"),
+            );
         }
     });
 }

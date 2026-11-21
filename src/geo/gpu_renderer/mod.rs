@@ -348,7 +348,11 @@ impl GpuRenderer {
     }
 
     fn ensure_render_targets(&mut self, width: u32, height: u32) {
-        if self.targets.as_ref().is_some_and(|t| t.size == (width, height)) {
+        if self
+            .targets
+            .as_ref()
+            .is_some_and(|t| t.size == (width, height))
+        {
             return;
         }
         self.targets = Some(RenderTargets::new(&self.device, width, height));

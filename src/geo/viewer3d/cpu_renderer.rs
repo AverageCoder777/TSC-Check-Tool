@@ -4,7 +4,6 @@ use super::model::LoadedModel;
 use super::{Camera, Texture};
 use crate::geo::{GeoRenderMode, GeoVertex};
 
-// Pre-normalized Vec3::new(-0.4, 0.7, 0.6)
 const LIGHT_DIR: Vec3 = Vec3::new(-0.398_014_9, 0.696_526_05, 0.597_022_35);
 const BG_COLOR: [u8; 4] = [28, 32, 40, 255];
 const WIRE_COLOR: [u8; 4] = [105, 190, 245, 255];
@@ -79,9 +78,27 @@ pub(super) fn render_cpu(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<
                 continue;
             };
             if camera.wireframe {
-                draw_line(&mut pixels, width, height, a.position.truncate(), b.position.truncate());
-                draw_line(&mut pixels, width, height, b.position.truncate(), c.position.truncate());
-                draw_line(&mut pixels, width, height, c.position.truncate(), a.position.truncate());
+                draw_line(
+                    &mut pixels,
+                    width,
+                    height,
+                    a.position.truncate(),
+                    b.position.truncate(),
+                );
+                draw_line(
+                    &mut pixels,
+                    width,
+                    height,
+                    b.position.truncate(),
+                    c.position.truncate(),
+                );
+                draw_line(
+                    &mut pixels,
+                    width,
+                    height,
+                    c.position.truncate(),
+                    a.position.truncate(),
+                );
             } else {
                 raster_triangle(
                     &mut pixels,

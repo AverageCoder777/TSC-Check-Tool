@@ -79,8 +79,7 @@ pub(crate) fn log_vertex_buffer_diagnostics(
     vertex_data: &[VertexBuffer],
     index_data: &[IndexBuffer],
 ) {
-    let mut message =
-        String::with_capacity(64 + vertex_data.len() * 96 + index_data.len() * 48);
+    let mut message = String::with_capacity(64 + vertex_data.len() * 96 + index_data.len() * 48);
     let _ = write!(message, "[GeoPcDx] {}: vertex_buffers=[", path.display());
     for (i, buffer) in vertex_data.iter().enumerate() {
         if i > 0 {

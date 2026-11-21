@@ -72,9 +72,7 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     for _ in 0..declared {
         let pitch = format.get_pitch(mw).ok_or("pitch")?;
         let row_h = mh.div_ceil(format.get_pitch_height());
-        let size = pitch
-            .checked_mul(row_h)
-            .ok_or("mip data size overflow")? as usize;
+        let size = pitch.checked_mul(row_h).ok_or("mip data size overflow")? as usize;
         let end = off.checked_add(size).ok_or("mip data size overflow")?;
         if end > all.len() {
             return Err("DDS mip data is shorter than its declared mip chain".into());
@@ -100,9 +98,7 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
                 .all(|(existing, (w, h, _))| {
                     existing.width == *w && existing.height == *h && existing.format == fmt_str
                 });
-        if existing_layout_matches
-            && let Ok(patched) = patch_tgpcdx_blobs(&target_bytes, &mips)
-        {
+        if existing_layout_matches && let Ok(patched) = patch_tgpcdx_blobs(&target_bytes, &mips) {
             validate_imported_tgpcdx(&patched, width, height, &fmt_str, &mips)?;
             return write_output_bytes(output, &patched).map(|()| report);
         }
@@ -349,9 +345,9 @@ fn modify_tgpcdx_tree(
 
     let mip_container = find_element_mut(root, "Mip").ok_or("no Mip node")?;
     if let SerzNode::Element { children, .. } = mip_container {
-        children.retain(|child| {
-            !matches!(child, SerzNode::Element { name, .. } if name == "cHcImageDx")
-        });
+        children.retain(
+            |child| !matches!(child, SerzNode::Element { name, .. } if name == "cHcImageDx"),
+        );
         children.extend(image_nodes);
     } else {
         return Err("invalid Mip node".into());
