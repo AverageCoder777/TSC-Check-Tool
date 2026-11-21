@@ -1,18 +1,38 @@
-use crate::{AuditorState, FolderAuditorWindow};
-use slint::ComponentHandle;
-use slint::Weak;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use slint::{ComponentHandle, Weak};
+
 use crate::app::app_controller::{CheckerApp, LogLevel};
-use crate::auditor::{auditor_main::*, graph_view::*};
+use crate::auditor::auditor_main::{
+    AssetResourceKind, BrokenResourceRef, audit_folders_with_progress, filter_items, sort_items,
+};
+use crate::auditor::graph_view::{generate_full_directory_graph, open_dependency_graph_in_browser};
 use crate::common::archive::ApArchiveCache;
 use crate::common::external_editor::open_and_sync_with_vscode;
-use crate::common::{
-    fs_utils::{normalize_path, to_assets_relative_display},
-    windows::open_in_explorer,
-};
+use crate::common::fs_utils::{normalize_path, to_assets_relative_display};
+#[cfg(windows)]
+use crate::common::windows::open_in_explorer;
+use crate::{AuditorState, FolderAuditorWindow};
+
+struct BusyGuard(Arc<AtomicBool>);
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn find_assets_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
+        })
+        .map(Path::to_path_buf)
+}
 
 pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
@@ -20,28 +40,19 @@ pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
             crate::gettext!("Указанный путь не существует или не является папкой!").to_string(),
         );
     }
-    let assets_ancestor = path.ancestors().find(|p| {
-        p.file_name()
-            .map(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
-            .unwrap_or(false)
-    });
-    let Some(assets_root) = assets_ancestor else {
+    let normalized = normalize_path(path);
+    let Some(assets_root) = find_assets_root(&normalized) else {
         return Err(
             crate::gettext!("Папка должна находиться внутри каталога RailWorks/Assets!")
                 .to_string(),
         );
     };
-    if path == assets_root
-        || path
+    if normalized == assets_root
+        || normalized
             .file_name()
             .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
     {
         return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком! Выберите папку провайдера или продукта (например, Assets/Kuju).").to_string());
-    }
-    if let Ok(rel) = path.strip_prefix(assets_root)
-        && rel.components().count() == 0
-    {
-        return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком!").to_string());
     }
     Ok(path.to_path_buf())
 }
@@ -69,387 +80,359 @@ impl AuditorController {
             is_busy: Arc::new(AtomicBool::new(false)),
         }
     }
+
     pub fn bind(&self, _ui_weak: Weak<crate::MainWindow>) {
-        {
-            let handle = self.weak.clone();
-            self.window.on_pick_folder(move || {
-                let Some(w) = handle.upgrade() else { return };
-                let current = w.get_folder_path().to_string();
-                let mut dialog = rfd::FileDialog::new().set_title(crate::gettext!("Выберите одну или несколько папок для аудита"));
-                if !current.is_empty() {
-                    let p = PathBuf::from(current.split(';').next().unwrap_or("").trim());
-                    if p.is_dir() {
-                        dialog = dialog.set_directory(&p);
-                    }
+        self.bind_pick_folder();
+        self.bind_start_audit();
+        self.bind_filter_and_sort();
+        self.bind_row_selected();
+        self.bind_graphs();
+        self.bind_file_actions();
+    }
+
+    fn bind_pick_folder(&self) {
+        let handle = self.weak.clone();
+        self.window.on_pick_folder(move || {
+            let Some(w) = handle.upgrade() else { return };
+            let current = w.get_folder_path().to_string();
+            let mut dialog = rfd::FileDialog::new()
+                .set_title(crate::gettext!("Выберите одну или несколько папок для аудита"));
+            if !current.is_empty() {
+                let first = current.split(';').next().unwrap_or("").trim();
+                let p = Path::new(first);
+                if p.is_dir() {
+                    dialog = dialog.set_directory(p);
                 }
-                if let Some(folders) = dialog.pick_folders() {
-                    let valid_folders: Vec<PathBuf> = folders
-                        .into_iter()
-                        .filter_map(|p| validate_audit_folder(&p).ok())
-                        .collect();
-                    if valid_folders.is_empty() {
-                        w.set_scan_status_text(crate::gettext!("Ошибка: выбранные папки должны находится внутри каталога Assets и не быть самим каталогом Assets!").into());
-                        return;
+            }
+            if let Some(folders) = dialog.pick_folders() {
+                let valid_folders: Vec<PathBuf> = folders
+                    .into_iter()
+                    .filter_map(|p| validate_audit_folder(&p).ok())
+                    .collect();
+                if valid_folders.is_empty() {
+                    w.set_scan_status_text(crate::gettext!("Ошибка: выбранные папки должны находится внутри каталога Assets и не быть самим каталогом Assets!").into());
+                    return;
+                }
+                let joined = valid_folders
+                    .iter()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                w.set_folder_path(joined.into());
+            }
+        });
+    }
+
+    fn bind_start_audit(&self) {
+        let handle = self.weak.clone();
+        let state = self.state.clone();
+        let audit_generation = self.audit_generation.clone();
+        let is_busy = self.is_busy.clone();
+
+        self.window.on_start_audit(move |folder_path| {
+            if is_busy.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            let busy_guard = BusyGuard(is_busy.clone());
+
+            let paths: Vec<PathBuf> = folder_path
+                .as_str()
+                .split([';', ','])
+                .map(|s| s.trim().trim_matches('"').trim())
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .collect();
+
+            if paths.is_empty() {
+                eprintln!("[Auditor] No folder paths provided");
+                return;
+            }
+            for p in &paths {
+                if let Err(msg) = validate_audit_folder(p) {
+                    eprintln!("[Auditor] Invalid folder path: {p:?} -> {msg}");
+                    if let Some(w) = handle.upgrade() {
+                        w.set_scan_status_text(msg.into());
+                        w.set_is_scanning(false);
+                        w.set_is_scan_completed(false);
                     }
-                    let joined = valid_folders
-                        .iter()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    w.set_folder_path(joined.into());
+                    return;
+                }
+            }
+
+            if let Some(w) = handle.upgrade() {
+                w.set_scan_progress(0.0);
+                w.set_scan_status_text(crate::gettext!("Подготовка к аудиту...").into());
+                w.set_filtered_rows(slint::ModelRc::new(slint::VecModel::default()));
+                clear_selection(&w);
+                w.set_is_scanning(true);
+                w.set_is_scan_completed(false);
+            }
+
+            let (rw_path, max_threads) = crate::app_state()
+                .lock()
+                .map(|a| (a.clean_rw_path(), a.serz_process_limit.max(1)))
+                .unwrap_or_else(|_| (PathBuf::new(), 8));
+
+            let assets_root = find_assets_root(&paths[0]).unwrap_or_else(|| {
+                let rw_assets = rw_path.join("Assets");
+                if rw_assets.is_dir() {
+                    rw_assets
+                } else {
+                    paths[0]
+                        .parent()
+                        .and_then(Path::parent)
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| paths[0].clone())
                 }
             });
-        }
-        {
-            let handle = self.weak.clone();
-            let state = self.state.clone();
-            let audit_generation = self.audit_generation.clone();
-            let is_busy = self.is_busy.clone();
-            self.window.on_start_audit(move |folder_path| {
-                if is_busy.swap(true, Ordering::SeqCst) {
-                    return;
-                }
-                let paths: Vec<PathBuf> = folder_path
-                    .as_str()
-                    .split([';', ','])
-                    .map(|s| s.trim().trim_matches('"').trim())
-                    .filter(|s| !s.is_empty())
-                    .map(PathBuf::from)
-                    .collect();
 
-                if paths.is_empty() {
-                    eprintln!("[Auditor] No folder paths provided");
-                    is_busy.store(false, Ordering::SeqCst);
-                    return;
-                }
-                for p in &paths {
-                    match validate_audit_folder(p) {
-                        Ok(_) => {}
-                        Err(msg) => {
-                            eprintln!("[Auditor] Invalid folder path: {:?} -> {}", p, msg);
-                            if let Some(w) = handle.upgrade() {
-                                w.set_scan_status_text(msg.into());
-                                w.set_is_scanning(false);
-                                w.set_is_scan_completed(false);
-                            }
-                            is_busy.store(false, Ordering::SeqCst);
+            let filter = handle
+                .upgrade()
+                .map(|w| w.get_current_filter().to_string())
+                .unwrap_or_else(|| "all".to_string());
+
+            let generation_id = audit_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let generation = audit_generation.clone();
+            let thread_handle = handle.clone();
+            let thread_state = state.clone();
+            let ap_cache = ApArchiveCache::new();
+
+            std::thread::spawn(move || {
+                let _busy = busy_guard;
+
+                let progress_handle = thread_handle.clone();
+                let progress_gen = generation.clone();
+                let progress_cb: Arc<dyn Fn(usize, usize) + Send + Sync> =
+                    Arc::new(move |done, total| {
+                        if progress_gen.load(Ordering::Relaxed) != generation_id {
                             return;
                         }
-                    }
-                }
-                if let Some(w) = handle.upgrade() {
-                    w.set_scan_progress(0.0);
-                    w.set_scan_status_text(crate::gettext!("Подготовка к аудиту...").into());
-                    w.set_filtered_rows(slint::ModelRc::new(slint::VecModel::default()));
-                    w.set_selected_row_index(-1);
-                    w.set_is_selected_texture(false);
-                    w.set_has_missing_file_selected(false);
-                    w.set_incoming_refs_preview("".into());
-                    w.set_outgoing_refs_preview("".into());
-                    w.set_is_scanning(true);
-                    w.set_is_scan_completed(false);
-                }
-                let (rw_path, max_threads) = crate::app_state()
-                    .lock()
-                    .map(|a| (a.clean_rw_path(), a.serz_process_limit.max(1)))
-                    .unwrap_or_else(|_| (PathBuf::new(), 8));
-                let assets_root = paths[0]
-                    .ancestors()
-                    .find(|p| {
-                        p.file_name()
-                            .map(|name| name.to_string_lossy().eq_ignore_ascii_case("Assets"))
-                            .unwrap_or(false)
-                    })
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| {
-                        let rw_assets = rw_path.join("Assets");
-                        if rw_assets.is_dir() {
-                            rw_assets
-                        } else {
-                            paths[0]
-                                .parent()
-                                .and_then(|p| p.parent())
-                                .map(|p| p.to_path_buf())
-                                .unwrap_or_else(|| paths[0].clone())
-                        }
-                    });
-                let filter = handle
-                    .upgrade()
-                    .map(|w| w.get_current_filter().to_string())
-                    .unwrap_or_else(|| "all".to_string());
-                let generation_id = audit_generation.fetch_add(1, Ordering::SeqCst) + 1;
-                let generation = audit_generation.clone();
-                let thread_handle = handle.clone();
-                let thread_state = state.clone();
-                let is_busy_thread = is_busy.clone();
-                let ap_cache = ApArchiveCache::new();
-                std::thread::spawn(move || {
-                    let progress_handle = thread_handle.clone();
-                    let progress_gen = generation.clone();
-                    let progress_cb: Arc<dyn Fn(usize, usize) + Send + Sync> =
-                        Arc::new(move |done, total| {
-                            if progress_gen.load(Ordering::Relaxed) != generation_id {
+                        let h = progress_handle.clone();
+                        let gen_inner = progress_gen.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if gen_inner.load(Ordering::Relaxed) != generation_id {
                                 return;
                             }
-                            let h = progress_handle.clone();
-                            let progress_gen2 = progress_gen.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if progress_gen2.load(Ordering::Relaxed) != generation_id {
-                                    return;
-                                }
-                                if let Some(w) = h.upgrade() {
-                                    let progress = if total > 0 { done as f32 / total as f32 } else { 0.0 };
-                                    w.set_scan_progress(progress);
-                                    let template = crate::gettext!("Сканирование: {} / {} файлов...");
-                                    w.set_scan_status_text(
-                                        template
-                                            .replacen("{}", &done.to_string(), 1)
-                                            .replacen("{}", &total.to_string(), 1)
-                                            .into()
-                                    );
-                                }
-                            });
+                            if let Some(w) = h.upgrade() {
+                                let progress = if total > 0 {
+                                    done as f32 / total as f32
+                                } else {
+                                    0.0
+                                };
+                                w.set_scan_progress(progress);
+                                let template =
+                                    crate::gettext!("Сканирование: {} / {} файлов...");
+                                w.set_scan_status_text(
+                                    template
+                                        .replacen("{}", &done.to_string(), 1)
+                                        .replacen("{}", &total.to_string(), 1)
+                                        .into(),
+                                );
+                            }
                         });
-                    let audit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        audit_folders_with_progress(
-                            &paths,
-                            &assets_root,
-                            max_threads,
-                            &ap_cache,
-                            Some(progress_cb),
-                        )
-                    }));
-                    let report = match audit_result {
-                        Ok(r) => r,
-                        Err(panic) => {
-                            let msg = if let Some(s) = panic.downcast_ref::<&str>() {
-                                (*s).to_string()
-                            } else if let Some(s) = panic.downcast_ref::<String>() {
-                                s.clone()
-                            } else {
-                                "unknown panic".to_string()
-                            };
-                            eprintln!("[Auditor] panic during audit: {}", msg);
-                            let h = thread_handle.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(w) = h.upgrade() {
-                                    w.set_scan_status_text(format!("Ошибка аудита: {}", msg).into());
-                                    w.set_is_scanning(false);
-                                }
-                            });
-                            is_busy_thread.store(false, Ordering::SeqCst);
-                            return;
-                        }
-                    };
-                    if generation.load(Ordering::SeqCst) != generation_id {
-                        return;
-                    }
-                    let (report, full_graph) = report;
-                    let total_issues = report.broken_references.len();
-                    let mut items = report.broken_references;
-                    let graph = report.dependency_graph;
-                    let (col, asc) = if let Ok(mut s) = thread_state.lock() {
-                        s.all_items = items.clone();
-                        s.dependency_graph = graph.clone();
-                        s.full_asset_graph = full_graph.clone();
-                        s.is_scan_completed = true;
-                        (s.sort_col, s.sort_asc)
-                    } else {
-                        (0, true)
-                    };
-                    let all_for_counts = thread_state.lock().map(|s| s.all_items.clone()).unwrap_or_default();
-                    let count_all = all_for_counts.len() as i32;
-                    let count_geometry = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Geometry).count() as i32;
-                    let count_textures = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Texture).count() as i32;
-                    let count_scripts = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Script).count() as i32;
-                    let count_sounds = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Sound).count() as i32;
-                    let count_children = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::ChildBlueprint).count() as i32;
-                    let count_dead = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Unused).count() as i32;
-                    filter_items(&mut items, &filter);
-                    sort_items(&mut items, col, asc);
-                    if let Ok(mut s) = thread_state.lock() {
-                        s.display_items = items.clone();
-                    }
-                    if generation.load(Ordering::SeqCst) != generation_id {
-                        return;
-                    }
-                    let h = thread_handle;
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if generation.load(Ordering::Relaxed) != generation_id {
-                            return;
-                        }
-                        if let Some(w) = h.upgrade() {
-                            w.set_filtered_rows(map_broken_resources_to_ui(&items));
-                            w.set_scan_progress(1.0);
-                            let final_msg = if total_issues == 0 {
-                                crate::gettext!("Проверка завершена: повреждённых или отсутствующих файлов не обнаружено.").to_string()
-                            } else {
-                                crate::gettext!("Проверка завершена. Найдено проблем: {}.").replace("{}", &total_issues.to_string())
-                            };
-                            w.set_scan_status_text(final_msg.into());
-                            w.set_selected_row_index(-1);
-                            w.set_is_selected_texture(false);
-                            w.set_has_missing_file_selected(false);
-                            w.set_incoming_refs_preview("".into());
-                            w.set_outgoing_refs_preview("".into());
-                            w.set_count_all(count_all);
-                            w.set_count_geometry(count_geometry);
-                            w.set_count_textures(count_textures);
-                            w.set_count_scripts(count_scripts);
-                            w.set_count_sounds(count_sounds);
-                            w.set_count_children(count_children);
-                            w.set_count_dead(count_dead);
-                            w.set_is_consolidating(false);
-                            w.set_is_scanning(false);
-                            w.set_is_scan_completed(true);
-                        }
                     });
-                    is_busy_thread.store(false, Ordering::SeqCst);
+
+                let audit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    audit_folders_with_progress(
+                        &paths,
+                        &assets_root,
+                        max_threads,
+                        &ap_cache,
+                        Some(progress_cb),
+                    )
+                }));
+
+                let (report, full_graph) = match audit_result {
+                    Ok(r) => r,
+                    Err(panic) => {
+                        let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                            (*s).to_string()
+                        } else if let Some(s) = panic.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown panic".to_string()
+                        };
+                        eprintln!("[Auditor] panic during audit: {msg}");
+                        let h = thread_handle.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = h.upgrade() {
+                                w.set_scan_status_text(format!("Ошибка аудита: {msg}").into());
+                                w.set_is_scanning(false);
+                            }
+                        });
+                        return;
+                    }
+                };
+
+                if generation.load(Ordering::SeqCst) != generation_id {
+                    return;
+                }
+
+                let all_items = report.broken_references;
+                let total_issues = all_items.len();
+                let counts = CategoryCounts::from_items(&all_items);
+
+                let (col, asc) = thread_state
+                    .lock()
+                    .map(|s| (s.sort_col, s.sort_asc))
+                    .unwrap_or((0, true));
+
+                let mut display_items = all_items.clone();
+                filter_items(&mut display_items, &filter);
+                sort_items(&mut display_items, col, asc);
+
+                if let Ok(mut s) = thread_state.lock() {
+                    s.all_items = all_items;
+                    s.display_items = display_items.clone();
+                    s.dependency_graph = report.dependency_graph;
+                    s.full_asset_graph = full_graph;
+                    s.is_scan_completed = true;
+                }
+
+                if generation.load(Ordering::SeqCst) != generation_id {
+                    return;
+                }
+
+                let h = thread_handle;
+                let _ = slint::invoke_from_event_loop(move || {
+                    if generation.load(Ordering::Relaxed) != generation_id {
+                        return;
+                    }
+                    if let Some(w) = h.upgrade() {
+                        w.set_filtered_rows(map_broken_resources_to_ui(&display_items));
+                        w.set_scan_progress(1.0);
+                        let final_msg = if total_issues == 0 {
+                            crate::gettext!("Проверка завершена: повреждённых или отсутствующих файлов не обнаружено.").to_string()
+                        } else {
+                            crate::gettext!("Проверка завершена. Найдено проблем: {}.")
+                                .replace("{}", &total_issues.to_string())
+                        };
+                        w.set_scan_status_text(final_msg.into());
+                        clear_selection(&w);
+                        w.set_count_all(counts.all);
+                        w.set_count_geometry(counts.geometry);
+                        w.set_count_textures(counts.textures);
+                        w.set_count_scripts(counts.scripts);
+                        w.set_count_sounds(counts.sounds);
+                        w.set_count_children(counts.children);
+                        w.set_count_dead(counts.dead);
+                        w.set_is_consolidating(false);
+                        w.set_is_scanning(false);
+                        w.set_is_scan_completed(true);
+                    }
                 });
             });
-        }
+        });
+    }
+
+    fn bind_filter_and_sort(&self) {
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
             self.window.on_filter_changed(move |filter| {
                 let Some(w) = handle.upgrade() else { return };
-                let mut items = state
-                    .lock()
-                    .map(|s| s.all_items.clone())
-                    .unwrap_or_default();
-                let (col, asc) = state
-                    .lock()
-                    .map(|s| (s.sort_col, s.sort_asc))
-                    .unwrap_or((0, true));
+                let Ok(mut s) = state.lock() else { return };
+
+                let mut items = s.all_items.clone();
                 filter_items(&mut items, filter.as_str());
-                sort_items(&mut items, col, asc);
-                if let Ok(mut s) = state.lock() {
-                    s.display_items = items.clone();
-                }
+                sort_items(&mut items, s.sort_col, s.sort_asc);
+                let rows_model = map_broken_resources_to_ui(&items);
+                s.display_items = items;
+
                 w.set_current_filter(filter);
-                w.set_filtered_rows(map_broken_resources_to_ui(&items));
-                w.set_selected_row_index(-1);
-                w.set_is_selected_texture(false);
-                w.set_has_missing_file_selected(false);
+                w.set_filtered_rows(rows_model);
+                clear_selection(&w);
+            });
+        }
+
+        {
+            let handle = self.weak.clone();
+            let state = self.state.clone();
+            self.window.on_sort_column(move |col| {
+                let Some(w) = handle.upgrade() else { return };
+                let Ok(mut s) = state.lock() else { return };
+
+                let col = col as usize;
+                if s.sort_col == col {
+                    s.sort_asc = !s.sort_asc;
+                } else {
+                    s.sort_col = col;
+                    s.sort_asc = true;
+                }
+
+                let col_now = s.sort_col;
+                let asc_now = s.sort_asc;
+                sort_items(&mut s.display_items, col_now, asc_now);
+                let rows_model = map_broken_resources_to_ui(&s.display_items);
+
+                w.set_sort_col(col_now as i32);
+                w.set_sort_ascending(asc_now);
+                w.set_filtered_rows(rows_model);
+                clear_selection(&w);
+            });
+        }
+    }
+
+    fn bind_row_selected(&self) {
+        let state = self.state.clone();
+        let handle = self.weak.clone();
+
+        self.window.on_row_selected(move |row| {
+            let Some(w) = handle.upgrade() else { return };
+            if row < 0 {
                 w.set_incoming_refs_preview("".into());
                 w.set_outgoing_refs_preview("".into());
-            });
-        }
-        {
-            let state = self.state.clone();
-            let handle = self.weak.clone();
-            self.window.on_row_selected(move |row| {
-                if row < 0 {
-                    if let Some(w) = handle.upgrade() {
-                        w.set_incoming_refs_preview("".into());
-                        w.set_outgoing_refs_preview("".into());
-                        w.set_is_selected_texture(false);
-                        w.set_has_missing_file_selected(false);
-                    }
-                    return;
-                }
-                let selected_item = state
-                    .lock()
-                    .ok()
-                    .and_then(|s| s.display_items.get(row as usize).cloned());
-                let (is_tex, has_missing) = selected_item
-                    .as_ref()
-                    .map(|item| {
-                        let is_tex_ext = item
-                            .parent_file
-                            .to_string_lossy()
-                            .to_ascii_lowercase()
-                            .ends_with(".tgpcdx")
-                            || item
-                                .parent_file
-                                .to_string_lossy()
-                                .to_ascii_lowercase()
-                                .ends_with(".dds")
-                            || item
-                                .expected_path
-                                .to_string_lossy()
-                                .to_ascii_lowercase()
-                                .ends_with(".tgpcdx")
-                            || item
-                                .expected_path
-                                .to_string_lossy()
-                                .to_ascii_lowercase()
-                                .ends_with(".dds");
-                        // Texture preview only meaningful if the file physically exists on disk.
-                        let target_exists = (item.kind == AssetResourceKind::Unused && item.parent_file.is_file())
-                            || (item.parent_file.is_file() && is_tex_ext)
-                            || (item.expected_path.is_file() && is_tex_ext);
-                        let is_tex = is_tex_ext && target_exists;
-                        let has_missing = item.kind != AssetResourceKind::Unused
-                            && !item.expected_path.to_string_lossy().trim().is_empty();
-                        (is_tex, has_missing)
-                    })
-                    .unwrap_or((false, false));
-                let (incoming, outgoing) = state.lock().ok().map(|s| {
-                    let item = s.display_items.get(row as usize);
-                    let path = item.map(|i| {
-                        let p = if i.kind == AssetResourceKind::Unused {
-                            &i.expected_path
-                        } else {
-                            &i.parent_file
-                        };
-                        let np = normalize_path(p);
-                        std::path::PathBuf::from(np.to_string_lossy().to_lowercase())
-                    });
-                    let outgoing = path.as_ref().and_then(|p| s.dependency_graph.outgoing.get(p));
-                    let fmt = |set: Option<&std::collections::HashSet<std::path::PathBuf>>, empty: &str| {
-                        match set {
-                            Some(s) if !s.is_empty() => {
-                                if s.len() > 3 {
-                                    let names: Vec<String> = s
-                                        .iter()
-                                        .take(3)
-                                        .map(|p| {
-                                            p.file_name()
-                                                .map(|n| n.to_string_lossy().to_string())
-                                                .unwrap_or_else(|| p.display().to_string())
-                                        })
-                                        .collect();
-                                    format!("{} файлов: {}", s.len(), names.join(", "))
-                                } else {
-                                    s.iter()
-                                        .map(|p| {
-                                            p.file_name()
-                                                .map(|n| n.to_string_lossy().to_string())
-                                                .unwrap_or_else(|| p.display().to_string())
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("; ")
-                                }
-                            }
-                            _ => empty.to_string(),
-                        }
+                w.set_is_selected_texture(false);
+                w.set_has_missing_file_selected(false);
+                return;
+            }
+
+            const NO_PARENTS_MSG: &str =
+                "Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте";
+
+            let (is_tex, has_missing, incoming, outgoing) = state
+                .lock()
+                .ok()
+                .and_then(|s| {
+                    let item = s.display_items.get(row as usize)?;
+                    let is_tex = is_existing_texture(&item.parent_file)
+                        || is_existing_texture(&item.expected_path);
+                    let has_missing = item.kind != AssetResourceKind::Unused
+                        && !item.expected_path.to_string_lossy().trim().is_empty();
+
+                    let key = dependency_key(primary_item_path(item));
+                    let outgoing_set = s.dependency_graph.outgoing.get(&key);
+
+                    let incoming_str = if item.all_parents.is_empty() {
+                        NO_PARENTS_MSG.to_string()
+                    } else {
+                        item.all_parents
+                            .iter()
+                            .map(|p| to_assets_relative_display(p))
+                            .collect::<Vec<_>>()
+                            .join("\n")
                     };
-                    let incoming_str = item
-                        .map(|i| {
-                            i.all_parents
-                                .iter()
-                                .map(|p| to_assets_relative_display(p))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        })
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| {
-                            "Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте"
-                                .to_string()
-                        });
-                    let outgoing_str = fmt(outgoing, "Нет зависимостей");
-                    (incoming_str, outgoing_str)
-                }).unwrap_or_else(|| ("Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте".to_string(), "Нет зависимостей".to_string()));
-                if let Some(w) = handle.upgrade() {
-                    w.set_selected_row_index(row);
-                    w.set_incoming_refs_preview(incoming.into());
-                    w.set_outgoing_refs_preview(outgoing.into());
-                    w.set_is_selected_texture(is_tex);
-                    w.set_has_missing_file_selected(has_missing);
-                }
-            });
-        }
+                    let outgoing_str = format_refs_preview(outgoing_set, "Нет зависимостей");
+                    Some((is_tex, has_missing, incoming_str, outgoing_str))
+                })
+                .unwrap_or_else(|| {
+                    (
+                        false,
+                        false,
+                        NO_PARENTS_MSG.to_string(),
+                        "Нет зависимостей".to_string(),
+                    )
+                });
+
+            w.set_selected_row_index(row);
+            w.set_incoming_refs_preview(incoming.into());
+            w.set_outgoing_refs_preview(outgoing.into());
+            w.set_is_selected_texture(is_tex);
+            w.set_has_missing_file_selected(has_missing);
+        });
+    }
+
+    fn bind_graphs(&self) {
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
@@ -460,27 +443,22 @@ impl AuditorController {
                     return;
                 }
                 let extracted = state.lock().ok().and_then(|s| {
-                    let item = s.display_items.get(row as usize).cloned()?;
-                    let path = if item.kind == AssetResourceKind::Unused {
-                        &item.expected_path
-                    } else {
-                        &item.parent_file
-                    };
-                    let np = normalize_path(path);
-                    let key = std::path::PathBuf::from(np.to_string_lossy().to_lowercase());
-                    let incoming = s
+                    let item = s.display_items.get(row as usize)?;
+                    let np = normalize_path(primary_item_path(item));
+                    let key = dependency_key(&np);
+                    let incoming: Vec<PathBuf> = s
                         .dependency_graph
                         .incoming
                         .get(&key)
-                        .cloned()
+                        .map(|set| set.iter().cloned().collect())
                         .unwrap_or_default();
-                    let outgoing = s
+                    let outgoing: Vec<PathBuf> = s
                         .dependency_graph
                         .outgoing
                         .get(&key)
-                        .cloned()
+                        .map(|set| set.iter().cloned().collect())
                         .unwrap_or_default();
-                    let missing_refs: Vec<PathBuf> = if item.kind != AssetResourceKind::Unused
+                    let missing_refs = if item.kind != AssetResourceKind::Unused
                         && !item.expected_path.as_os_str().is_empty()
                         && !item.expected_path.is_file()
                     {
@@ -493,8 +471,6 @@ impl AuditorController {
                 let Some((selected_path, incoming, outgoing, missing_refs)) = extracted else {
                     return;
                 };
-                let incoming: Vec<PathBuf> = incoming.into_iter().collect();
-                let outgoing: Vec<PathBuf> = outgoing.into_iter().collect();
                 let thread_handle = handle.clone();
                 std::thread::spawn(move || {
                     if let Err(e) = open_dependency_graph_in_browser(
@@ -503,7 +479,8 @@ impl AuditorController {
                         &outgoing,
                         &missing_refs,
                     ) {
-                        let template = crate::gettext!("Не удалось открыть граф зависимостей: {}");
+                        let template =
+                            crate::gettext!("Не удалось открыть граф зависимостей: {}");
                         let msg = template.replace("{}", &e.to_string());
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
@@ -514,6 +491,7 @@ impl AuditorController {
                 });
             });
         }
+
         {
             let state = self.state.clone();
             let handle = self.weak.clone();
@@ -524,16 +502,12 @@ impl AuditorController {
                     let extracted = state_clone
                         .lock()
                         .ok()
-                        .map(|s| (s.full_asset_graph.clone(), s.is_scan_completed));
-                    let Some((full_graph, completed)) = extracted else {
+                        .filter(|s| s.is_scan_completed)
+                        .map(|s| s.full_asset_graph.clone());
+                    let Some(full_graph) = extracted else {
                         return;
                     };
-                    if !completed {
-                        return;
-                    }
-                    if let Err(e) =
-                        generate_full_directory_graph(&full_graph, std::path::Path::new(""))
-                    {
+                    if let Err(e) = generate_full_directory_graph(&full_graph, Path::new("")) {
                         let template =
                             crate::gettext!("Не удалось построить полный граф каталога: {}");
                         let msg = template.replace("{}", &e.to_string());
@@ -546,6 +520,9 @@ impl AuditorController {
                 });
             });
         }
+    }
+
+    fn bind_file_actions(&self) {
         {
             let state = self.state.clone();
             let app = self.app.clone();
@@ -566,12 +543,13 @@ impl AuditorController {
                         );
                         crate::schedule_ui_sync();
                     }
-                    println!("[Auditor] Opening path: {:?}", path);
+                    println!("[Auditor] Opening path: {path:?}");
                     #[cfg(windows)]
                     open_in_explorer(&path);
                 }
             });
         }
+
         {
             let state = self.state.clone();
             let app = self.app.clone();
@@ -584,67 +562,29 @@ impl AuditorController {
                         .get(row as usize)
                         .map(|item| item.expected_path.clone())
                 });
-                if let Some(path) = target_path {
-                    let mut dir = path.parent();
-                    while let Some(d) = dir {
-                        if d.is_dir() {
-                            if let Ok(mut app) = app.lock() {
-                                app.log_event(
-                                    format!(
-                                        "Открыта родительская папка цели в Проводнике: {}.",
-                                        d.display()
-                                    ),
-                                    LogLevel::Info,
-                                );
-                                crate::schedule_ui_sync();
-                            }
-                            println!("[Auditor] Opening existing parent folder: {:?}", d);
-                            #[cfg(windows)]
-                            open_in_explorer(d);
-                            return;
-                        }
-                        dir = d.parent();
+                if let Some(path) = target_path
+                    && let Some(dir) = path.ancestors().skip(1).find(|d| d.is_dir())
+                {
+                    if let Ok(mut app) = app.lock() {
+                        app.log_event(
+                            format!(
+                                "Открыта родительская папка цели в Проводнике: {}.",
+                                dir.display()
+                            ),
+                            LogLevel::Info,
+                        );
+                        crate::schedule_ui_sync();
                     }
+                    println!("[Auditor] Opening existing parent folder: {dir:?}");
+                    #[cfg(windows)]
+                    open_in_explorer(dir);
                 }
             });
         }
+
         {
             let handle = self.weak.clone();
             let state = self.state.clone();
-
-            self.window.on_sort_column(move |col| {
-                let Some(w) = handle.upgrade() else { return };
-                let col = col as usize;
-
-                let Ok(mut s) = state.lock() else { return };
-
-                if s.sort_col == col {
-                    s.sort_asc = !s.sort_asc;
-                } else {
-                    s.sort_col = col;
-                    s.sort_asc = true;
-                }
-
-                let col_now = s.sort_col;
-                let asc_now = s.sort_asc;
-
-                sort_items(&mut s.display_items, col_now, asc_now);
-                let rows_model = map_broken_resources_to_ui(&s.display_items);
-
-                w.set_sort_col(col_now as i32);
-                w.set_sort_ascending(asc_now);
-                w.set_filtered_rows(rows_model);
-                w.set_selected_row_index(-1);
-                w.set_is_selected_texture(false);
-                w.set_has_missing_file_selected(false);
-                w.set_incoming_refs_preview("".into());
-                w.set_outgoing_refs_preview("".into());
-            });
-        }
-        {
-            let handle = self.weak.clone();
-            let state = self.state.clone();
-
             self.window.on_edit_in_vscode(move |row| {
                 if row < 0 {
                     return;
@@ -658,19 +598,9 @@ impl AuditorController {
                     return;
                 };
 
-                let is_editable = |p: &PathBuf| {
-                    p.extension()
-                        .map(|e| {
-                            e.eq_ignore_ascii_case("bin")
-                                || e.eq_ignore_ascii_case("geopcdx")
-                                || e.eq_ignore_ascii_case("xsec")
-                        })
-                        .unwrap_or(false)
-                };
-
-                let asset_path = if is_editable(&parent_file) {
+                let asset_path = if is_editable_asset(&parent_file) {
                     parent_file
-                } else if is_editable(&expected_path) {
+                } else if is_editable_asset(&expected_path) {
                     expected_path
                 } else {
                     if let Some(win) = handle.upgrade() {
@@ -710,6 +640,94 @@ impl AuditorController {
     }
 }
 
+#[derive(Default)]
+struct CategoryCounts {
+    all: i32,
+    geometry: i32,
+    textures: i32,
+    scripts: i32,
+    sounds: i32,
+    children: i32,
+    dead: i32,
+}
+
+impl CategoryCounts {
+    fn from_items(items: &[BrokenResourceRef]) -> Self {
+        let mut counts = Self {
+            all: items.len() as i32,
+            ..Self::default()
+        };
+        for item in items {
+            match item.kind {
+                AssetResourceKind::Geometry => counts.geometry += 1,
+                AssetResourceKind::Texture => counts.textures += 1,
+                AssetResourceKind::Script => counts.scripts += 1,
+                AssetResourceKind::Sound => counts.sounds += 1,
+                AssetResourceKind::ChildBlueprint => counts.children += 1,
+                AssetResourceKind::Unused => counts.dead += 1,
+                _ => {}
+            }
+        }
+        counts
+    }
+}
+
+fn clear_selection(w: &FolderAuditorWindow) {
+    w.set_selected_row_index(-1);
+    w.set_is_selected_texture(false);
+    w.set_has_missing_file_selected(false);
+    w.set_incoming_refs_preview("".into());
+    w.set_outgoing_refs_preview("".into());
+}
+
+fn primary_item_path(item: &BrokenResourceRef) -> &Path {
+    if item.kind == AssetResourceKind::Unused {
+        &item.expected_path
+    } else {
+        &item.parent_file
+    }
+}
+
+fn dependency_key(path: &Path) -> PathBuf {
+    let np = normalize_path(path);
+    PathBuf::from(np.to_string_lossy().to_lowercase())
+}
+
+fn is_existing_texture(path: &Path) -> bool {
+    let is_tex_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("tgpcdx") || e.eq_ignore_ascii_case("dds"));
+    is_tex_ext && path.is_file()
+}
+
+fn is_editable_asset(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| {
+            e.eq_ignore_ascii_case("bin")
+                || e.eq_ignore_ascii_case("geopcdx")
+                || e.eq_ignore_ascii_case("xsec")
+        })
+}
+
+fn format_refs_preview(set: Option<&HashSet<PathBuf>>, empty: &str) -> String {
+    let Some(s) = set.filter(|s| !s.is_empty()) else {
+        return empty.to_string();
+    };
+    let display_name = |p: &PathBuf| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.display().to_string())
+    };
+    if s.len() > 3 {
+        let names: Vec<String> = s.iter().take(3).map(display_name).collect();
+        format!("{} файлов: {}", s.len(), names.join(", "))
+    } else {
+        s.iter().map(display_name).collect::<Vec<_>>().join("; ")
+    }
+}
+
 pub(crate) fn map_broken_resources_to_ui(
     items: &[BrokenResourceRef],
 ) -> slint::ModelRc<crate::BrokenResourceItem> {
@@ -724,9 +742,9 @@ pub(crate) fn map_broken_resources_to_ui(
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy();
-                format!("{} (+{} источников)", first, r.all_parents.len() - 1)
+                format!("{first} (+{} источников)", r.all_parents.len() - 1)
             } else {
-                r.parent_file.to_string_lossy().to_string()
+                r.parent_file.to_string_lossy().into_owned()
             };
             crate::BrokenResourceItem {
                 id: idx as i32,
