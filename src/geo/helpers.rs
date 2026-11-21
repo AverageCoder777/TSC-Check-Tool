@@ -2,12 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::common::serz::SerzNode;
 use glam::Mat4;
+
+use crate::common::serz::{SerzNode, SerzReader};
+
+use super::vertex::PositionFormat;
 
 pub(crate) fn parse_serz_document(data: &[u8]) -> Result<SerzNode, String> {
     if data.starts_with(b"SERZ") {
-        crate::common::serz::SerzReader::new(data).parse()
+        SerzReader::new(data).parse()
     } else {
         let xml = std::str::from_utf8(data).map_err(|error| error.to_string())?;
         SerzNode::from_xml_str(xml).map(|(root, _)| root)
@@ -50,69 +53,102 @@ pub(crate) fn resolve_ref_node<'a>(
     }
 }
 
-pub(crate) fn collect_float_values(node: &SerzNode) -> Vec<f32> {
-    match node {
-        SerzNode::Property { value, .. } => parse_float_values(value),
-        SerzNode::Array { values, .. } => values
-            .iter()
-            .flat_map(|value| parse_float_values(value))
-            .collect(),
-        SerzNode::Element { children, .. } => {
-            children.iter().flat_map(collect_float_values).collect()
-        }
-        SerzNode::Blob { data } => data
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .copied()
-            .map(f32::from_le_bytes)
-            .collect(),
-        _ => Vec::new(),
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
     }
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn matches_any_ignore_ascii_case(name: &str, expected: &[&str]) -> bool {
+    expected
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+fn split_numeric_tokens(value: &str) -> impl Iterator<Item = &str> {
+    value.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '[' | ']'))
+}
+
+fn parse_i32_token(part: &str) -> Option<i32> {
+    part.parse::<i32>()
+        .ok()
+        .or_else(|| part.parse::<u32>().ok().map(|v| v as i32))
+        .or_else(|| part.parse::<i64>().ok().map(|v| v as i32))
 }
 
 pub(crate) fn parse_float_values(value: &str) -> Vec<f32> {
-    value
-        .split(|character: char| {
-            character.is_whitespace() || matches!(character, ',' | ';' | '[' | ']')
-        })
+    split_numeric_tokens(value)
         .filter_map(|part| part.parse::<f32>().ok())
         .collect()
 }
 
+pub(crate) fn collect_float_values(node: &SerzNode) -> Vec<f32> {
+    fn collect_into(node: &SerzNode, out: &mut Vec<f32>) {
+        match node {
+            SerzNode::Property { value, .. } => {
+                out.extend(split_numeric_tokens(value).filter_map(|p| p.parse::<f32>().ok()));
+            }
+            SerzNode::Array { values, .. } => {
+                for value in values {
+                    out.extend(split_numeric_tokens(value).filter_map(|p| p.parse::<f32>().ok()));
+                }
+            }
+            SerzNode::Element { children, .. } => {
+                for child in children {
+                    collect_into(child, out);
+                }
+            }
+            SerzNode::Blob { data } => {
+                let chunks = data.as_chunks::<4>().0;
+                out.reserve(chunks.len());
+                out.extend(chunks.iter().copied().map(f32::from_le_bytes));
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    collect_into(node, &mut out);
+    out
+}
+
 pub(crate) fn parse_i32_values(value: &str) -> Vec<i32> {
-    value
-        .split(|character: char| {
-            character.is_whitespace() || matches!(character, ',' | ';' | '[' | ']')
-        })
-        .filter_map(|part| {
-            part.parse::<i32>()
-                .ok()
-                .or_else(|| part.parse::<u32>().ok().map(|value| value as i32))
-                .or_else(|| part.parse::<i64>().ok().map(|value| value as i32))
-        })
+    split_numeric_tokens(value)
+        .filter_map(parse_i32_token)
         .collect()
 }
 
 pub(crate) fn collect_i32_values(node: &SerzNode) -> Vec<i32> {
-    match node {
-        SerzNode::Property { value, .. } => parse_i32_values(value),
-        SerzNode::Array { values, .. } => values
-            .iter()
-            .flat_map(|value| parse_i32_values(value))
-            .collect(),
-        SerzNode::Element { children, .. } => {
-            children.iter().flat_map(collect_i32_values).collect()
+    fn collect_into(node: &SerzNode, out: &mut Vec<i32>) {
+        match node {
+            SerzNode::Property { value, .. } => {
+                out.extend(split_numeric_tokens(value).filter_map(parse_i32_token));
+            }
+            SerzNode::Array { values, .. } => {
+                for value in values {
+                    out.extend(split_numeric_tokens(value).filter_map(parse_i32_token));
+                }
+            }
+            SerzNode::Element { children, .. } => {
+                for child in children {
+                    collect_into(child, out);
+                }
+            }
+            SerzNode::Blob { data } => {
+                let chunks = data.as_chunks::<4>().0;
+                out.reserve(chunks.len());
+                out.extend(chunks.iter().copied().map(i32::from_le_bytes));
+            }
+            _ => {}
         }
-        SerzNode::Blob { data } => data
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .copied()
-            .map(i32::from_le_bytes)
-            .collect(),
-        _ => Vec::new(),
     }
+    let mut out = Vec::new();
+    collect_into(node, &mut out);
+    out
 }
 
 pub(crate) fn find_named_values<'a>(
@@ -207,27 +243,36 @@ pub(crate) fn collect_transform_names(root: &SerzNode) -> Vec<String> {
 }
 
 pub(crate) fn compute_world_transforms(local: &[Mat4], parents: &[i32]) -> Vec<Mat4> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum VisitState {
+        Unvisited,
+        Visiting,
+        Invalid,
+        Done,
+    }
+
     fn resolve(
         index: usize,
         local: &[Mat4],
         parents: &[i32],
-        states: &mut [u8],
-        invalid: &mut [bool],
+        states: &mut [VisitState],
         world: &mut [Mat4],
         stack: &mut Vec<usize>,
     ) -> Mat4 {
-        if states[index] == 2 {
-            return world[index];
-        }
-        if states[index] == 1 {
-            if let Some(cycle_start) = stack.iter().position(|&item| item == index) {
-                for &cycle_index in &stack[cycle_start..] {
-                    invalid[cycle_index] = true;
+        match states[index] {
+            VisitState::Done => return world[index],
+            VisitState::Visiting | VisitState::Invalid => {
+                if let Some(cycle_start) = stack.iter().position(|&item| item == index) {
+                    for &cycle_index in &stack[cycle_start..] {
+                        states[cycle_index] = VisitState::Invalid;
+                    }
                 }
+                return Mat4::IDENTITY;
             }
-            return Mat4::IDENTITY;
+            VisitState::Unvisited => {}
         }
-        states[index] = 1;
+
+        states[index] = VisitState::Visiting;
         stack.push(index);
         let parent = parents.get(index).copied().unwrap_or(-1);
         let resolved = if parent == -1 {
@@ -235,39 +280,29 @@ pub(crate) fn compute_world_transforms(local: &[Mat4], parents: &[i32]) -> Vec<M
         } else if let Ok(parent_index) = usize::try_from(parent)
             && parent_index < local.len()
         {
-            resolve(parent_index, local, parents, states, invalid, world, stack) * local[index]
+            resolve(parent_index, local, parents, states, world, stack) * local[index]
         } else {
-            invalid[index] = true;
+            states[index] = VisitState::Invalid;
             Mat4::IDENTITY
         };
         stack.pop();
-        world[index] = if invalid[index]
-            || resolved
-                .to_cols_array()
-                .iter()
-                .any(|value| !value.is_finite())
+
+        world[index] = if states[index] == VisitState::Invalid
+            || resolved.to_cols_array().iter().any(|v| !v.is_finite())
         {
             Mat4::IDENTITY
         } else {
             resolved
         };
-        states[index] = 2;
+        states[index] = VisitState::Done;
         world[index]
     }
-    let mut states = vec![0; local.len()];
-    let mut invalid = vec![false; local.len()];
+
+    let mut states = vec![VisitState::Unvisited; local.len()];
     let mut world = vec![Mat4::IDENTITY; local.len()];
     let mut stack = Vec::new();
     for index in 0..local.len() {
-        resolve(
-            index,
-            local,
-            parents,
-            &mut states,
-            &mut invalid,
-            &mut world,
-            &mut stack,
-        );
+        resolve(index, local, parents, &mut states, &mut world, &mut stack);
     }
     world
 }
@@ -293,7 +328,7 @@ pub(crate) fn matrix_from_values(values: &[f32]) -> Option<Mat4> {
         parsed.y_axis.truncate(),
         parsed.z_axis.truncate(),
     ];
-    if basis.iter().any(|axis| axis.length() < 1.0e-5) {
+    if basis.iter().any(|axis| axis.length_squared() < 1.0e-10) {
         return Some(Mat4::IDENTITY);
     }
     Some(parsed)
@@ -303,7 +338,7 @@ pub(crate) fn find_transform_id(
     children: &[SerzNode],
     ids: &HashMap<u32, &SerzNode>,
 ) -> Option<usize> {
-    let aliases = [
+    const ALIASES: &[&str] = &[
         "transformid",
         "transformids",
         "primarytransformid",
@@ -311,51 +346,76 @@ pub(crate) fn find_transform_id(
         "childtransformid",
         "childtransformids",
     ];
-    let mut values = Vec::new();
-    for child in children {
-        match child {
-            SerzNode::Property { name, value, .. }
-                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
-            {
-                values.extend(parse_i32_values(value));
+
+    fn first_non_negative_in_str(value: &str) -> Option<usize> {
+        split_numeric_tokens(value)
+            .filter_map(parse_i32_token)
+            .find(|&v| v >= 0)
+            .map(|v| v as usize)
+    }
+
+    fn first_non_negative_in_node(node: &SerzNode) -> Option<usize> {
+        match node {
+            SerzNode::Property { value, .. } => first_non_negative_in_str(value),
+            SerzNode::Array { values, .. } => {
+                values.iter().find_map(|v| first_non_negative_in_str(v))
             }
-            SerzNode::Array {
-                name, values: vals, ..
-            } if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) => {
-                for value in vals {
-                    values.extend(parse_i32_values(value));
-                }
+            SerzNode::Element { children, .. } => {
+                children.iter().find_map(first_non_negative_in_node)
             }
-            SerzNode::Reference { name, target_id }
-                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
-            {
-                if let Some(target) = ids.get(target_id) {
-                    values.extend(collect_i32_values(target));
-                }
-            }
-            SerzNode::Element { name, children, .. }
-                if aliases.iter().any(|a| name.eq_ignore_ascii_case(a)) =>
-            {
-                values.extend(children.iter().flat_map(collect_i32_values));
-            }
-            _ => {}
+            SerzNode::Blob { data } => data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .copied()
+                .map(i32::from_le_bytes)
+                .find(|&v| v >= 0)
+                .map(|v| v as usize),
+            _ => None,
         }
     }
-    values
-        .into_iter()
-        .find(|&value| value >= 0)
-        .map(|value| value as usize)
+
+    for child in children {
+        let found = match child {
+            SerzNode::Property { name, value, .. }
+                if matches_any_ignore_ascii_case(name, ALIASES) =>
+            {
+                first_non_negative_in_str(value)
+            }
+            SerzNode::Array { name, values, .. }
+                if matches_any_ignore_ascii_case(name, ALIASES) =>
+            {
+                values.iter().find_map(|v| first_non_negative_in_str(v))
+            }
+            SerzNode::Reference { name, target_id }
+                if matches_any_ignore_ascii_case(name, ALIASES) =>
+            {
+                ids.get(target_id).and_then(|t| first_non_negative_in_node(t))
+            }
+            SerzNode::Element { name, children, .. }
+                if matches_any_ignore_ascii_case(name, ALIASES) =>
+            {
+                children.iter().find_map(first_non_negative_in_node)
+            }
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
 }
 
-pub(crate) fn position_format_from_type(type_name: &str) -> super::vertex::PositionFormat {
-    let type_name = type_name.to_ascii_lowercase();
-    if type_name.contains("float16") || type_name.contains("half") {
-        return super::vertex::PositionFormat::Float16_4;
+pub(crate) fn position_format_from_type(type_name: &str) -> PositionFormat {
+    if contains_ignore_ascii_case(type_name, "float16")
+        || contains_ignore_ascii_case(type_name, "half")
+    {
+        return PositionFormat::Float16_4;
     }
-    if type_name.contains("short4n") {
-        return super::vertex::PositionFormat::Short4N;
+    if contains_ignore_ascii_case(type_name, "short4n") {
+        return PositionFormat::Short4N;
     }
-    super::vertex::PositionFormat::Float3
+    PositionFormat::Float3
 }
 
 pub(crate) fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
@@ -386,13 +446,11 @@ pub(crate) fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
     }
     let tex_count = ((fvf >> 8) & 0x0F) as usize;
     for i in 0..tex_count {
-        let size_code = (fvf >> (16 + i * 2)) & 0x3;
-        let coord_size = match size_code {
+        let coord_size = match (fvf >> (16 + i * 2)) & 0x3 {
             0 => 8,
             1 => 12,
             2 => 16,
-            3 => 4,
-            _ => 8,
+            _ => 4,
         };
         if i == 0 {
             uv_offset = Some(offset);
@@ -414,36 +472,34 @@ pub(crate) fn select_vertex_stride(
 ) -> usize {
     let valid = |stride: usize| stride > 0 && bytes_len % stride == 0;
     Some(declaration)
-        .filter(|stride| valid(*stride))
-        .or(declared.filter(|stride| valid(*stride)))
-        .or(explicit.filter(|stride| valid(*stride)))
-        .or(Some(fvf_stride).filter(|stride| valid(*stride)))
+        .filter(|&stride| valid(stride))
+        .or(declared.filter(|&stride| valid(stride)))
+        .or(explicit.filter(|&stride| valid(stride)))
+        .or(Some(fvf_stride).filter(|&stride| valid(stride)))
         .or(explicit)
         .or(declared)
-        .or(Some(declaration).filter(|stride| *stride > 0))
-        .or(Some(fvf_stride).filter(|stride| *stride > 0))
+        .or(Some(declaration).filter(|&stride| stride > 0))
+        .or(Some(fvf_stride).filter(|&stride| stride > 0))
         .unwrap_or(32)
 }
 
 pub(crate) fn vertex_element_size(type_name: &str) -> Option<usize> {
-    let type_name = type_name.to_ascii_lowercase();
-    if type_name.contains("float16") || type_name.contains("half") {
-        if type_name.contains("4") {
-            return Some(8);
-        }
-        if type_name.contains("2") {
-            return Some(4);
-        }
-        return Some(4);
+    if contains_ignore_ascii_case(type_name, "float16")
+        || contains_ignore_ascii_case(type_name, "half")
+    {
+        return Some(if type_name.contains('4') { 8 } else { 4 });
     }
-    for components in 1..=4 {
-        if type_name.contains(&format!("float{components}")) {
-            return Some(components * 4);
+    for (needle, size) in [("float1", 4), ("float2", 8), ("float3", 12), ("float4", 16)] {
+        if contains_ignore_ascii_case(type_name, needle) {
+            return Some(size);
         }
     }
-    if type_name.contains("color") || type_name.contains("ubyte4") || type_name.contains("short2") {
+    if contains_ignore_ascii_case(type_name, "color")
+        || contains_ignore_ascii_case(type_name, "ubyte4")
+        || contains_ignore_ascii_case(type_name, "short2")
+    {
         Some(4)
-    } else if type_name.contains("short4") {
+    } else if contains_ignore_ascii_case(type_name, "short4") {
         Some(8)
     } else {
         None
@@ -455,37 +511,28 @@ pub(crate) fn direct_text<'a>(
     expected: &[&str],
     ids: &HashMap<u32, &'a SerzNode>,
 ) -> Option<&'a str> {
+    let mut reference_stack = HashSet::new();
     children.iter().find_map(|child| match child {
         SerzNode::Property { name, value, .. }
-            if expected
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            if matches_any_ignore_ascii_case(name, expected) =>
         {
             Some(value.as_str())
         }
-        SerzNode::Array { name, values, .. }
-            if expected
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
-        {
+        SerzNode::Array { name, values, .. } if matches_any_ignore_ascii_case(name, expected) => {
             values.first().map(String::as_str)
         }
         SerzNode::Reference { name, target_id }
-            if expected
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            if matches_any_ignore_ascii_case(name, expected) =>
         {
             ids.get(target_id)
-                .and_then(|target| resolve_ref_text(target, ids, &mut HashSet::new()))
+                .and_then(|target| resolve_ref_text(target, ids, &mut reference_stack))
         }
         SerzNode::Element { name, children, .. }
-            if expected
-                .iter()
-                .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+            if matches_any_ignore_ascii_case(name, expected) =>
         {
             children
                 .iter()
-                .find_map(|property| resolve_ref_text(property, ids, &mut HashSet::new()))
+                .find_map(|property| resolve_ref_text(property, ids, &mut reference_stack))
         }
         _ => None,
     })
@@ -504,16 +551,12 @@ pub(crate) fn find_text<'a>(
     ) -> Option<&'a str> {
         match node {
             SerzNode::Property { name, value, .. }
-                if expected
-                    .iter()
-                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+                if matches_any_ignore_ascii_case(name, expected) =>
             {
                 Some(value)
             }
             SerzNode::Array { name, values, .. }
-                if expected
-                    .iter()
-                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+                if matches_any_ignore_ascii_case(name, expected) =>
             {
                 values.first().map(String::as_str)
             }
@@ -522,10 +565,7 @@ pub(crate) fn find_text<'a>(
                     return None;
                 }
                 let result = ids.get(target_id).and_then(|target| {
-                    if expected
-                        .iter()
-                        .any(|candidate| name.eq_ignore_ascii_case(candidate))
-                    {
+                    if matches_any_ignore_ascii_case(name, expected) {
                         resolve_ref_text(target, ids, reference_stack)
                     } else {
                         find(target, expected, ids, reference_stack)
@@ -535,9 +575,7 @@ pub(crate) fn find_text<'a>(
                 result
             }
             SerzNode::Element { name, children, .. }
-                if expected
-                    .iter()
-                    .any(|candidate| name.eq_ignore_ascii_case(candidate)) =>
+                if matches_any_ignore_ascii_case(name, expected) =>
             {
                 children
                     .iter()
@@ -549,12 +587,10 @@ pub(crate) fn find_text<'a>(
             _ => None,
         }
     }
-    for child in children {
-        if let Some(value) = find(child, expected, ids, &mut HashSet::new()) {
-            return Some(value);
-        }
-    }
-    None
+    let mut reference_stack = HashSet::new();
+    children
+        .iter()
+        .find_map(|child| find(child, expected, ids, &mut reference_stack))
 }
 
 pub(crate) fn find_number(
@@ -616,22 +652,23 @@ pub(crate) fn resolve_ref_text<'a>(
 }
 
 pub(crate) fn decode_indices(data: &[u8], width: usize) -> Result<Vec<u32>, String> {
-    if !matches!(width, 2 | 4) {
-        return Err("invalid index buffer byte length".into());
+    match width {
+        2 => Ok(data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(|bytes| u32::from(u16::from_le_bytes(bytes)))
+            .collect()),
+        4 => Ok(data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .copied()
+            .map(u32::from_le_bytes)
+            .collect()),
+        _ => Err("invalid index buffer byte length".into()),
     }
-    let complete_bytes = data.len() / width * width;
-    Ok(data
-        .get(..complete_bytes)
-        .ok_or("invalid index buffer byte length")?
-        .chunks_exact(width)
-        .map(|bytes| {
-            if width == 2 {
-                u16::from_le_bytes([bytes[0], bytes[1]]) as u32
-            } else {
-                u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-            }
-        })
-        .collect())
 }
 
 /// Recursively search for a SerzNode::Reference in the subtree that points to a known vertex buffer ID.
@@ -646,28 +683,21 @@ pub(crate) fn find_vbuf_ref_in_subtree(
         match node {
             SerzNode::Reference { target_id, .. } => vb_id_to_index.get(target_id).copied(),
             SerzNode::Element { name, children, .. } => {
-                let clean_name = name.replace("::", "-").to_ascii_lowercase();
-                if clean_name.contains("geometrynodesamestate")
-                    || clean_name.contains("primitivesetdescdx")
-                    || clean_name.contains("primlist")
-                    || clean_name.contains("primitivelist")
+                if contains_ignore_ascii_case(name, "geometrynodesamestate")
+                    || contains_ignore_ascii_case(name, "primitivesetdescdx")
+                    || contains_ignore_ascii_case(name, "primlist")
+                    || contains_ignore_ascii_case(name, "primitivelist")
                 {
                     return None;
                 }
-                for child in children {
-                    if let Some(idx) = search(child, vb_id_to_index, depth + 1) {
-                        return Some(idx);
-                    }
-                }
-                None
+                children
+                    .iter()
+                    .find_map(|child| search(child, vb_id_to_index, depth + 1))
             }
             _ => None,
         }
     }
-    for child in children {
-        if let Some(idx) = search(child, vb_id_to_index, 0) {
-            return Some(idx);
-        }
-    }
-    None
+    children
+        .iter()
+        .find_map(|child| search(child, vb_id_to_index, 0))
 }
