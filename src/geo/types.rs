@@ -1,7 +1,14 @@
 //! Public geometry data types for GeoPcDx parsing.
+
+use std::fmt;
+use std::fs;
 use std::path::Path;
 
-#[derive(Clone, Copy, Debug, Default)]
+use super::diagnostics::log_parse_diagnostics;
+pub(crate) use super::parse::parse_model;
+use super::texture::is_auxiliary_node;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeoVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
@@ -15,6 +22,15 @@ pub struct GeoModel {
     pub textures: Vec<String>,
     pub submeshes: Vec<GeoSubmesh>,
     pub diagnostics: GeoParseDiagnostics,
+}
+
+impl GeoModel {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let bytes = fs::read(path).map_err(|error| error.to_string())?;
+        let model = parse_model(path, &bytes)?;
+        log_parse_diagnostics(path, &model.diagnostics);
+        Ok(model)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,13 +54,14 @@ pub struct GeoSubmesh {
 }
 
 impl GeoSubmesh {
+    #[must_use]
     pub fn preset_visible(&self, preset: &str) -> bool {
         match preset {
             "lod0" => {
                 self.lod_level == 0
-                    && !super::texture::is_auxiliary_node(&self.node_name)
-                    && !super::texture::is_auxiliary_node(&self.material_name)
-                    && !super::texture::is_auxiliary_node(&self.shader_name)
+                    && !is_auxiliary_node(&self.node_name)
+                    && !is_auxiliary_node(&self.material_name)
+                    && !is_auxiliary_node(&self.shader_name)
             }
             "all" => true,
             "none" => false,
@@ -84,23 +101,11 @@ pub enum PrimitiveTopology {
     TriangleStrip,
 }
 
-impl std::fmt::Display for PrimitiveTopology {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for PrimitiveTopology {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::TriangleList => "TriangleList",
             Self::TriangleStrip => "TriangleStrip",
         })
-    }
-}
-
-// Re-exported by parse.rs when `GeoModel::parse` / `GeoModel::load` are implemented there.
-pub(crate) use super::parse::parse_model;
-
-impl GeoModel {
-    pub fn load(path: &Path) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-        let model = parse_model(path, &bytes)?;
-        super::diagnostics::log_parse_diagnostics(path, &model.diagnostics);
-        Ok(model)
     }
 }
