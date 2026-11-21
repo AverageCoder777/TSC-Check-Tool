@@ -1,6 +1,8 @@
 //! Common SERZ/XML parsing helpers for texture handling.
 
-use crate::common::serz::SerzNode;
+use std::mem;
+
+use crate::common::serz::{SerzNode, SerzReader};
 
 /// Структура мипмапа с извлечёнными данными.
 #[derive(Debug, Clone)]
@@ -14,20 +16,20 @@ pub struct ImageMip {
 /// Извлекает мипмапы из байтов (SERZ или XML).
 pub fn image_mips_from_bytes(data: &[u8]) -> Result<Vec<ImageMip>, String> {
     if data.starts_with(b"SERZ") {
-        let mut reader = crate::common::serz::SerzReader::new(data);
-        let root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let mut reader = SerzReader::new(data);
+        let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
         let mut mips = Vec::new();
-        collect_serz_image_mips(&root, &mut mips)?;
+        collect_serz_image_mips_owned(&mut root, &mut mips)?;
         return Ok(mips);
     }
 
-    let xml = String::from_utf8(data.to_vec()).map_err(|e| format!("invalid text: {e}"))?;
-    all_image_blocks(&xml)
+    let xml = std::str::from_utf8(data).map_err(|e| format!("invalid text: {e}"))?;
+    all_image_blocks(xml)
         .into_iter()
         .map(|block| {
             let (width, height) = image_dimensions(block).ok_or("invalid mip dimensions")?;
-            let bytes = extract_blob(block)
-                .map(|blob| hex_decode(&blob))
+            let bytes = extract_blob_slice(block)
+                .map(hex_decode)
                 .unwrap_or_default();
             let declared = extract_blob_size(block) as usize;
             if declared > 0 && bytes.len() != declared {
@@ -45,29 +47,39 @@ pub fn image_mips_from_bytes(data: &[u8]) -> Result<Vec<ImageMip>, String> {
 
 /// Извлекает все блоки cHcImageDx из XML.
 pub fn all_image_blocks(xml: &str) -> Vec<&str> {
+    const START: &str = "<cHcImageDx";
+    const END: &str = "</cHcImageDx>";
+
     let mut out = Vec::new();
     let mut search = xml;
-    while let Some(start) = search.find("<cHcImageDx") {
-        let end_marker = "</cHcImageDx>";
-        if let Some(rel_end) = search[start..].find(end_marker) {
-            let end = start + rel_end + end_marker.len();
-            out.push(&search[start..end]);
-            search = &search[end..];
-        } else {
-            break;
+    while let Some(start) = search.find(START) {
+        let after_start = &search[start + START.len()..];
+        if !after_start
+            .as_bytes()
+            .first()
+            .is_some_and(|&b| b == b'>' || b.is_ascii_whitespace())
+        {
+            search = after_start;
+            continue;
         }
+        let Some(rel_end) = search[start..].find(END) else {
+            break;
+        };
+        let end = start + rel_end + END.len();
+        out.push(&search[start..end]);
+        search = &search[end..];
     }
     out
 }
 
 /// Извлекает размеры изображения из XML-блока.
 pub fn image_dimensions(block: &str) -> Option<(u32, u32)> {
-    let width = extract_tag(block, "Width", "sUInt16")
-        .or_else(|| extract_tag(block, "Width", "sUInt32"))?
+    let width = extract_tag_slice(block, "Width", "sUInt16")
+        .or_else(|| extract_tag_slice(block, "Width", "sUInt32"))?
         .parse()
         .ok()?;
-    let height = extract_tag(block, "Height", "sUInt16")
-        .or_else(|| extract_tag(block, "Height", "sUInt32"))?
+    let height = extract_tag_slice(block, "Height", "sUInt16")
+        .or_else(|| extract_tag_slice(block, "Height", "sUInt32"))?
         .parse()
         .ok()?;
     Some((width, height))
@@ -75,11 +87,24 @@ pub fn image_dimensions(block: &str) -> Option<(u32, u32)> {
 
 /// Извлекает тег из XML-блока.
 pub fn extract_tag(block: &str, tag: &str, dtype: &str) -> Option<String> {
-    let pattern = format!("<{} d:type=\"{}\">", tag, dtype);
-    let start = block.find(&pattern)?;
-    let rest = &block[start + pattern.len()..];
-    let end = rest.find("</")?;
-    Some(rest[..end].trim().to_string())
+    extract_tag_slice(block, tag, dtype).map(str::to_owned)
+}
+
+fn extract_tag_slice<'a>(block: &'a str, tag: &str, dtype: &str) -> Option<&'a str> {
+    let mut search = block;
+    while let Some(lt) = search.find('<') {
+        let rest = &search[lt + 1..];
+        if let Some(after_tag) = rest.strip_prefix(tag)
+            && let Some(after_attr) = after_tag.strip_prefix(" d:type=\"")
+            && let Some(after_type) = after_attr.strip_prefix(dtype)
+            && let Some(content) = after_type.strip_prefix("\">")
+        {
+            let end = content.find("</")?;
+            return Some(content[..end].trim());
+        }
+        search = rest;
+    }
+    None
 }
 
 /// Извлекает формат из XML-блока.
@@ -87,88 +112,85 @@ pub fn extract_format(block: &str) -> String {
     if let Some(start) = block.find("<Format") {
         let rest = &block[start..];
         if let Some(gt) = rest.find('>') {
-            let content_start = start + gt + 1;
-            if let Some(end) = block[content_start..].find("</Format>") {
-                let val = block[content_start..content_start + end].trim();
+            let content = &rest[gt + 1..];
+            if let Some(end) = content.find("</Format>") {
+                let val = content[..end].trim();
                 if !val.is_empty() {
-                    return val.to_string();
+                    return val.to_owned();
                 }
             }
         }
     }
-    // Fallback: scan block for known markers
-    if block.contains("INTERP_ALPHA") {
-        return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".to_string();
-    }
-    if block.contains("DXT5") || block.contains("BC3") {
-        return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".to_string();
+    // Fallback: scan block for known markers.
+    if block.contains("INTERP_ALPHA") || block.contains("DXT5") || block.contains("BC3") {
+        return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".to_owned();
     }
     if block.contains("EXPL_ALPHA") || block.contains("DXT3") || block.contains("BC2") {
-        return "HC_IMAGE_FORMAT_COMPRESSED_EXPL_ALPHA".to_string();
+        return "HC_IMAGE_FORMAT_COMPRESSED_EXPL_ALPHA".to_owned();
     }
     if block.contains("DXT1") || block.contains("BC1") {
-        return "HC_IMAGE_FORMAT_COMPRESSED".to_string();
+        return "HC_IMAGE_FORMAT_COMPRESSED".to_owned();
     }
     String::new()
 }
 
 /// Извлекает hex-блоб из XML-блока.
 pub fn extract_blob(block: &str) -> Option<String> {
-    let marker = "<d:blob d:size=\"";
-    let start = block.find(marker)?;
-    let rest = &block[start..];
-    let gt = rest.find('>')?;
-    let content_start = start + gt + 1;
-    let end_marker = "</d:blob>";
-    let end = block[content_start..].find(end_marker)? + content_start;
-    Some(block[content_start..end].to_string())
+    extract_blob_slice(block).map(str::to_owned)
 }
 
-/// Извлекает размер blobа из атрибута d:size.
+fn extract_blob_slice(block: &str) -> Option<&str> {
+    const MARKER: &str = "<d:blob d:size=\"";
+    let start = block.find(MARKER)?;
+    let rest = &block[start + MARKER.len()..];
+    let gt = rest.find('>')?;
+    let content = &rest[gt + 1..];
+    let end = content.find("</d:blob>")?;
+    Some(&content[..end])
+}
+
+/// Извлекает размер блоба из атрибута d:size.
 pub fn extract_blob_size(block: &str) -> u64 {
-    let marker = "<d:blob d:size=\"";
-    if let Some(start) = block.find(marker) {
-        let rest = &block[start + marker.len()..];
-        if let Some(end) = rest.find('"')
-            && let Ok(n) = rest[..end].parse::<u64>()
-        {
-            return n;
-        }
-    }
-    0
+    const MARKER: &str = "<d:blob d:size=\"";
+    let Some(start) = block.find(MARKER) else {
+        return 0;
+    };
+    let rest = &block[start + MARKER.len()..];
+    rest.find('"')
+        .and_then(|end| rest[..end].parse::<u64>().ok())
+        .unwrap_or(0)
 }
 
 /// Считает количество cHcTexture в XML.
 pub fn count_c_hc_textures(xml: &str) -> u32 {
-    let mut count = 0usize;
+    const TAG: &str = "<cHcTexture";
+    let mut count = 0u32;
     let mut search = xml;
-    while let Some(pos) = search.find("<cHcTexture") {
-        let after = &search[pos + "<cHcTexture".len()..];
-        let next = after.chars().next();
-        if next == Some(' ') || next == Some('>') || next == Some('\t') || next == Some('\n') {
+    while let Some(pos) = search.find(TAG) {
+        let after = &search[pos + TAG.len()..];
+        if after
+            .as_bytes()
+            .first()
+            .is_some_and(|&b| b == b'>' || b.is_ascii_whitespace())
+        {
             count += 1;
         }
-        // advance past this occurrence
-        if pos + 1 >= search.len() {
-            break;
-        }
-        search = &search[pos + 1..];
+        search = after;
     }
-    count as u32
+    count
 }
 
 /// Парсит булевый тег из XML-блока.
 pub fn parse_bool_tag(block: &str, tag: &str) -> bool {
     for dtype in ["bool", "sUInt32", "sUInt8", "sInt32", "sUInt16"] {
-        if let Some(v) = extract_tag(block, tag, dtype) {
-            let t = v.trim().to_lowercase();
-            if t == "1" || t == "true" || t == "yes" {
+        if let Some(v) = extract_tag_slice(block, tag, dtype) {
+            if v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes") {
                 return true;
             }
-            if t == "0" || t == "false" || t == "no" {
+            if v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("no") {
                 return false;
             }
-            if let Ok(n) = t.parse::<u32>() {
+            if let Ok(n) = v.parse::<u32>() {
                 return n != 0;
             }
         }
@@ -178,25 +200,25 @@ pub fn parse_bool_tag(block: &str, tag: &str) -> bool {
 
 /// Извлекает unnamed u16 перед blob.
 pub fn extract_unnamed_u16(block: &str) -> u16 {
+    const TAG: &str = "<e d:type=\"sUInt16\">";
+    let parse_after = |s: &str| {
+        let end = s.find("</e>")?;
+        s[..end].trim().parse::<u16>().ok()
+    };
+
     if let Some(blob_pos) = block.find("<d:blob") {
         let pre = &block[..blob_pos];
-        if let Some(start) = pre.rfind("<e d:type=\"sUInt16\">") {
-            let rest = &pre[start + "<e d:type=\"sUInt16\">".len()..];
-            if let Some(end) = rest.find("</e>")
-                && let Ok(v) = rest[..end].trim().parse::<u16>()
-            {
-                return v;
-            }
-        }
-    }
-    // Fallback: any <e d:type="sUInt16"> in block.
-    if let Some(start) = block.find("<e d:type=\"sUInt16\">") {
-        let rest = &block[start + "<e d:type=\"sUInt16\">".len()..];
-        if let Some(end) = rest.find("</e>")
-            && let Ok(v) = rest[..end].trim().parse::<u16>()
+        if let Some(start) = pre.rfind(TAG)
+            && let Some(v) = parse_after(&pre[start + TAG.len()..])
         {
             return v;
         }
+    }
+    // Fallback: any <e d:type="sUInt16"> in block.
+    if let Some(start) = block.find(TAG)
+        && let Some(v) = parse_after(&block[start + TAG.len()..])
+    {
+        return v;
     }
     0
 }
@@ -221,44 +243,93 @@ pub fn hex_decode(s: &str) -> Vec<u8> {
     out
 }
 
-/// Собирает мипмапы из SERZ дерева.
+/// Собирает мипмапы из SERZ дерева (заимствование).
 pub fn collect_serz_image_mips(node: &SerzNode, mips: &mut Vec<ImageMip>) -> Result<(), String> {
-    if let SerzNode::Element { name, children, .. } = node {
-        if name == "cHcImageDx" {
-            let mut format = None;
-            let mut width = None;
-            let mut height = None;
-            let mut blob = None;
-            for child in children {
-                match child {
-                    SerzNode::Property {
-                        name,
-                        type_name,
-                        value,
-                        ..
-                    } if name == "Format" && type_name == "cDeltaString" => {
-                        format = Some(value.clone());
-                    }
-                    SerzNode::Property { name, value, .. } if name == "Width" => {
-                        width = value.parse::<u32>().ok();
-                    }
-                    SerzNode::Property { name, value, .. } if name == "Height" => {
-                        height = value.parse::<u32>().ok();
-                    }
-                    SerzNode::Blob { data } => blob = Some(data.clone()),
-                    _ => {}
-                }
-            }
-            mips.push(ImageMip {
-                format: format.ok_or("image has no Format property")?,
-                width: width.ok_or("image has invalid Width property")?,
-                height: height.ok_or("image has invalid Height property")?,
-                data: blob.unwrap_or_default(),
-            });
-        }
+    let SerzNode::Element { name, children, .. } = node else {
+        return Ok(());
+    };
+    if name == "cHcImageDx" {
+        let mut format = None;
+        let mut width = None;
+        let mut height = None;
+        let mut blob = None;
         for child in children {
-            collect_serz_image_mips(child, mips)?;
+            match child {
+                SerzNode::Property {
+                    name,
+                    type_name,
+                    value,
+                    ..
+                } if name == "Format" && type_name == "cDeltaString" => {
+                    format = Some(value.clone());
+                }
+                SerzNode::Property { name, value, .. } if name == "Width" => {
+                    width = value.trim().parse::<u32>().ok();
+                }
+                SerzNode::Property { name, value, .. } if name == "Height" => {
+                    height = value.trim().parse::<u32>().ok();
+                }
+                SerzNode::Blob { data } => blob = Some(data.clone()),
+                _ => {}
+            }
         }
+        mips.push(ImageMip {
+            format: format.ok_or("image has no Format property")?,
+            width: width.ok_or("image has invalid Width property")?,
+            height: height.ok_or("image has invalid Height property")?,
+            data: blob.unwrap_or_default(),
+        });
+        return Ok(());
+    }
+    for child in children {
+        collect_serz_image_mips(child, mips)?;
+    }
+    Ok(())
+}
+
+/// Собирает мипмапы из временного SERZ дерева с переносом Blob без копирования.
+fn collect_serz_image_mips_owned(
+    node: &mut SerzNode,
+    mips: &mut Vec<ImageMip>,
+) -> Result<(), String> {
+    let SerzNode::Element { name, children, .. } = node else {
+        return Ok(());
+    };
+    if name == "cHcImageDx" {
+        let mut format = None;
+        let mut width = None;
+        let mut height = None;
+        let mut blob = None;
+        for child in children.iter_mut() {
+            match child {
+                SerzNode::Property {
+                    name,
+                    type_name,
+                    value,
+                    ..
+                } if name == "Format" && type_name == "cDeltaString" => {
+                    format = Some(mem::take(value));
+                }
+                SerzNode::Property { name, value, .. } if name == "Width" => {
+                    width = value.trim().parse::<u32>().ok();
+                }
+                SerzNode::Property { name, value, .. } if name == "Height" => {
+                    height = value.trim().parse::<u32>().ok();
+                }
+                SerzNode::Blob { data } => blob = Some(mem::take(data)),
+                _ => {}
+            }
+        }
+        mips.push(ImageMip {
+            format: format.ok_or("image has no Format property")?,
+            width: width.ok_or("image has invalid Width property")?,
+            height: height.ok_or("image has invalid Height property")?,
+            data: blob.unwrap_or_default(),
+        });
+        return Ok(());
+    }
+    for child in children.iter_mut() {
+        collect_serz_image_mips_owned(child, mips)?;
     }
     Ok(())
 }
@@ -282,18 +353,21 @@ pub fn find_element_mut<'a>(node: &'a mut SerzNode, name: &str) -> Option<&'a mu
 
 /// Находит все элементы по имени в SERZ дереве.
 pub fn find_all_elements<'a>(node: &'a SerzNode, name: &str) -> Vec<&'a SerzNode> {
-    let mut out = Vec::new();
-    if let SerzNode::Element {
-        name: n, children, ..
-    } = node
-    {
-        if n == name {
-            out.push(node);
-        }
-        for child in children {
-            out.extend(find_all_elements(child, name));
+    fn walk<'a>(node: &'a SerzNode, name: &str, out: &mut Vec<&'a SerzNode>) {
+        if let SerzNode::Element {
+            name: n, children, ..
+        } = node
+        {
+            if n == name {
+                out.push(node);
+            }
+            for child in children {
+                walk(child, name, out);
+            }
         }
     }
+    let mut out = Vec::new();
+    walk(node, name, &mut out);
     out
 }
 
@@ -311,12 +385,13 @@ pub fn set_or_insert_property(
         .iter_mut()
         .find(|child| matches!(child, SerzNode::Property { name: prop, .. } if prop == name))
     {
-        *current = value.to_string();
+        current.clear();
+        current.push_str(value);
     } else {
         children.push(SerzNode::Property {
-            name: name.to_string(),
-            type_name: type_name.to_string(),
-            value: value.to_string(),
+            name: name.to_owned(),
+            type_name: type_name.to_owned(),
+            value: value.to_owned(),
             alt_encoding: None,
         });
     }
@@ -325,46 +400,46 @@ pub fn set_or_insert_property(
 
 /// Устанавливает blob данные в SERZ элемент.
 pub fn set_blob_data(elem: &mut SerzNode, data: &[u8]) {
-    if let SerzNode::Element { children, .. } = elem {
-        for child in children.iter_mut() {
-            if let SerzNode::Blob { data: d } = child {
-                *d = data.to_vec();
-                return;
-            }
+    let SerzNode::Element { children, .. } = elem else {
+        return;
+    };
+    for child in children.iter_mut() {
+        if let SerzNode::Blob { data: d } = child {
+            d.clear();
+            d.extend_from_slice(data);
+            return;
         }
-        children.push(SerzNode::Blob {
-            data: data.to_vec(),
-        });
     }
+    children.push(SerzNode::Blob {
+        data: data.to_vec(),
+    });
 }
 
 /// Находит размеры текстуры в SERZ дереве.
 pub fn find_texture_dimensions(node: &SerzNode) -> Option<(u32, u32)> {
-    if let SerzNode::Element { name, children, .. } = node {
-        if name == "cHcTexture" {
-            let mut width = None;
-            let mut height = None;
-            for child in children {
-                if let SerzNode::Property {
-                    name: prop_name,
-                    value,
-                    ..
-                } = child
-                {
-                    match prop_name.as_str() {
-                        "Width" => width = value.parse().ok(),
-                        "Height" => height = value.parse().ok(),
-                        _ => {}
-                    }
+    let SerzNode::Element { name, children, .. } = node else {
+        return None;
+    };
+    if name == "cHcTexture" {
+        let mut width = None;
+        let mut height = None;
+        for child in children {
+            if let SerzNode::Property {
+                name: prop_name,
+                value,
+                ..
+            } = child
+            {
+                match prop_name.as_str() {
+                    "Width" => width = value.trim().parse().ok(),
+                    "Height" => height = value.trim().parse().ok(),
+                    _ => {}
                 }
             }
-            return Some((width?, height?));
         }
-        for child in children {
-            if let Some(dimensions) = find_texture_dimensions(child) {
-                return Some(dimensions);
-            }
+        if let (Some(w), Some(h)) = (width, height) {
+            return Some((w, h));
         }
     }
-    None
+    children.iter().find_map(find_texture_dimensions)
 }
