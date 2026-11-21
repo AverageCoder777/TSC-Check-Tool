@@ -1,13 +1,22 @@
 //! External editor (VS Code / system default) integration with two-way sync.
+
+use std::ffi::OsString;
 use std::fs;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::thread;
+use std::time::SystemTime;
 
 use crate::assets::read_serz_xml;
-use crate::common::serz::*;
+use crate::common::serz::{
+    SerzNode, SerzReader, compile_tracks_xml_to_bin, encode_tgpcdx_to_vec, encode_to_vec,
+    tracks_bin_to_xml,
+};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 fn is_tracks_bin(path: &Path) -> bool {
     path.file_name()
@@ -15,11 +24,16 @@ fn is_tracks_bin(path: &Path) -> bool {
         .is_some_and(|n| n.eq_ignore_ascii_case("Tracks.bin"))
 }
 
+fn has_extension_ignore_ascii_case(path: &Path, expected: &str) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(expected))
+}
+
 fn uses_structured_serz_xml(path: &Path) -> bool {
     is_tracks_bin(path)
-        || path.extension().is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("GeoPcDx") || extension.eq_ignore_ascii_case("TgPcDx")
-        })
+        || has_extension_ignore_ascii_case(path, "GeoPcDx")
+        || has_extension_ignore_ascii_case(path, "TgPcDx")
 }
 
 fn compile_xml_for_target(target_bin: &Path, xml: &str) -> Result<Vec<u8>, String> {
@@ -27,10 +41,7 @@ fn compile_xml_for_target(target_bin: &Path, xml: &str) -> Result<Vec<u8>, Strin
         compile_tracks_xml_to_bin(xml)
     } else if uses_structured_serz_xml(target_bin) {
         let bytes = compile_tracks_xml_to_bin(xml)?;
-        if target_bin
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("TgPcDx"))
-        {
+        if has_extension_ignore_ascii_case(target_bin, "TgPcDx") {
             let mut reader = SerzReader::new(&bytes);
             let root = reader
                 .parse()
@@ -54,122 +65,125 @@ pub fn open_and_sync_with_vscode(
     let initial_xml = resolve_temp_xml(binary_asset_path, &temp_xml_path)?;
 
     let binary_path = binary_asset_path.to_path_buf();
-    let xml_path = temp_xml_path.clone();
-
     thread::spawn(move || {
-        let initial_state = initial_xml;
-        loop {
-            // Запуск редактора с блокирующим ожиданием закрытия окна/вкладки
-            let launch_res = launch_editor(&xml_path, true);
-            match launch_res {
-                Ok(mut child) => {
-                    let _ = child.wait();
-                }
-                Err(e) => {
-                    let err = format!("Не удалось запустить редактор: {e}");
-                    show_native_error("Ошибка запуска", &err);
-                    status_callback(Err(err));
-                    return;
-                }
-            }
-
-            if !xml_path.exists() {
-                let msg = "Файл был удалён. Синхронизация отменена.".to_string();
-                println!("[ExternalEditor] {msg}");
-                status_callback(Ok(msg));
-                return;
-            }
-
-            let final_xml = match fs::read_to_string(&xml_path) {
-                Ok(s) => s,
-                Err(e) => {
-                    let err = format!("Не удалось прочитать {}: {e}", xml_path.display());
-                    show_native_error("Ошибка чтения", &err);
-                    status_callback(Err(err));
-                    return;
-                }
-            };
-
-            if final_xml == initial_state {
-                let _ = fs::remove_file(&xml_path);
-                let msg = "Файл закрыт без изменений".to_string();
-                println!("[ExternalEditor] {msg}");
-                status_callback(Ok(msg));
-                return;
-            }
-
-            match compile_xml_for_target(&binary_path, &final_xml) {
-                Ok(bytes) => {
-                    if bytes.len() < 10 {
-                        let err = format!(
-                            "Ошибка записи: бинарный файл слишком короткий ({} байт).",
-                            bytes.len()
-                        );
-                        show_native_error("Ошибка записи", &err);
-                        status_callback(Err(err));
-                        return;
-                    }
-                    let mut validation_reader = SerzReader::new(&bytes);
-                    if let Err(e) = validation_reader.parse() {
-                        let err =
-                            format!("Ошибка сериализации: сгенерированный бинарник поврежден: {e}");
-                        show_native_error("Ошибка записи", &err);
-                        status_callback(Err(err));
-                        return;
-                    }
-                    let backup = create_backup_file(&binary_path).ok().flatten();
-                    if let Err(e) = write_binary_atomic(&binary_path, &bytes) {
-                        if let Some(backup_path) = backup {
-                            let _ = fs::rename(&backup_path, &binary_path);
-                        }
-                        let err = format!("Ошибка записи в бинарник: {e}");
-                        show_native_error("Ошибка записи", &err);
-                        status_callback(Err(err));
-                        return;
-                    }
-                    let _ = fs::remove_file(&xml_path);
-                    let msg = "✓ Изменения успешно скомпилированы в BIN".to_string();
-                    println!("[ExternalEditor] {msg}");
-                    status_callback(Ok(msg));
-                    return;
-                }
-                Err(err) => {
-                    let prompt = format!(
-                        "Обнаружена ошибка синтаксиса XML:\n{}\n\nОткрыть редактор снова для исправления ошибки?\n(При нажатии 'Нет' файл останется сохранённым как XML рядом с оригиналом, а бинарник затронут не будет)",
-                        err
-                    );
-                    let retry = rfd::MessageDialog::new()
-                        .set_title("Ошибка синтаксиса XML")
-                        .set_description(&prompt)
-                        .set_buttons(rfd::MessageButtons::YesNo)
-                        .set_level(rfd::MessageLevel::Warning)
-                        .show();
-                    if retry == rfd::MessageDialogResult::Yes {
-                        continue;
-                    } else {
-                        let msg = format!(
-                            "Файл сохранён как XML ({}), бинарник не изменён.",
-                            xml_path.display()
-                        );
-                        status_callback(Err(msg));
-                        return;
-                    }
-                }
-            }
-        }
+        let result = run_sync_loop(&binary_path, &temp_xml_path, &initial_xml, "ExternalEditor");
+        status_callback(result);
     });
     Ok(())
+}
+
+pub fn run_headless(target: &Path) -> Result<(), String> {
+    let temp_xml_path = generate_temp_xml_path(target);
+    let initial_xml =
+        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error("Ошибка", e))?;
+    run_sync_loop(target, &temp_xml_path, &initial_xml, "Headless").map(|_| ())
+}
+
+fn run_sync_loop(
+    binary_path: &Path,
+    xml_path: &Path,
+    initial_xml: &str,
+    log_tag: &str,
+) -> Result<String, String> {
+    loop {
+        // Запуск редактора с блокирующим ожиданием закрытия окна/вкладки.
+        match launch_editor(xml_path, true) {
+            Ok(mut child) => {
+                let _ = child.wait();
+            }
+            Err(e) => {
+                let err = format!("Не удалось запустить редактор: {e}");
+                show_native_error("Ошибка запуска", &err);
+                return Err(err);
+            }
+        }
+
+        if !xml_path.exists() {
+            let msg = "Файл был удалён. Синхронизация отменена.".to_string();
+            println!("[{log_tag}] {msg}");
+            return Ok(msg);
+        }
+
+        let final_xml = match fs::read_to_string(xml_path) {
+            Ok(s) => s,
+            Err(e) => {
+                let err = format!("Не удалось прочитать {}: {e}", xml_path.display());
+                show_native_error("Ошибка чтения", &err);
+                return Err(err);
+            }
+        };
+
+        if final_xml == initial_xml || final_xml.trim().is_empty() {
+            let _ = fs::remove_file(xml_path);
+            let msg = "Файл закрыт без изменений".to_string();
+            println!("[{log_tag}] {msg}");
+            return Ok(msg);
+        }
+
+        match compile_xml_for_target(binary_path, &final_xml) {
+            Ok(bytes) => {
+                if bytes.len() < 10 {
+                    let err = format!(
+                        "Ошибка записи: бинарный файл слишком короткий ({} байт).",
+                        bytes.len()
+                    );
+                    show_native_error("Ошибка записи", &err);
+                    return Err(err);
+                }
+                let mut validation_reader = SerzReader::new(&bytes);
+                if let Err(e) = validation_reader.parse() {
+                    let err =
+                        format!("Ошибка сериализации: сгенерированный бинарник поврежден: {e}");
+                    show_native_error("Ошибка записи", &err);
+                    return Err(err);
+                }
+                let backup = create_backup_file(binary_path).ok().flatten();
+                if let Err(e) = write_binary_atomic(binary_path, &bytes) {
+                    if let Some(backup_path) = backup
+                        && !binary_path.exists()
+                    {
+                        let _ = fs::rename(&backup_path, binary_path);
+                    }
+                    let err = format!("Ошибка записи в бинарник: {e}");
+                    show_native_error("Ошибка записи", &err);
+                    return Err(err);
+                }
+                let _ = fs::remove_file(xml_path);
+                let msg = "✓ Изменения успешно скомпилированы в BIN".to_string();
+                println!("[{log_tag}] {msg}");
+                return Ok(msg);
+            }
+            Err(err) => {
+                if ask_retry_on_xml_error(&err) {
+                    continue;
+                }
+                return Err(format!(
+                    "Файл сохранён как XML ({}), бинарник не изменён.",
+                    xml_path.display()
+                ));
+            }
+        }
+    }
+}
+
+fn ask_retry_on_xml_error(err: &str) -> bool {
+    let prompt = format!(
+        "Обнаружена ошибка синтаксиса XML:\n{err}\n\nОткрыть редактор снова для исправления ошибки?\n(При нажатии 'Нет' файл останется сохранённым как XML рядом с оригиналом, а бинарник затронут не будет)"
+    );
+    rfd::MessageDialog::new()
+        .set_title("Ошибка синтаксиса XML")
+        .set_description(&prompt)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .set_level(rfd::MessageLevel::Warning)
+        .show()
+        == rfd::MessageDialogResult::Yes
 }
 
 fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<String, String> {
     let regenerate = match (fs::metadata(temp_xml_path), fs::metadata(binary_asset_path)) {
         (Ok(xml_meta), Ok(bin_meta)) => {
-            let xml_mtime = xml_meta
-                .modified()
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            let bin_mtime = bin_meta
-                .modified()
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let xml_mtime = xml_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            let bin_mtime = bin_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
             bin_mtime > xml_mtime
         }
         (Err(_), _) => true,
@@ -194,60 +208,62 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
     }
 }
 
+fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut os = OsString::from(path.as_os_str());
+    os.push(suffix);
+    PathBuf::from(os)
+}
+
 fn generate_temp_xml_path(binary_path: &Path) -> PathBuf {
-    let file_name = binary_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("asset.bin");
-    binary_path.with_file_name(format!("{file_name}.xml"))
+    append_suffix(binary_path, ".xml")
 }
 
 pub fn find_vscode_path() -> Option<PathBuf> {
-    for base in [
-        std::env::var("LOCALAPPDATA").ok(),
-        std::env::var("ProgramFiles").ok(),
-        std::env::var("ProgramFiles(x86)").ok(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let code_exe = PathBuf::from(&base)
+    let bases: Vec<PathBuf> = ["LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(|var| std::env::var_os(var).map(PathBuf::from))
+        .collect();
+
+    for base in &bases {
+        let code_exe = base
             .join("Programs")
             .join("Microsoft VS Code")
             .join("Code.exe");
         if code_exe.is_file() {
             return Some(code_exe);
         }
-        let code_exe_root = PathBuf::from(&base)
-            .join("Microsoft VS Code")
-            .join("Code.exe");
+        let code_exe_root = base.join("Microsoft VS Code").join("Code.exe");
         if code_exe_root.is_file() {
             return Some(code_exe_root);
         }
     }
-    for base in [
-        std::env::var("LOCALAPPDATA").ok(),
-        std::env::var("ProgramFiles").ok(),
-        std::env::var("ProgramFiles(x86)").ok(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let p = PathBuf::from(base)
+
+    for base in &bases {
+        let code_cmd = base
             .join("Programs")
             .join("Microsoft VS Code")
             .join("bin")
             .join("code.cmd");
-        if p.is_file() {
-            return Some(p);
+        if code_cmd.is_file() {
+            return Some(code_cmd);
         }
     }
-    if let Ok(output) = Command::new("cmd").args(["/C", "where", "code"]).output()
+
+    let mut where_cmd = Command::new("cmd");
+    where_cmd.args(["/C", "where", "code"]);
+    #[cfg(windows)]
+    where_cmd.creation_flags(CREATE_NO_WINDOW);
+
+    if let Ok(output) = where_cmd.output()
         && output.status.success()
     {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let p = PathBuf::from(line.trim());
-            if p.is_file() {
+            if p.is_file()
+                && (has_extension_ignore_ascii_case(&p, "exe")
+                    || has_extension_ignore_ascii_case(&p, "cmd")
+                    || has_extension_ignore_ascii_case(&p, "bat"))
+            {
                 return Some(p);
             }
         }
@@ -255,12 +271,9 @@ pub fn find_vscode_path() -> Option<PathBuf> {
     None
 }
 
-pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<std::process::Child, String> {
+pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<Child, String> {
     if let Some(editor_path) = find_vscode_path() {
-        let is_exe = editor_path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
-        let mut cmd = if is_exe {
+        let mut cmd = if has_extension_ignore_ascii_case(&editor_path, "exe") {
             let mut c = Command::new(&editor_path);
             if wait {
                 c.arg("--wait");
@@ -279,40 +292,31 @@ pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<std::process::Child,
             c
         };
         #[cfg(windows)]
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.creation_flags(CREATE_NO_WINDOW);
         return cmd
             .spawn()
             .map_err(|e| format!("Не удалось запустить VS Code: {e}"));
     }
+
     let mut c = Command::new("notepad.exe");
     c.arg(xml_path);
     #[cfg(windows)]
-    c.creation_flags(0x08000000);
+    c.creation_flags(CREATE_NO_WINDOW);
     c.spawn()
         .map_err(|e| format!("Не удалось запустить Блокнот: {e}"))
 }
 
 pub fn write_binary_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| format!("Некорректный путь к файлу: {}", target.display()))?;
-    let file_name = target
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "asset.bin".to_owned());
-    let temp_path = parent.join(format!("{file_name}.tmp"));
+    if target.parent().is_none() {
+        return Err(format!("Некорректный путь к файлу: {}", target.display()));
+    }
+    let temp_path = append_suffix(target, ".tmp");
     fs::write(&temp_path, bytes).map_err(|error| {
         format!(
             "Не удалось записать временный файл {}: {error}",
             temp_path.display()
         )
     })?;
-    if target.exists() {
-        fs::remove_file(target).map_err(|error| {
-            let _ = fs::remove_file(&temp_path);
-            format!("Не удалось подготовить {}: {error}", target.display())
-        })?;
-    }
     fs::rename(&temp_path, target).map_err(|error| {
         let _ = fs::remove_file(&temp_path);
         format!("Не удалось установить {}: {error}", target.display())
@@ -324,15 +328,11 @@ pub fn create_backup_file(target_bin: &Path) -> Result<Option<PathBuf>, String> 
     if !target_bin.exists() {
         return Ok(None);
     }
-    let file_name = target_bin
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "asset.bin".to_string());
-    let mut backup_path = target_bin.with_file_name(format!("{file_name}.bak"));
+    let mut backup_path = append_suffix(target_bin, ".bak");
     if backup_path.exists() {
-        let mut i = 1;
+        let mut i = 1u32;
         loop {
-            backup_path = target_bin.with_file_name(format!("{file_name}.bak{i}"));
+            backup_path = append_suffix(target_bin, &format!(".bak{i}"));
             if !backup_path.exists() {
                 break;
             }
@@ -345,7 +345,7 @@ pub fn create_backup_file(target_bin: &Path) -> Result<Option<PathBuf>, String> 
             backup_path.display()
         )
     })?;
-    println!("[Backup] Создана резервная копия: {:?}", backup_path);
+    println!("[Backup] Создана резервная копия: {backup_path:?}");
     Ok(Some(backup_path))
 }
 
@@ -355,73 +355,6 @@ pub fn show_native_error(title: &str, message: &str) {
         .set_description(message)
         .set_level(rfd::MessageLevel::Error)
         .show();
-}
-
-pub fn run_headless(target: &Path) -> Result<(), String> {
-    let temp_xml_path = generate_temp_xml_path(target);
-    let initial_xml =
-        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error("Ошибка", e))?;
-    loop {
-        let mut child =
-            launch_editor(&temp_xml_path, true).inspect_err(|e| show_native_error("Ошибка", e))?;
-        let _ = child.wait();
-        if !temp_xml_path.exists() {
-            println!("[Headless] Файл удалён. Завершение.");
-            return Ok(());
-        }
-        let final_xml = fs::read_to_string(&temp_xml_path).unwrap_or_default();
-        if final_xml == initial_xml || final_xml.trim().is_empty() {
-            println!("[Headless] Файл закрыт без изменений. Компиляция пропущена.");
-            let _ = fs::remove_file(&temp_xml_path);
-            return Ok(());
-        }
-        match compile_xml_for_target(target, &final_xml) {
-            Ok(bytes) => {
-                if bytes.len() < 10 {
-                    show_native_error(
-                        "Ошибка записи",
-                        &format!("Бинарный файл слишком короткий ({} байт).", bytes.len()),
-                    );
-                    return Err("Бинарный файл слишком короткий".to_string());
-                }
-                let mut validation_reader = SerzReader::new(&bytes);
-                if let Err(e) = validation_reader.parse() {
-                    show_native_error(
-                        "Ошибка записи",
-                        &format!("Сгенерированный бинарник поврежден: {e}"),
-                    );
-                    return Err(e);
-                }
-                let backup = create_backup_file(target).ok().flatten();
-                if let Err(e) = write_binary_atomic(target, &bytes) {
-                    if let Some(backup_path) = backup {
-                        let _ = fs::rename(&backup_path, target);
-                    }
-                    show_native_error("Ошибка записи", &e);
-                    return Err(e);
-                }
-                let _ = fs::remove_file(&temp_xml_path);
-                return Ok(());
-            }
-            Err(e) => {
-                let prompt = format!(
-                    "Обнаружена ошибка синтаксиса XML:\n{}\n\nОткрыть редактор снова для исправления ошибки?\n(При 'Нет' исходный бинарник останется без изменений)",
-                    e
-                );
-                let retry = rfd::MessageDialog::new()
-                    .set_title("Ошибка синтаксиса XML")
-                    .set_description(&prompt)
-                    .set_buttons(rfd::MessageButtons::YesNo)
-                    .set_level(rfd::MessageLevel::Warning)
-                    .show();
-                if retry == rfd::MessageDialogResult::Yes {
-                    continue;
-                } else {
-                    return Err(e);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

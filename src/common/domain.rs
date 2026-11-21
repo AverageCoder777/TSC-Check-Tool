@@ -1,8 +1,9 @@
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::borrow::Cow;
+use std::path::{Component, Path, PathBuf};
 
-use crate::assets::FileStamp;
+use serde::{Deserialize, Serialize};
+
+use crate::assets::{FileStamp, RouteAssetType};
 use crate::common::archive::extract_archive_member;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,7 +58,7 @@ pub(crate) struct MissingAsset {
     pub(crate) uses: Vec<AssetUse>,
     pub(crate) suggested_repair: Option<String>,
     pub(crate) is_corrupted_link: bool,
-    pub(crate) asset_type: crate::assets::RouteAssetType,
+    pub(crate) asset_type: RouteAssetType,
 }
 
 #[derive(Clone, Debug)]
@@ -132,7 +133,11 @@ impl RouteFile {
             RouteFile::Path(path) => path.clone(),
             RouteFile::Archive { name, .. } => {
                 let clean = name.trim_start_matches(['/', '\\']);
-                route_path.join(clean.replace('\\', "/"))
+                if clean.contains('\\') {
+                    route_path.join(clean.replace('\\', "/"))
+                } else {
+                    route_path.join(clean)
+                }
             }
         }
     }
@@ -143,13 +148,13 @@ impl RouteFile {
             RouteFile::Archive { archive, name, .. } => (archive, name),
         };
 
-        // Защита от сброса temp_dir до корня диска на Windows
+        // Защита от path traversal и сброса temp_dir до корня диска на Windows.
         let clean_name = name.trim_start_matches(['/', '\\']);
         let relative = Path::new(clean_name);
         if relative.components().any(|component| {
             matches!(
                 component,
-                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
             )
         }) {
             return Err(format!("Недопустимый путь внутри архива: {name}"));
@@ -160,13 +165,7 @@ impl RouteFile {
             return Ok(target);
         }
 
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("Не удалось создать папку {}: {error}", parent.display())
-            })?;
-        }
         extract_archive_member(archive, name, &target)?;
-
         Ok(target)
     }
 
@@ -181,7 +180,7 @@ impl RouteFile {
         match self {
             RouteFile::Path(path) => path.display().to_string(),
             RouteFile::Archive { archive, name, .. } => {
-                format!("{}!{}", archive.display(), name)
+                format!("{}!{name}", archive.display())
             }
         }
     }
@@ -190,6 +189,40 @@ impl RouteFile {
         match self {
             RouteFile::Path(path) => FileStamp::of(path),
             RouteFile::Archive { stamp, .. } => *stamp,
+        }
+    }
+
+    pub(crate) fn tile_kind(&self) -> TileKind {
+        let path = self.raw_path_str();
+        if ends_with_ignore_ascii_case(&path, "tracks.bin") {
+            TileKind::TracksMaster
+        } else if ends_with_ignore_ascii_case(&path, "lofts.bin") {
+            TileKind::LoftsMaster
+        } else if ends_with_ignore_ascii_case(&path, "roads.bin") {
+            TileKind::RoadsMaster
+        } else if ends_with_ignore_ascii_case(&path, "routeproperties.xml") {
+            TileKind::RouteProps
+        } else if contains_ignore_ascii_case(&path, "track tiles") {
+            TileKind::Track
+        } else if contains_ignore_ascii_case(&path, "road tiles") {
+            TileKind::Road
+        } else if contains_ignore_ascii_case(&path, "loft tiles") {
+            TileKind::Loft
+        } else {
+            TileKind::Scenery
+        }
+    }
+
+    pub fn is_protected_pathway(&self) -> bool {
+        let path = self.raw_path_str();
+        contains_path_ignore_ascii_case(&path, "/networks/tracks.bin")
+            || contains_path_ignore_ascii_case(&path, "/networks/track tiles/")
+    }
+
+    fn raw_path_str(&self) -> Cow<'_, str> {
+        match self {
+            RouteFile::Path(path) => path.to_string_lossy(),
+            RouteFile::Archive { name, .. } => Cow::Borrowed(name.as_str()),
         }
     }
 }
@@ -236,45 +269,6 @@ pub(crate) enum TileKind {
     LoftsMaster,
     RoadsMaster,
     RouteProps,
-}
-
-impl RouteFile {
-    pub(crate) fn tile_kind(&self) -> TileKind {
-        let name_str = match self {
-            RouteFile::Path(path) => path.to_string_lossy(),
-            RouteFile::Archive { name, .. } => std::borrow::Cow::Borrowed(name.as_str()),
-        };
-        let path = name_str.to_ascii_lowercase();
-
-        if path.ends_with("tracks.bin") {
-            TileKind::TracksMaster
-        } else if path.ends_with("lofts.bin") {
-            TileKind::LoftsMaster
-        } else if path.ends_with("roads.bin") {
-            TileKind::RoadsMaster
-        } else if path.ends_with("routeproperties.xml") {
-            TileKind::RouteProps
-        } else if path.contains("track tiles") {
-            TileKind::Track
-        } else if path.contains("road tiles") {
-            TileKind::Road
-        } else if path.contains("loft tiles") {
-            TileKind::Loft
-        } else {
-            TileKind::Scenery
-        }
-    }
-
-    pub fn is_protected_pathway(&self) -> bool {
-        let name_str = match self {
-            RouteFile::Path(path) => path.to_string_lossy(),
-            RouteFile::Archive { name, .. } => std::borrow::Cow::Borrowed(name.as_str()),
-        };
-        let path = name_str.to_ascii_lowercase();
-        (path.contains("/networks/tracks.bin") || path.contains("\\networks\\tracks.bin"))
-            || (path.contains("/networks/track tiles/")
-                || path.contains("\\networks\\track tiles\\"))
-    }
 }
 
 pub(crate) struct AssetReplacementReport {
@@ -326,4 +320,39 @@ pub(crate) struct RouteScanCache {
     pub(crate) folder_ids: Vec<String>,
     pub(crate) ignored_route_ids: Vec<String>,
     pub(crate) result: RouteScanResult,
+}
+
+fn ends_with_ignore_ascii_case(haystack: &str, suffix: &str) -> bool {
+    let h = haystack.as_bytes();
+    let s = suffix.as_bytes();
+    h.len()
+        .checked_sub(s.len())
+        .is_some_and(|start| h[start..].eq_ignore_ascii_case(s))
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let n = needle.as_bytes();
+    if n.is_empty() {
+        return true;
+    }
+    haystack
+        .as_bytes()
+        .windows(n.len())
+        .any(|window| window.eq_ignore_ascii_case(n))
+}
+
+fn contains_path_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let n = needle.as_bytes();
+    if n.is_empty() {
+        return true;
+    }
+    haystack.as_bytes().windows(n.len()).any(|window| {
+        window.iter().zip(n).all(|(&hb, &nb)| {
+            if nb == b'/' {
+                hb == b'/' || hb == b'\\'
+            } else {
+                hb.eq_ignore_ascii_case(&nb)
+            }
+        })
+    })
 }
