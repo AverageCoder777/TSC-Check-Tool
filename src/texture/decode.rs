@@ -1,4 +1,5 @@
 //! TgPcDx texture decoding to RGBA and UI conversion.
+
 use super::serz_parse::image_mips_from_bytes;
 
 /// Основная функция декодирования TgPcDx в RGBA с опциональным ограничением размера.
@@ -8,26 +9,27 @@ pub fn decode_tgpcdx_with_max_dimension(
 ) -> Result<(u32, u32, Vec<u8>), String> {
     let image_blocks = image_mips_from_bytes(data)?;
     let image_block = max_dimension
-        .and_then(|max_dimension| {
+        .and_then(|max_dim| {
             image_blocks
                 .iter()
-                .filter(|block| block.width <= max_dimension && block.height <= max_dimension)
+                .filter(|block| block.width <= max_dim && block.height <= max_dim)
                 .max_by_key(|block| block.width.max(block.height))
         })
         .or_else(|| image_blocks.first())
         .ok_or("no image block")?;
-    let format = &image_block.format;
+
     let (width, height) = (image_block.width, image_block.height);
     if width == 0 || height == 0 {
         return Err("invalid dimensions".into());
     }
     let bytes = &image_block.data;
 
-    let pixels = width
-        .checked_mul(height)
-        .ok_or("texture dimensions overflow")? as usize;
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or("texture dimensions overflow")?;
     let rgba_bytes = pixels.checked_mul(4).ok_or("texture dimensions overflow")?;
-    let format_upper = format.to_uppercase();
+
+    let format_upper = image_block.format.to_ascii_uppercase();
     let is_bc3 = format_upper.contains("INTERP_ALPHA")
         || format_upper.contains("BC3")
         || format_upper.contains("DXT5");
@@ -44,30 +46,43 @@ pub fn decode_tgpcdx_with_max_dimension(
         || format_upper.contains("ARGB")
         || format_upper.contains("UNCOMPRESSED");
 
-    let mut image_u32 = vec![0u32; pixels];
-    let mut rgba = Vec::with_capacity(rgba_bytes);
+    let is_known_compressed = is_bc1 || is_bc2 || is_bc3;
 
-    if is_uncompressed || (!is_bc3 && !is_bc2 && !is_bc1 && bytes.len() >= pixels * 4) {
+    if is_uncompressed || (!is_known_compressed && bytes.len() >= rgba_bytes) {
+        if bytes.len() < rgba_bytes {
+            return Err("uncompressed texture data too small".into());
+        }
         let bgra = format_upper.contains("BGRA");
         let argb = format_upper.contains("ARGB");
-        for (dst, &[b0, b1, b2, b3]) in image_u32
-            .iter_mut()
-            .take(pixels)
-            .zip(bytes.as_chunks::<4>().0)
-        {
-            let (r, g, b, a) = if bgra {
-                (b2, b1, b0, b3)
-            } else if argb {
-                (b1, b2, b3, b0)
-            } else {
-                (b0, b1, b2, b3)
-            };
-            *dst = (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | (b as u32);
+
+        if !bgra && !argb {
+            return Ok((width, height, bytes[..rgba_bytes].to_vec()));
         }
-    } else if is_bc2 {
+
+        let mut rgba = vec![0u8; rgba_bytes];
+        let src_chunks = bytes[..rgba_bytes].as_chunks::<4>().0;
+        let dst_chunks = rgba.as_chunks_mut::<4>().0;
+        if bgra {
+            for (dst, &[b, g, r, a]) in dst_chunks.iter_mut().zip(src_chunks) {
+                *dst = [r, g, b, a];
+            }
+        } else {
+            for (dst, &[a, r, g, b]) in dst_chunks.iter_mut().zip(src_chunks) {
+                *dst = [r, g, b, a];
+            }
+        }
+        return Ok((width, height, rgba));
+    }
+
+    let blocks_w = width.div_ceil(4) as usize;
+    let blocks_h = height.div_ceil(4) as usize;
+    let bc3_min_bytes = blocks_w.saturating_mul(blocks_h).saturating_mul(16);
+
+    let mut image_u32 = vec![0u32; pixels];
+    if is_bc2 {
         texture2ddecoder::decode_bc2(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
-    } else if is_bc3 || (!is_bc1 && bytes.len() >= pixels) {
+    } else if is_bc3 || (!is_bc1 && bytes.len() >= bc3_min_bytes) {
         texture2ddecoder::decode_bc3(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
     } else {
@@ -75,17 +90,16 @@ pub fn decode_tgpcdx_with_max_dimension(
             .map_err(|e| e.to_string())?;
     }
 
-    // Single conversion loop for all formats
-    for px in image_u32 {
-        rgba.push(((px >> 16) & 0xff) as u8);
-        rgba.push(((px >> 8) & 0xff) as u8);
-        rgba.push((px & 0xff) as u8);
-        rgba.push(((px >> 24) & 0xff) as u8);
+    let mut rgba = vec![0u8; rgba_bytes];
+    for (dst, px) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(image_u32) {
+        *dst = [
+            (px >> 16) as u8,
+            (px >> 8) as u8,
+            px as u8,
+            (px >> 24) as u8,
+        ];
     }
 
-    if rgba.len() < rgba_bytes {
-        return Err("decoded data too small".into());
-    }
     Ok((width, height, rgba))
 }
 
