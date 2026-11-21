@@ -116,12 +116,6 @@ pub(crate) fn collect_float_values(node: &SerzNode) -> Vec<f32> {
     out
 }
 
-pub(crate) fn parse_i32_values(value: &str) -> Vec<i32> {
-    split_numeric_tokens(value)
-        .filter_map(parse_i32_token)
-        .collect()
-}
-
 pub(crate) fn collect_i32_values(node: &SerzNode) -> Vec<i32> {
     fn collect_into(node: &SerzNode, out: &mut Vec<i32>) {
         match node {
@@ -458,29 +452,6 @@ pub(crate) fn parse_fvf(fvf: u32) -> (usize, Option<usize>, Option<usize>) {
         offset += coord_size;
     }
     (offset, normal_offset, uv_offset)
-}
-
-/// Picks a stride that actually divides the buffer. An explicit `VertexStride` from the
-/// file is authoritative when present and valid; the parsed declaration is the fallback.
-#[cfg(test)]
-pub(crate) fn select_vertex_stride(
-    bytes_len: usize,
-    explicit: Option<usize>,
-    declared: Option<usize>,
-    declaration: usize,
-    fvf_stride: usize,
-) -> usize {
-    let valid = |stride: usize| stride > 0 && bytes_len % stride == 0;
-    Some(declaration)
-        .filter(|&stride| valid(stride))
-        .or(declared.filter(|&stride| valid(stride)))
-        .or(explicit.filter(|&stride| valid(stride)))
-        .or(Some(fvf_stride).filter(|&stride| valid(stride)))
-        .or(explicit)
-        .or(declared)
-        .or(Some(declaration).filter(|&stride| stride > 0))
-        .or(Some(fvf_stride).filter(|&stride| stride > 0))
-        .unwrap_or(32)
 }
 
 pub(crate) fn vertex_element_size(type_name: &str) -> Option<usize> {

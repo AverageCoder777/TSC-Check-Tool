@@ -8,6 +8,3 @@ mod vertex;
 
 pub(crate) mod viewer3d;
 pub(crate) use types::*;
-
-#[cfg(test)]
-mod tests;

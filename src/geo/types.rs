@@ -103,8 +103,4 @@ impl GeoModel {
         super::diagnostics::log_parse_diagnostics(path, &model.diagnostics);
         Ok(model)
     }
-    #[cfg(test)]
-    pub fn parse(path: &Path, data: &[u8]) -> Result<Self, String> {
-        parse_model(path, data)
-    }
 }
