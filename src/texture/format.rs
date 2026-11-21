@@ -77,7 +77,7 @@ pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
         };
     }
 
-    if let Some(fourcc) = dds.header.spf.fourcc {
+    if let Some(fourcc) = &dds.header.spf.fourcc {
         return match fourcc.0 {
             FourCC::DXT5 | FourCC::DXT4 => DdsCompression::Dxt5,
             FourCC::DXT3 | FourCC::DXT2 => DdsCompression::Dxt3,
