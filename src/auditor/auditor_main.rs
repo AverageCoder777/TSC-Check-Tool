@@ -916,7 +916,10 @@ fn ap_exists(
     kind: AssetResourceKind,
 ) -> bool {
     let norm = normalize_asset_ref(raw);
-    let first = norm.split(['\\', '/']).find(|s| !s.is_empty()).unwrap_or("");
+    let first = norm
+        .split(['\\', '/'])
+        .find(|s| !s.is_empty())
+        .unwrap_or("");
     let is_global = is_global_asset_ref(&norm, kind, assets_root)
         || (!first.is_empty() && !first.starts_with('.') && assets_root.join(first).is_dir());
 
@@ -1014,9 +1017,7 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
     let re_hex = re_hex_bracket();
 
     let mut try_register = |rel_str: &str| {
-        let clean = rel_str
-            .trim_matches(['\0', '"', '\''])
-            .replace('/', "\\");
+        let clean = rel_str.trim_matches(['\0', '"', '\'']).replace('/', "\\");
         let clean = clean.trim_start_matches('\\');
         let clean = re_hex.replace_all(clean, "");
         if clean.is_empty() {
@@ -1229,11 +1230,13 @@ pub fn extract_absolute_blueprint_refs(
 
         let provider = re_provider()
             .captures(block)
-            .map(|c| c[1].trim())
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim())
             .unwrap_or("");
         let product = re_product()
             .captures(block)
-            .map(|c| c[1].trim())
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim())
             .unwrap_or("");
 
         let base_rel = if ends_with_ignore_ascii_case(raw_bp, ".xml") {
