@@ -1,7 +1,11 @@
-use rayon::iter::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use rayon::iter::*;
+use regex::Regex;
 use tempfile::tempdir;
 use zip::ZipArchive;
 
@@ -11,20 +15,54 @@ use crate::assets::{
     umlaut::scan_umlaut_assets,
 };
 use crate::common::domain::*;
-use crate::common::serz::SerzNode;
-use crate::common::serz::SerzReader;
+use crate::common::serz::{SerzNode, SerzReader};
 use crate::common::translit::*;
+
+pub type ApCache = HashMap<PathBuf, HashSet<String>>;
 
 pub struct FileAnalysis {
     /// Разбор взят из кэша: файл не менялся с прошлой проверки.
     from_cache: bool,
     file: RouteFile,
+    stamp: Option<FileStamp>,
     /// Сколько раз каждый ассет встречается в файле.
     uses: Vec<(String, u32, AssetKind)>,
     error: Option<String>,
 }
 
+/// Автоматически удаляет временный файл, извлечённый из архива, при выходе из области видимости.
+struct TempFileGuard(Option<PathBuf>);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Сравнивает имя SERZ-узла с эталоном через `-`, считая `::` эквивалентным `-` (без аллокаций).
+fn name_matches_dash(name: &str, expected_dash: &str) -> bool {
+    let mut name_parts = name.split("::").flat_map(|p| p.split('-'));
+    let mut exp_parts = expected_dash.split('-');
+    loop {
+        match (name_parts.next(), exp_parts.next()) {
+            (Some(a), Some(b)) if a == b => continue,
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+}
+
 pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> FileAnalysis {
+    analyze_route_file_with_stamp(route_file, temp_dir, None)
+}
+
+fn analyze_route_file_with_stamp(
+    route_file: &RouteFile,
+    temp_dir: &Path,
+    stamp: Option<FileStamp>,
+) -> FileAnalysis {
     let is_archive = matches!(route_file, RouteFile::Archive { .. });
     // Запись архива читается через временный файл: конвертеру Serz нужен
     // настоящий файл на диске.
@@ -34,14 +72,18 @@ pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> Fil
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
+                stamp,
                 uses: Vec::new(),
                 error: Some(error),
             };
         }
     };
+    let _guard = TempFileGuard(is_archive.then(|| file_path.clone()));
+
     let is_binary = file_path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
+
     // .bin файлы: разбираем SERZ-дерево напрямую, без сериализации в XML-строку
     // и без регулярных выражений по тексту.
     if is_binary {
@@ -51,39 +93,32 @@ pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> Fil
             .unwrap_or(0)
             < 256
         {
-            if is_archive {
-                let _ = fs::remove_file(&file_path);
-            }
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
+                stamp,
                 uses: Vec::new(),
                 error: None,
             };
         }
         // Serz хранит имена элементов обычными строками, поэтому файл без
-        // `BlueprintID` заведомо не содержит ссылок на ассеты. Такие файлы не
-        // конвертируются: на больших маршрутах это основная часть работы.
+        // `BlueprintID` заведомо не содержит ссылок на ассеты.
         if !may_contain_asset_reference(&file_path) {
-            if is_archive {
-                let _ = fs::remove_file(&file_path);
-            }
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
+                stamp,
                 uses: Vec::new(),
                 error: None,
             };
         }
-        let xml_bytes = match std::fs::read(&file_path) {
+        let xml_bytes = match fs::read(&file_path) {
             Ok(data) => data,
             Err(error) => {
-                if is_archive {
-                    let _ = fs::remove_file(&file_path);
-                }
                 return FileAnalysis {
                     from_cache: false,
                     file: route_file.clone(),
+                    stamp,
                     uses: Vec::new(),
                     error: Some(format!(
                         "{}: не удалось прочитать BIN: {error}",
@@ -96,23 +131,19 @@ pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> Fil
         let node = match reader.parse() {
             Ok(node) => node,
             Err(error) => {
-                if is_archive {
-                    let _ = fs::remove_file(&file_path);
-                }
                 return FileAnalysis {
                     from_cache: false,
                     file: route_file.clone(),
+                    stamp,
                     uses: Vec::new(),
                     error: Some(format!("{}: {error}", file_path.display())),
                 };
             }
         };
-        if is_archive {
-            let _ = fs::remove_file(&file_path);
-        }
         return FileAnalysis {
             from_cache: false,
             file: route_file.clone(),
+            stamp,
             uses: extract_asset_references_from_serz(&node),
             error: None,
         };
@@ -122,12 +153,10 @@ pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> Fil
     let xml_data = match fs::read(&file_path) {
         Ok(data) => data,
         Err(error) => {
-            if is_archive {
-                let _ = fs::remove_file(&file_path);
-            }
             return FileAnalysis {
                 from_cache: false,
                 file: route_file.clone(),
+                stamp,
                 uses: Vec::new(),
                 error: Some(format!(
                     "{}: не удалось прочитать XML: {error}",
@@ -137,16 +166,13 @@ pub(crate) fn analyze_route_file(route_file: &RouteFile, temp_dir: &Path) -> Fil
         }
     };
 
-    if is_archive {
-        let _ = fs::remove_file(&file_path);
-    }
     let xml_text = crate::routes::decode_xml_bytes(&xml_data);
-
     let references = extract_asset_references_with_locations(&xml_text);
 
     FileAnalysis {
         from_cache: false,
         file: route_file.clone(),
+        stamp,
         uses: count_asset_uses(references),
         error: None,
     }
@@ -159,7 +185,7 @@ pub(crate) fn extract_asset_references_from_serz(node: &SerzNode) -> Vec<(String
     let mut raw_refs: Vec<(String, AssetKind)> = Vec::new();
     let mut context: Option<AssetKind> = None;
     walk_serz_for_blueprints(node, &mut raw_refs, &mut context);
-    count_asset_uses_from_pairs(raw_refs)
+    count_asset_uses_iter(raw_refs)
 }
 
 /// Рекурсивный обход дерева SerzNode. Контекст (транспорт/декор/лофт)
@@ -171,20 +197,19 @@ fn walk_serz_for_blueprints(
     context: &mut Option<AssetKind>,
 ) {
     if let SerzNode::Element { name, children, .. } = node {
-        let clean = name.replace("::", "-");
         let prev_context = *context;
 
         // Устанавливаем контекст при входе в соответствующий элемент.
-        if clean == "iRailVehicleBlueprint" {
+        if name == "iRailVehicleBlueprint" {
             *context = Some(AssetKind::Vehicle);
-        } else if clean == "SceneryRenderBlueprint" {
+        } else if name == "SceneryRenderBlueprint" {
             *context = Some(AssetKind::Scenery);
-        } else if clean == "RenderBlueprint" {
+        } else if name == "RenderBlueprint" {
             *context = Some(AssetKind::Loft);
         }
 
         // Блок абсолютного блюпринта: извлекаем Provider/Product/BlueprintID.
-        if clean == "iBlueprintLibrary-cAbsoluteBlueprintID" {
+        if name_matches_dash(name, "iBlueprintLibrary-cAbsoluteBlueprintID") {
             if let Some((provider, product, blueprint)) = extract_blueprint_ids(children) {
                 let kind = context.unwrap_or(AssetKind::Other);
                 if let Some(path) = asset_relative_path(&provider, &product, &blueprint) {
@@ -214,56 +239,48 @@ fn extract_blueprint_ids(children: &[SerzNode]) -> Option<(String, String, Strin
     let mut blueprint: Option<String> = None;
 
     for child in children {
-        // BlueprintSetID → iBlueprintLibrary-cBlueprintSetID с Provider/Product.
-        if let SerzNode::Element {
-            name,
-            children: bs_children,
-            ..
-        } = child
-        {
-            let clean = name.replace("::", "-");
-            if clean == "BlueprintSetID" {
+        match child {
+            // BlueprintSetID → iBlueprintLibrary-cBlueprintSetID с Provider/Product.
+            SerzNode::Element {
+                name,
+                children: bs_children,
+                ..
+            } if name == "BlueprintSetID" => {
                 for bs_child in bs_children {
                     if let SerzNode::Element {
                         name: ibs_name,
                         children: ibs_children,
                         ..
                     } = bs_child
+                        && name_matches_dash(ibs_name, "iBlueprintLibrary-cBlueprintSetID")
                     {
-                        let ibs_clean = ibs_name.replace("::", "-");
-                        if ibs_clean == "iBlueprintLibrary-cBlueprintSetID" {
-                            for prop in ibs_children {
-                                if let SerzNode::Property { name, value, .. } = prop {
-                                    if provider.is_none() && name == "Provider" {
-                                        provider = Some(decode_xml_text(value.trim()));
-                                    }
-                                    if product.is_none() && name == "Product" {
-                                        product = Some(decode_xml_text(value.trim()));
-                                    }
+                        for prop in ibs_children {
+                            if let SerzNode::Property { name, value, .. } = prop {
+                                if provider.is_none() && name == "Provider" {
+                                    provider = Some(decode_xml_text(value.trim()));
+                                }
+                                if product.is_none() && name == "Product" {
+                                    product = Some(decode_xml_text(value.trim()));
                                 }
                             }
                         }
                     }
                 }
             }
-        }
-        // BlueprintID как прямое свойство текущего блока.
-        if let SerzNode::Property { name, value, .. } = child
-            && blueprint.is_none()
-            && name == "BlueprintID"
-        {
-            blueprint = Some(decode_xml_text(value.trim()));
+            // BlueprintID как прямое свойство текущего блока.
+            SerzNode::Property { name, value, .. }
+                if blueprint.is_none() && name == "BlueprintID" =>
+            {
+                blueprint = Some(decode_xml_text(value.trim()));
+            }
+            _ => {}
         }
     }
 
-    let provider = provider?;
-    let product = product?;
-    let blueprint = blueprint?;
-
+    let (provider, product, blueprint) = (provider?, product?, blueprint?);
     if provider.is_empty() || product.is_empty() || blueprint.is_empty() {
         return None;
     }
-
     Some((provider, product, blueprint))
 }
 
@@ -275,23 +292,29 @@ fn check_bare_blueprint_children(
     kind: AssetKind,
 ) {
     let mut i = 0;
-    while i < children.len() {
-        if let SerzNode::Property { name, value, .. } = &children[i]
-            && name == "Provider"
-            && let Some(SerzNode::Property {
+    while i + 2 < children.len() {
+        if let (
+            SerzNode::Property {
+                name: n1,
+                value: v1,
+                ..
+            },
+            SerzNode::Property {
                 name: n2,
                 value: v2,
                 ..
-            }) = children.get(i + 1)
-            && n2 == "Product"
-            && let Some(SerzNode::Property {
+            },
+            SerzNode::Property {
                 name: n3,
                 value: v3,
                 ..
-            }) = children.get(i + 2)
+            },
+        ) = (&children[i], &children[i + 1], &children[i + 2])
+            && n1 == "Provider"
+            && n2 == "Product"
             && n3 == "BlueprintID"
         {
-            let provider = decode_xml_text(value.trim());
+            let provider = decode_xml_text(v1.trim());
             let product = decode_xml_text(v2.trim());
             let blueprint = decode_xml_text(v3.trim());
             if let Some(path) = asset_relative_path(&provider, &product, &blueprint) {
@@ -305,17 +328,20 @@ fn check_bare_blueprint_children(
 }
 
 /// Считает вхождения пар (путь, тип), сохраняя порядок первого появления.
-fn count_asset_uses_from_pairs(refs: Vec<(String, AssetKind)>) -> Vec<(String, u32, AssetKind)> {
+fn count_asset_uses_iter(
+    refs: impl IntoIterator<Item = (String, AssetKind)>,
+) -> Vec<(String, u32, AssetKind)> {
     struct Entry {
         count: u32,
         kind: AssetKind,
     }
 
-    let mut order = Vec::new();
-    let mut map: std::collections::HashMap<String, Entry> =
-        std::collections::HashMap::with_capacity(refs.len());
+    let iter = refs.into_iter();
+    let (lower_bound, _) = iter.size_hint();
+    let mut order = Vec::with_capacity(lower_bound);
+    let mut map: HashMap<String, Entry> = HashMap::with_capacity(lower_bound);
 
-    for (path, kind) in refs {
+    for (path, kind) in iter {
         match map.get_mut(&path) {
             Some(entry) => entry.count += 1,
             None => {
@@ -340,39 +366,7 @@ fn count_asset_uses_from_pairs(refs: Vec<(String, AssetKind)>) -> Vec<(String, u
 /// использований в инвентаре. Вместе с ассетом запоминается, что он из себя
 /// представляет: объект маршрута или файл состава.
 pub fn count_asset_uses(references: Vec<AssetReference>) -> Vec<(String, u32, AssetKind)> {
-    struct Entry {
-        count: u32,
-        kind: AssetKind,
-    }
-
-    let mut order = Vec::new();
-    let mut map: HashMap<String, Entry> = HashMap::with_capacity(references.len());
-
-    for reference in references {
-        match map.get_mut(&reference.path) {
-            Some(entry) => {
-                entry.count += 1;
-            }
-            None => {
-                order.push(reference.path.clone());
-                map.insert(
-                    reference.path,
-                    Entry {
-                        count: 1,
-                        kind: reference.kind,
-                    },
-                );
-            }
-        }
-    }
-
-    order
-        .into_iter()
-        .filter_map(|path| {
-            map.remove(&path)
-                .map(|entry| (path, entry.count, entry.kind))
-        })
-        .collect()
+    count_asset_uses_iter(references.into_iter().map(|r| (r.path, r.kind)))
 }
 
 /// Может ли файл содержать ссылку на ассет.
@@ -382,18 +376,16 @@ pub fn count_asset_uses(references: Vec<AssetReference>) -> Vec<(String, u32, As
 /// не нужна. При неудачном чтении файл считается подозрительным и проверяется
 /// обычным порядком.
 pub fn may_contain_asset_reference(file_path: &Path) -> bool {
-    use std::io::Read;
     let Ok(mut file) = fs::File::open(file_path) else {
         return true;
     };
-    let marker = crate::common::translit::BLUEPRINT_ID_MARKER.as_bytes();
+    let marker = BLUEPRINT_ID_MARKER.as_bytes();
     if marker.is_empty() {
         return true;
     }
     let overlap = marker.len().saturating_sub(1);
     const CHUNK_SIZE: usize = 64 * 1024;
 
-    // Буфер вмещает перекрытие с прошлого шага + новую порцию данных
     let mut buf = vec![0u8; overlap + CHUNK_SIZE];
     let mut tail_len = 0;
 
@@ -410,7 +402,6 @@ pub fn may_contain_asset_reference(file_path: &Path) -> bool {
         }
 
         if active_len >= overlap {
-            // Копируем хвост в самое начало буфера без аллокаций
             buf.copy_within(active_len - overlap..active_len, 0);
             tail_len = overlap;
         } else {
@@ -455,24 +446,17 @@ where
         route_files.push(member);
     }
 
-    // Тяжёлый глобальный файл сети путей проверяем отдельно и в самом конце:
-    // его конвертация занимает минуты и не должна задерживать остальные файлы
-    // и отчёты о ходе проверки.
+    // Тяжёлые файлы (Tracks.bin) ставим в начало, чтобы сразу загрузить пул потоков.
     let is_tracks_bin = |route_file: &RouteFile| {
         route_file
             .route_name(route_path)
-            .map(|name| name.eq_ignore_ascii_case("Networks/Tracks.bin"))
-            .unwrap_or(false)
+            .is_some_and(|name| name.eq_ignore_ascii_case("Networks/Tracks.bin"))
     };
-    // Тяжелые файлы (Tracks.bin) ставим в начало, чтобы задействовать пул потоков сразу
     route_files.sort_by_key(|a| !is_tracks_bin(a));
     let all_files = route_files;
 
     let temp_dir = tempdir()
         .map_err(|error| format!("Не удалось создать временную папку для Serz: {error}"))?;
-
-    // Архивы маршрута (.ap) не распаковываются целиком: записи materialize()
-    // читаются из zip по требованию только для анализируемых .bin/.xml файлов.
 
     let normal_binary_count = all_files
         .iter()
@@ -492,8 +476,6 @@ where
         .map_err(|error| format!("Не удалось создать пул проверки файлов: {error}"))?;
 
     let mut analyses = Vec::with_capacity(all_files.len());
-    // Кэш разбора лежит в папке маршрута: неизменившиеся файлы берутся из
-    // него, а заново разбираются только те, что изменились или появились.
     let mut cache = AnalysisCache::load(route_path);
     for (chunk_index, chunk) in all_files.chunks(32).enumerate() {
         let start_index = chunk_index * 32;
@@ -501,13 +483,12 @@ where
             "Анализ файлов: {} из {}; параллельных Serz-процессов: {}...",
             start_index + 1,
             all_files.len(),
-            worker_count.min(normal_binary_count.max(1))
+            worker_count
         ));
         let chunk_analyses: Vec<FileAnalysis> = pool.install(|| {
             chunk
                 .par_iter()
-                .enumerate()
-                .map(|(_, route_file)| {
+                .map(|route_file| {
                     let name = route_file.route_name(route_path);
                     let stamp = route_file.stamp();
                     if let (Some(name), Some(stamp)) = (&name, stamp)
@@ -516,49 +497,47 @@ where
                         return FileAnalysis {
                             from_cache: true,
                             file: route_file.clone(),
+                            stamp: Some(stamp),
                             uses: cached.uses.clone(),
                             error: None,
                         };
                     }
-                    analyze_route_file(route_file, temp_dir.path())
+                    analyze_route_file_with_stamp(route_file, temp_dir.path(), stamp)
                 })
                 .collect()
         });
         analyses.extend(chunk_analyses);
     }
+
     let mut asset_uses: HashMap<String, Vec<AssetUse>> = HashMap::new();
     // Написание пути, как оно встретилось в маршруте: ключ в asset_uses приведён
     // к нижнему регистру, потому что игра регистр не различает.
     let mut asset_names: HashMap<String, String> = HashMap::new();
     let mut conversion_errors = Vec::new();
+
     for analysis in analyses {
-        if !analysis.from_cache {
-            // В кэш попадают только заново разобранные файлы: для остальных
-            // прежняя запись и так актуальна.
-            if let Some(name) = analysis.file.route_name(route_path)
-                && let Some(stamp) = analysis.file.stamp()
-            {
-                cache.put(
-                    name,
-                    CachedFile {
-                        stamp,
-                        uses: analysis.uses.clone(),
-                    },
-                );
-            }
+        if !analysis.from_cache
+            && analysis.error.is_none()
+            && let Some(name) = analysis.file.route_name(route_path)
+            && let Some(stamp) = analysis.stamp
+        {
+            cache.put(
+                name,
+                CachedFile {
+                    stamp,
+                    uses: analysis.uses.clone(),
+                },
+            );
         }
         let tile = route_tile_label(route_path, &analysis.file);
         let tile_search = tile.to_lowercase();
         let source_file_search = analysis.file.display().to_lowercase();
         for (asset, count, kind) in analysis.uses {
-            // Игра читает пути без учёта регистра, поэтому ссылки, отличающиеся
-            // регистром, относятся к одному ассету.
             let key = asset_key(&asset);
             asset_names
                 .entry(key.clone())
                 .or_insert_with(|| asset.clone());
-            let uses = asset_uses.entry(key).or_default();
-            uses.push(AssetUse {
+            asset_uses.entry(key).or_default().push(AssetUse {
                 source_file: analysis.file.clone(),
                 tile: tile.clone(),
                 tile_kind: analysis.file.tile_kind(),
@@ -595,47 +574,43 @@ where
         "Уникальных ссылок: {}. Проверка файлов и архивов .ap...",
         asset_uses.len(),
     ));
-    let mut ap_cache: HashMap<PathBuf, HashSet<String>> = HashMap::new();
 
     // Уникальные папки продуктов, для которых нужно проверить .ap-архивы.
-    // Читаем архивы параллельно: открытие большого .ap занимает секунды, и
-    // последовательное чтение нескольких архивов задерживает всю проверку.
     let product_dirs: HashSet<PathBuf> = asset_uses
         .keys()
         .filter_map(|relative_asset| {
-            let parts: Vec<&str> = relative_asset.split('/').collect();
-            if parts.len() < 3 {
+            let mut parts = relative_asset.split('/');
+            let (Some(provider), Some(product), Some(_)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
                 return None;
-            }
-            // Если ассет уже есть на диске по точному пути, архив для него
-            // проверять не нужно.
+            };
             let exact = assets_path.join(relative_asset.replace('/', "\\"));
             if exact.is_file() {
                 return None;
             }
-            Some(assets_path.join(parts[0]).join(parts[1]))
+            Some(assets_path.join(provider).join(product))
         })
         .collect();
 
-    let (scanned, archive_errors) = scan_product_ap_archives(&product_dirs, &pool)?;
-    ap_cache.extend(scanned);
+    let (ap_cache, archive_errors) = scan_product_ap_archives(&product_dirs, &pool)?;
     structure_issues.extend(archive_errors);
 
     report_progress("Проверка имён и строк ассетов на умляуты...");
     let inventory_seed: Vec<_> = asset_uses
         .iter()
-        .map(|(path, uses)| ReferencedAsset {
-            path: asset_names
+        .map(|(path, uses)| {
+            let display_path = asset_names
                 .get(path)
                 .cloned()
-                .unwrap_or_else(|| path.clone()),
-            uses: uses.clone(),
-            missing: false,
-            path_search: asset_names
-                .get(path)
-                .cloned()
-                .unwrap_or_else(|| path.clone())
-                .to_lowercase(),
+                .unwrap_or_else(|| path.clone());
+            let path_search = display_path.to_lowercase();
+            ReferencedAsset {
+                path: display_path,
+                uses: uses.clone(),
+                missing: false,
+                path_search,
+            }
         })
         .collect();
     let (umlaut_assets, umlaut_errors) =
@@ -651,15 +626,13 @@ where
             .into_iter()
             .map(|(p, pr)| (p.to_lowercase(), pr.to_lowercase()))
             .collect();
-        // Пары, которые всегда загружены симулятором и не требуют объявления
-        // в RouteProperties.xml.
         const SKIPPED_PROVIDER_PRODUCT: &[(&str, &str)] = &[("kuju", "railsimulatorcore")];
         let mut used_pairs: HashSet<(String, String)> = HashSet::new();
         for relative_asset in asset_uses.keys() {
-            let parts: Vec<&str> = relative_asset.split('/').collect();
-            if parts.len() >= 2 {
-                let provider = parts[0].to_owned().to_lowercase();
-                let product = parts[1].to_owned().to_lowercase();
+            let mut parts = relative_asset.split('/');
+            if let (Some(p0), Some(p1)) = (parts.next(), parts.next()) {
+                let provider = p0.to_lowercase();
+                let product = p1.to_lowercase();
                 if !provider.is_empty()
                     && !product.is_empty()
                     && !SKIPPED_PROVIDER_PRODUCT.contains(&(provider.as_str(), product.as_str()))
@@ -675,8 +648,7 @@ where
         missing.sort();
         for (provider, product) in missing {
             route_properties_warnings.push(format!(
-                "Провайдер/продукт «{} / {})» используется на маршруте, но не подключён в RouteProperties.xml (<RBlueprintSetPreLoad>).",
-                provider, product
+                "Провайдер/продукт «{provider} / {product}» используется на маршруте, но не подключён в RouteProperties.xml (<RBlueprintSetPreLoad>).",
             ));
         }
     }
@@ -699,8 +671,6 @@ where
     })
 }
 
-pub type ApCache = HashMap<PathBuf, HashSet<String>>;
-
 /// Проверяет, есть ли RouteProperties.xml либо на диске, либо внутри
 /// любого .ap-архива в папке маршрута.
 fn route_properties_exists(route_path: &Path) -> bool {
@@ -712,10 +682,7 @@ fn route_properties_exists(route_path: &Path) -> bool {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
-        {
+        if !is_ap_archive(&path) {
             continue;
         }
         let Ok(file) = fs::File::open(&path) else {
@@ -744,9 +711,8 @@ fn route_properties_exists(route_path: &Path) -> bool {
 }
 
 /// Читает RouteProperties.xml с диска или из .ap-архива, декодируя
-/// UTF-8/UTF-16 (с BOM) через crate::routes::routes::decode_xml_bytes.
+/// UTF-8/UTF-16 (с BOM) через crate::routes::decode_xml_bytes.
 fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
-    use std::io::Read;
     let properties_path = route_path.join("RouteProperties.xml");
     if let Ok(data) = fs::read(&properties_path) {
         return Ok(crate::routes::decode_xml_bytes(&data));
@@ -756,33 +722,25 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
     for entry in entries {
         let entry =
             entry.map_err(|error| format!("Ошибка чтения {}: {error}", route_path.display()))?;
-        if !entry
-            .path()
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
-        {
+        let archive_path = entry.path();
+        if !is_ap_archive(&archive_path) {
             continue;
         }
-        let archive_path = entry.path();
-        let file = match fs::File::open(&archive_path) {
-            Ok(f) => f,
-            Err(_) => continue,
+        let Ok(file) = fs::File::open(&archive_path) else {
+            continue;
         };
-        let mut archive = match ZipArchive::new(file) {
-            Ok(a) => a,
-            Err(_) => continue,
+        let Ok(mut archive) = ZipArchive::new(file) else {
+            continue;
         };
         for index in 0..archive.len() {
-            let mut member = match archive.by_index(index) {
-                Ok(m) => m,
-                Err(_) => continue,
+            let Ok(mut member) = archive.by_index(index) else {
+                continue;
             };
             if !member.is_file() {
                 continue;
             }
-            let raw_name = match member.name() {
-                Ok(n) => n,
-                Err(_) => continue,
+            let Ok(raw_name) = member.name() else {
+                continue;
             };
             let base = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
             if !base.eq_ignore_ascii_case("RouteProperties.xml") {
@@ -800,32 +758,34 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
 
 /// Извлекает пары (Provider, Product) из блоков
 /// `<RBlueprintSetPreLoad>...</RBlueprintSetPreLoad>`.
-///
-/// Внутри каждого блока PreLoad ищутся все `<Provider>…</Provider>` и
-/// `<Product>…</Product>` и сопоставляются по порядку появления, чтобы не
-/// зависеть от имени промежуточного контейнера (например, `iBlueprintSetID`).
 fn parse_preload_pairs(xml: &str) -> HashSet<(String, String)> {
+    static RE_PRELOAD: OnceLock<Regex> = OnceLock::new();
+    static RE_PROVIDER: OnceLock<Regex> = OnceLock::new();
+    static RE_PRODUCT: OnceLock<Regex> = OnceLock::new();
+
+    let preload_re = RE_PRELOAD.get_or_init(|| {
+        Regex::new(r"(?is)<RBlueprintSetPreLoad\b[^>]*>(.*?)</RBlueprintSetPreLoad\s*>")
+            .expect("valid regex")
+    });
+    let provider_re = RE_PROVIDER.get_or_init(|| {
+        Regex::new(r"(?is)<Provider\b[^>]*>(.*?)</Provider\s*>").expect("valid regex")
+    });
+    let product_re = RE_PRODUCT.get_or_init(|| {
+        Regex::new(r"(?is)<Product\b[^>]*>(.*?)</Product\s*>").expect("valid regex")
+    });
+
     let mut pairs = HashSet::new();
-    let preload_re =
-        regex::Regex::new(r"(?is)<RBlueprintSetPreLoad\b[^>]*>(.*?)</RBlueprintSetPreLoad\s*>")
-            .expect("valid regex");
-    let provider_re =
-        regex::Regex::new(r"(?is)<Provider\b[^>]*>(.*?)</Provider\s*>").expect("valid regex");
-    let product_re =
-        regex::Regex::new(r"(?is)<Product\b[^>]*>(.*?)</Product\s*>").expect("valid regex");
     for preload_cap in preload_re.captures_iter(xml) {
         let block = preload_cap.get(1).map(|c| c.as_str()).unwrap_or("");
-        let providers: Vec<String> = provider_re
+        let providers = provider_re
             .captures_iter(block)
             .filter_map(|c| c.get(1))
-            .map(|m| decode_xml_text(m.as_str().trim()))
-            .collect();
-        let products: Vec<String> = product_re
+            .map(|m| decode_xml_text(m.as_str().trim()));
+        let products = product_re
             .captures_iter(block)
             .filter_map(|c| c.get(1))
-            .map(|m| decode_xml_text(m.as_str().trim()))
-            .collect();
-        for (p, pr) in providers.into_iter().zip(products) {
+            .map(|m| decode_xml_text(m.as_str().trim()));
+        for (p, pr) in providers.zip(products) {
             if !p.is_empty() && !pr.is_empty() {
                 pairs.insert((p, pr));
             }
@@ -960,6 +920,47 @@ fn read_ap_archive_files(archive_path: &Path, files: &mut HashSet<String>) -> Re
     Ok(())
 }
 
+fn asset_exists_in_ap_cache(
+    assets_path: &Path,
+    relative_asset: &str,
+    ap_cache: &ApCache,
+) -> bool {
+    let parts: Vec<&str> = relative_asset.split('/').collect();
+    if parts.len() < 3 {
+        return false;
+    }
+    let product_dir = assets_path.join(parts[0]).join(parts[1]);
+    let Some(files) = ap_cache.get(&product_dir) else {
+        return false;
+    };
+
+    let inner_path = parts[2..].join("\\").to_lowercase();
+    let product_path = parts[1..].join("\\").to_lowercase();
+    let full_path = relative_asset.replace('/', "\\").to_lowercase();
+
+    let mut variants = Vec::with_capacity(18);
+    for base in [inner_path, product_path, full_path] {
+        variants.push(replace_broken_characters(&base, "ss"));
+        variants.push(replace_broken_characters(&base, "ß"));
+        variants.push(base);
+    }
+
+    let base_len = variants.len();
+    for i in 0..base_len {
+        let variant = &variants[i];
+        if !variant.ends_with(".tgpcdx")
+            && !variant.ends_with(".geopcdx")
+            && !variant.ends_with(".bin")
+        {
+            variants.push(format!("{variant}.tgpcdx"));
+        }
+    }
+
+    variants
+        .iter()
+        .any(|variant| files.contains(variant.trim()))
+}
+
 pub(crate) fn resolve_missing_and_corrupted(
     asset_uses: HashMap<String, Vec<AssetUse>>,
     asset_names: &HashMap<String, String>,
@@ -969,6 +970,7 @@ pub(crate) fn resolve_missing_and_corrupted(
 ) -> (Vec<MissingAsset>, Vec<ReferencedAsset>) {
     let mut asset_inventory = Vec::with_capacity(asset_uses.len());
     let mut missing_assets = Vec::new();
+
     for (relative_asset, uses) in asset_uses {
         if uses.iter().any(|usage| usage.kind.is_vehicle()) {
             continue;
@@ -984,41 +986,12 @@ pub(crate) fn resolve_missing_and_corrupted(
                 None
             }
         };
-        let parts: Vec<&str> = relative_asset.split('/').collect();
-        let in_archive = if parts.len() >= 3 {
-            let product_dir = assets_path.join(parts[0]).join(parts[1]);
-            let inner_path = parts[2..].join("\\").to_lowercase();
-            let product_path = parts[1..].join("\\").to_lowercase();
-            let full_path = relative_asset.replace('/', "\\").to_lowercase();
-            let mut variants = vec![inner_path.clone(), product_path.clone(), full_path.clone()];
-            for base in [inner_path, product_path, full_path] {
-                variants.push(replace_broken_characters(&base, "ss"));
-                variants.push(replace_broken_characters(&base, "ß"));
-            }
-            let mut texture_variants = Vec::new();
-            for variant in &variants {
-                if !variant.ends_with(".tgpcdx")
-                    && !variant.ends_with(".geopcdx")
-                    && !variant.ends_with(".bin")
-                {
-                    texture_variants.push(format!("{}.tgpcdx", variant));
-                }
-            }
-            variants.extend(texture_variants);
-            ap_cache.get(&product_dir).is_some_and(|files| {
-                variants
-                    .iter()
-                    .any(|variant| files.contains(&variant.trim().to_lowercase()))
-            })
-        } else {
-            false
-        };
-        let is_in_archive = in_archive;
-        let (resolved_disk_path, suggested_repair, is_corrupted) =
+
+        let (is_in_archive, resolved_disk_path, suggested_repair, is_corrupted) =
             if let Some(exact_path) = full_asset_path {
-                (Some(exact_path), None, false)
-            } else if is_in_archive {
-                (None, None, false)
+                (false, Some(exact_path), None, false)
+            } else if asset_exists_in_ap_cache(assets_path, &relative_asset, ap_cache) {
+                (true, None, None, false)
             } else if let Some((fuzzy_disk_path, relative_repair)) =
                 fuzzy_resolve_disk_path(assets_path, &relative_asset)
             {
@@ -1027,13 +1000,14 @@ pub(crate) fn resolve_missing_and_corrupted(
                     && normalize_fuzzy_segment(&relative_asset)
                         == normalize_fuzzy_segment(&relative_repair);
                 if query_corrupted || umlaut_folded_equivalent {
-                    (Some(fuzzy_disk_path), Some(relative_repair), true)
+                    (false, Some(fuzzy_disk_path), Some(relative_repair), true)
                 } else {
-                    (None, None, false)
+                    (false, None, None, false)
                 }
             } else {
-                (None, None, false)
+                (false, None, None, false)
             };
+
         let is_missing = !is_in_archive && resolved_disk_path.is_none() && !is_corrupted;
         if is_missing || is_corrupted {
             missing_assets.push(MissingAsset {
@@ -1052,6 +1026,7 @@ pub(crate) fn resolve_missing_and_corrupted(
             path_search,
         });
     }
+
     missing_assets.sort_by(|left, right| left.path.cmp(&right.path));
     asset_inventory.sort_by(|left, right| left.path.cmp(&right.path));
     (missing_assets, asset_inventory)
