@@ -1,12 +1,13 @@
 //! Unified archive (.ap / ZIP) indexing and streaming extraction.
 
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, Once};
 use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
 use crate::app::settings::ap_index_cache_file;
@@ -27,72 +28,73 @@ struct ApIndexCacheFile {
     archives: Vec<ApArchiveMeta>,
 }
 
-#[derive(Default)]
 pub struct ApArchiveCache {
     pub inner: Mutex<HashMap<PathBuf, HashSet<String>>>,
     archive_meta: Mutex<HashMap<PathBuf, ApArchiveMeta>>,
-    dirty: Mutex<bool>,
-    loaded: Mutex<bool>,
+    load_once: Once,
+}
+
+impl Default for ApArchiveCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ApArchiveCache {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            inner: Mutex::new(HashMap::new()),
+            archive_meta: Mutex::new(HashMap::new()),
+            load_once: Once::new(),
+        }
     }
 
-    /// Загружает дисковый кэш индекса при первом обращении.
+    /// Загружает дисковый кэш индекса при первом обращении (потокобезопасно).
     fn ensure_loaded(&self) {
-        let mut loaded = self.loaded.lock().unwrap();
-        if *loaded {
-            return;
-        }
-        *loaded = true;
-        drop(loaded);
-
-        let path = ap_index_cache_file();
-        if let Ok(contents) = fs::read_to_string(&path)
-            && let Ok(cache_file) = serde_json::from_str::<ApIndexCacheFile>(&contents)
-        {
-            let mut meta = self.archive_meta.lock().unwrap();
-            for entry in cache_file.archives {
-                let ap_path = PathBuf::from(&entry.path);
-                meta.insert(ap_path, entry);
+        self.load_once.call_once(|| {
+            let path = ap_index_cache_file();
+            if let Ok(contents) = fs::read_to_string(&path)
+                && let Ok(cache_file) = serde_json::from_str::<ApIndexCacheFile>(&contents)
+                && let Ok(mut meta) = self.archive_meta.lock()
+            {
+                meta.reserve(cache_file.archives.len());
+                for entry in cache_file.archives {
+                    let ap_path = PathBuf::from(&entry.path);
+                    meta.insert(ap_path, entry);
+                }
             }
-        }
+        });
     }
 
-    /// Сохраняет дисковый кэш атомарно (во временный файл + rename), если есть изменения.
-    fn save_if_dirty(&self) {
-        let is_dirty = {
-            let mut d = self.dirty.lock().unwrap();
-            if !*d {
-                return;
-            }
-            *d = false;
-            true
-        };
-        if !is_dirty {
-            return;
-        }
-
+    /// Сохраняет дисковый кэш атомарно (во временный файл + rename).
+    fn save_disk_cache(&self) {
         let path = ap_index_cache_file();
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let meta = self.archive_meta.lock().unwrap();
-        let cache_file = ApIndexCacheFile {
-            archives: meta.values().cloned().collect(),
+
+        let cache_file = {
+            let Ok(meta) = self.archive_meta.lock() else {
+                return;
+            };
+            ApIndexCacheFile {
+                archives: meta.values().cloned().collect(),
+            }
         };
-        drop(meta);
 
         let tmp_path = path.with_extension("json.tmp");
-        if let Ok(data) = serde_json::to_string_pretty(&cache_file)
-            && let Ok(file) = File::create(&tmp_path)
-        {
-            let mut file = BufWriter::new(file);
-            let _ = write!(file, "{data}");
-            let _ = file.flush();
-            let _ = fs::rename(&tmp_path, &path);
+        let write_ok = File::create(&tmp_path).ok().is_some_and(|file| {
+            let mut writer = BufWriter::new(file);
+            serde_json::to_writer(&mut writer, &cache_file).is_ok() && writer.flush().is_ok()
+        });
+
+        // Файл уже закрыт здесь — на Windows rename безопасен.
+        if write_ok {
+            if fs::rename(&tmp_path, &path).is_err() {
+                let _ = fs::remove_file(&tmp_path);
+            }
+        } else {
+            let _ = fs::remove_file(&tmp_path);
         }
     }
 
@@ -110,47 +112,43 @@ impl ApArchiveCache {
 
         let mut files = HashSet::new();
         let mut changed = false;
+
         if let Ok(entries) = fs::read_dir(product_dir) {
             for entry in entries.flatten() {
                 let archive_path = entry.path();
-                if !archive_path.is_file() {
-                    continue;
-                }
-                if !archive_path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
+                if !archive_path.is_file()
+                    || !archive_path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
                 {
                     continue;
                 }
 
-                // Проверяем метаданные архива: если размер и mtime не изменились — используем кэш.
-                let metadata = match archive_path.metadata() {
-                    Ok(m) => m,
-                    Err(_) => continue,
+                let Ok(metadata) = archive_path.metadata() else {
+                    continue;
                 };
                 let size = metadata.len();
                 let mtime = metadata
                     .modified()
                     .ok()
                     .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                    .map_or(0, |d| d.as_secs());
 
-                let use_cached = {
-                    let meta_guard = self.archive_meta.lock().unwrap();
-                    match meta_guard.get(&archive_path) {
-                        Some(cached) => cached.size == size && cached.mtime == mtime,
-                        None => false,
-                    }
-                };
-
-                if use_cached {
-                    let meta_guard = self.archive_meta.lock().unwrap();
-                    if let Some(cached) = meta_guard.get(&archive_path) {
+                // Проверяем кэш за один захват мьютекса.
+                let hit_cache = self.archive_meta.lock().ok().is_some_and(|meta_guard| {
+                    if let Some(cached) = meta_guard.get(&archive_path)
+                        && cached.size == size
+                        && cached.mtime == mtime
+                    {
                         for f in &cached.files {
-                            files.insert(f.clone());
+                            insert_index_variants(&mut files, f);
                         }
+                        true
+                    } else {
+                        false
                     }
+                });
+                if hit_cache {
                     continue;
                 }
 
@@ -161,7 +159,8 @@ impl ApArchiveCache {
                 let Ok(mut archive) = ZipArchive::new(file) else {
                     continue;
                 };
-                let mut archive_files = Vec::new();
+
+                let mut archive_files = Vec::with_capacity(archive.len());
                 for i in 0..archive.len() {
                     let Ok(entry) = archive.by_index(i) else {
                         continue;
@@ -172,41 +171,25 @@ impl ApArchiveCache {
                     let Ok(raw_name) = entry.name() else {
                         continue;
                     };
-                    let name = raw_name.replace('/', "\\").trim().to_lowercase();
+                    let name = normalize_member(raw_name.as_ref());
                     if name.is_empty() {
                         continue;
                     }
-                    files.insert(name.clone());
-                    archive_files.push(name.clone());
-                    files.insert(strip_shader_prefix(&name));
-                    let parts: Vec<&str> =
-                        name.split('\\').filter(|part| !part.is_empty()).collect();
-                    if parts.len() >= 3 {
-                        let p2 = parts[2..].join("\\");
-                        let p1 = parts[1..].join("\\");
-                        files.insert(p2.clone());
-                        files.insert(strip_shader_prefix(&p2));
-                        files.insert(p1.clone());
-                        files.insert(strip_shader_prefix(&p1));
-                    } else if parts.len() == 2 {
-                        let p1 = parts[1..].join("\\");
-                        files.insert(p1.clone());
-                        files.insert(strip_shader_prefix(&p1));
-                    }
+                    insert_index_variants(&mut files, &name);
+                    archive_files.push(name);
                 }
 
-                // Обновляем метаданные архива.
-                let mut meta_guard = self.archive_meta.lock().unwrap();
-                meta_guard.insert(
-                    archive_path.clone(),
-                    ApArchiveMeta {
-                        path: archive_path.to_string_lossy().into_owned(),
-                        size,
-                        mtime,
-                        files: archive_files,
-                    },
-                );
-                drop(meta_guard);
+                if let Ok(mut meta_guard) = self.archive_meta.lock() {
+                    meta_guard.insert(
+                        archive_path.clone(),
+                        ApArchiveMeta {
+                            path: archive_path.to_string_lossy().into_owned(),
+                            size,
+                            mtime,
+                            files: archive_files,
+                        },
+                    );
+                }
                 changed = true;
             }
         }
@@ -215,8 +198,7 @@ impl ApArchiveCache {
             guard.insert(norm_dir, files);
         }
         if changed {
-            *self.dirty.lock().unwrap() = true;
-            self.save_if_dirty();
+            self.save_disk_cache();
         }
     }
 
@@ -229,16 +211,46 @@ impl ApArchiveCache {
         let Some(set) = guard.get(&norm_dir) else {
             return false;
         };
+
         let target = normalize_member(relative);
+        let target_trimmed = target.trim_start_matches('\\');
+        if set.contains(&target) || set.contains(target_trimmed) {
+            return true;
+        }
+
         let target_stripped = normalize_member(&strip_shader_prefix(relative));
-        set.iter().any(|v| v.eq_ignore_ascii_case(&target))
-            || set.iter().any(|v| v.eq_ignore_ascii_case(&target_stripped))
-            || set
-                .iter()
-                .any(|v| v.eq_ignore_ascii_case(target.trim_start_matches('\\')))
-            || set
-                .iter()
-                .any(|v| v.eq_ignore_ascii_case(target_stripped.trim_start_matches('\\')))
+        if target_stripped != target {
+            let stripped_trimmed = target_stripped.trim_start_matches('\\');
+            return set.contains(&target_stripped) || set.contains(stripped_trimmed);
+        }
+        false
+    }
+}
+
+/// Добавляет в индекс сам путь, вариант без shader-префикса и суффиксы без 1–2 верхних каталогов.
+fn insert_index_variants(files: &mut HashSet<String>, name: &str) {
+    insert_with_stripped(files, name);
+
+    let mut trimmed = name.trim_matches('\\');
+    for _ in 0..2 {
+        let Some(sep) = trimmed.find('\\') else {
+            break;
+        };
+        trimmed = trimmed[sep + 1..].trim_start_matches('\\');
+        if trimmed.is_empty() {
+            break;
+        }
+        insert_with_stripped(files, trimmed);
+    }
+}
+
+fn insert_with_stripped(files: &mut HashSet<String>, value: &str) {
+    if !files.contains(value) {
+        files.insert(value.to_owned());
+    }
+    let stripped = strip_shader_prefix(value);
+    if stripped != value && !files.contains(&stripped) {
+        files.insert(stripped);
     }
 }
 
