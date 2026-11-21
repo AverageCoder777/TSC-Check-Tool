@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::app::app_controller::{CheckerApp, LogLevel};
-use crate::auditor::graph_view::*;
+use crate::auditor::{graph_view::*,auditor_main::*};
 use crate::common::archive::ApArchiveCache;
 use crate::common::external_editor::open_and_sync_with_vscode;
 use crate::common::{
@@ -211,7 +211,7 @@ impl AuditorController {
                             });
                         });
                     let audit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        crate::auditor::audit_folders_with_progress(
+                        audit_folders_with_progress(
                             &paths,
                             &assets_root,
                             max_threads,
@@ -259,14 +259,14 @@ impl AuditorController {
                     };
                     let all_for_counts = thread_state.lock().map(|s| s.all_items.clone()).unwrap_or_default();
                     let count_all = all_for_counts.len() as i32;
-                    let count_geometry = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Geometry).count() as i32;
-                    let count_textures = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Texture).count() as i32;
-                    let count_scripts = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Script).count() as i32;
-                    let count_sounds = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Sound).count() as i32;
-                    let count_children = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::ChildBlueprint).count() as i32;
-                    let count_dead = all_for_counts.iter().filter(|i| i.kind == crate::auditor::AssetResourceKind::Unused).count() as i32;
-                    crate::auditor::filter_items(&mut items, &filter);
-                    crate::auditor::sort_items(&mut items, col, asc);
+                    let count_geometry = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Geometry).count() as i32;
+                    let count_textures = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Texture).count() as i32;
+                    let count_scripts = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Script).count() as i32;
+                    let count_sounds = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Sound).count() as i32;
+                    let count_children = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::ChildBlueprint).count() as i32;
+                    let count_dead = all_for_counts.iter().filter(|i| i.kind == AssetResourceKind::Unused).count() as i32;
+                    filter_items(&mut items, &filter);
+                    sort_items(&mut items, col, asc);
                     if let Ok(mut s) = thread_state.lock() {
                         s.display_items = items.clone();
                     }
@@ -321,8 +321,8 @@ impl AuditorController {
                     .lock()
                     .map(|s| (s.sort_col, s.sort_asc))
                     .unwrap_or((0, true));
-                crate::auditor::filter_items(&mut items, filter.as_str());
-                crate::auditor::sort_items(&mut items, col, asc);
+                filter_items(&mut items, filter.as_str());
+                sort_items(&mut items, col, asc);
                 if let Ok(mut s) = state.lock() {
                     s.display_items = items.clone();
                 }
@@ -376,11 +376,11 @@ impl AuditorController {
                                 .to_ascii_lowercase()
                                 .ends_with(".dds");
                         // Texture preview only meaningful if the file physically exists on disk.
-                        let target_exists = (item.kind == crate::auditor::AssetResourceKind::Unused && item.parent_file.is_file())
+                        let target_exists = (item.kind == AssetResourceKind::Unused && item.parent_file.is_file())
                             || (item.parent_file.is_file() && is_tex_ext)
                             || (item.expected_path.is_file() && is_tex_ext);
                         let is_tex = is_tex_ext && target_exists;
-                        let has_missing = item.kind != crate::auditor::AssetResourceKind::Unused
+                        let has_missing = item.kind != AssetResourceKind::Unused
                             && !item.expected_path.to_string_lossy().trim().is_empty();
                         (is_tex, has_missing)
                     })
@@ -388,7 +388,7 @@ impl AuditorController {
                 let (incoming, outgoing) = state.lock().ok().map(|s| {
                     let item = s.display_items.get(row as usize);
                     let path = item.map(|i| {
-                        let p = if i.kind == crate::auditor::AssetResourceKind::Unused {
+                        let p = if i.kind == AssetResourceKind::Unused {
                             &i.expected_path
                         } else {
                             &i.parent_file
@@ -461,7 +461,7 @@ impl AuditorController {
                 }
                 let extracted = state.lock().ok().and_then(|s| {
                     let item = s.display_items.get(row as usize).cloned()?;
-                    let path = if item.kind == crate::auditor::AssetResourceKind::Unused {
+                    let path = if item.kind == AssetResourceKind::Unused {
                         &item.expected_path
                     } else {
                         &item.parent_file
@@ -481,7 +481,7 @@ impl AuditorController {
                         .cloned()
                         .unwrap_or_default();
                     let missing_refs: Vec<PathBuf> = if item.kind
-                        != crate::auditor::AssetResourceKind::Unused
+                        != AssetResourceKind::Unused
                         && !item.expected_path.as_os_str().is_empty()
                         && !item.expected_path.is_file()
                     {
@@ -629,7 +629,7 @@ impl AuditorController {
                 let col_now = s.sort_col;
                 let asc_now = s.sort_asc;
 
-                crate::auditor::sort_items(&mut s.display_items, col_now, asc_now);
+                sort_items(&mut s.display_items, col_now, asc_now);
                 let rows_model = map_broken_resources_to_ui(&s.display_items);
 
                 w.set_sort_col(col_now as i32);
@@ -712,13 +712,13 @@ impl AuditorController {
 }
 
 pub(crate) fn map_broken_resources_to_ui(
-    items: &[crate::auditor::BrokenResourceRef],
+    items: &[BrokenResourceRef],
 ) -> slint::ModelRc<crate::BrokenResourceItem> {
     let rows: Vec<crate::BrokenResourceItem> = items
         .iter()
         .enumerate()
         .map(|(idx, r)| {
-            let is_dead = r.kind == crate::auditor::AssetResourceKind::Unused;
+            let is_dead = r.kind == AssetResourceKind::Unused;
             let parent_display = if r.all_parents.len() > 1 {
                 let first = r
                     .parent_file

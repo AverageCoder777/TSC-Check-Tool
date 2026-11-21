@@ -868,79 +868,96 @@ pub(crate) fn validate_route_structure(
     issues
 }
 
+struct ProductApScan {
+    dir: PathBuf,
+    files: HashSet<String>,
+    errors: Vec<String>,
+}
+
 pub(crate) fn scan_product_ap_archives(
     product_dirs: &HashSet<PathBuf>,
     pool: &rayon::ThreadPool,
 ) -> Result<(ApCache, Vec<String>), String> {
-    let dirs: Vec<PathBuf> = product_dirs.iter().cloned().collect();
+    let scans: Vec<ProductApScan> = pool.install(|| {
+        product_dirs
+            .par_iter()
+            .map(|dir| scan_single_product_dir(dir))
+            .collect::<Result<Vec<_>, _>>()
+    })?;
 
-    let results: Result<Vec<(PathBuf, HashSet<String>, Vec<String>)>, String> =
-        pool.install(|| {
-            dirs.par_iter()
-                .map(|product_dir| {
-                    let mut files = HashSet::new();
-                    let mut archive_errors = Vec::new();
-                    match fs::read_dir(product_dir) {
-                        Ok(entries) => {
-                            for entry in entries {
-                                let archive_path = match entry {
-                                    Ok(entry) => entry.path(),
-                                    Err(_) => continue,
-                                };
-                                if !archive_path
-                                    .extension()
-                                    .is_some_and(|extension| extension.eq_ignore_ascii_case("ap"))
-                                {
-                                    continue;
-                                }
-                                let archive_file = match fs::File::open(&archive_path) {
-                                    Ok(file) => file,
-                                    Err(error) => {
-                                        archive_errors.push(format!(
-                                            "Не удалось открыть архив {}: {error}",
-                                            archive_path.display()
-                                        ));
-                                        continue;
-                                    }
-                                };
-                                let archive = match ZipArchive::new(archive_file) {
-                                    Ok(archive) => archive,
-                                    Err(error) => {
-                                        archive_errors.push(format!(
-                                            "Не удалось прочитать архив {}: {error}",
-                                            archive_path.display()
-                                        ));
-                                        continue;
-                                    }
-                                };
-                                for name in archive.file_names().flatten() {
-                                    files.insert(name.replace('/', "\\").trim().to_lowercase());
-                                }
-                            }
-                        }
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => {
-                            return Err(format!(
-                                "Не удалось прочитать {}: {error}",
-                                product_dir.display()
-                            ));
-                        }
-                    }
-                    Ok((product_dir.clone(), files, archive_errors))
-                })
-                .collect()
-        });
-
-    let results = results?;
-    let mut ap_cache = HashMap::new();
+    let mut ap_cache = HashMap::with_capacity(scans.len());
     let mut archive_errors = Vec::new();
-    for (product_dir, files, errors) in results {
-        ap_cache.insert(product_dir, files);
-        archive_errors.extend(errors);
+    for scan in scans {
+        ap_cache.insert(scan.dir, scan.files);
+        archive_errors.extend(scan.errors);
     }
     archive_errors.sort();
     archive_errors.dedup();
+
     Ok((ap_cache, archive_errors))
+}
+
+fn scan_single_product_dir(product_dir: &Path) -> Result<ProductApScan, String> {
+    let mut files = HashSet::new();
+    let mut errors = Vec::new();
+
+    let entries = match fs::read_dir(product_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ProductApScan {
+                dir: product_dir.to_path_buf(),
+                files,
+                errors,
+            });
+        }
+        Err(error) => {
+            return Err(format!(
+                "Не удалось прочитать {}: {error}",
+                product_dir.display()
+            ));
+        }
+    };
+
+    for archive_path in entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| is_ap_archive(path))
+    {
+        if let Err(error) = read_ap_archive_files(&archive_path, &mut files) {
+            errors.push(error);
+        }
+    }
+
+    Ok(ProductApScan {
+        dir: product_dir.to_path_buf(),
+        files,
+        errors,
+    })
+}
+
+fn is_ap_archive(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ap"))
+}
+
+fn read_ap_archive_files(archive_path: &Path, files: &mut HashSet<String>) -> Result<(), String> {
+    let archive_file = fs::File::open(archive_path).map_err(|error| {
+        format!(
+            "Не удалось открыть архив {}: {error}",
+            archive_path.display()
+        )
+    })?;
+    let archive = ZipArchive::new(archive_file).map_err(|error| {
+        format!(
+            "Не удалось прочитать архив {}: {error}",
+            archive_path.display()
+        )
+    })?;
+
+    for name in archive.file_names().flatten() {
+        files.insert(name.replace('/', "\\").trim().to_lowercase());
+    }
+    Ok(())
 }
 
 pub(crate) fn resolve_missing_and_corrupted(
