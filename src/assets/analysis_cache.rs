@@ -1,17 +1,10 @@
-//! Кэш разбора файлов маршрута.
-//! Кэш лежит в папке самого маршрута и хранит результаты разбора тех файлов,
-//! которые не менялись с прошлой проверки. Благодаря этому повторная проверка
-//! маршрута разбирает только изменившиеся файлы, а остальные берёт из кэша.
-//! В маршруте один и тот же ассет встречается в файле десятки раз, поэтому
-//! хранится не каждая ссылка, а счётчик вхождений. Пути ассетов вынесены в
-//! общую таблицу: на большом маршруте это уменьшает кэш в десятки раз.
-
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, hash_map};
+use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+
+use serde::{Deserialize, Serialize};
 
 use crate::common::domain::AssetKind;
 
@@ -33,6 +26,7 @@ impl FileStamp {
             hash,
         }
     }
+
     pub(crate) fn of(path: &Path) -> Option<Self> {
         let metadata = fs::metadata(path).ok()?;
         let modified = metadata
@@ -42,51 +36,63 @@ impl FileStamp {
             .ok()?
             .as_millis() as u64;
         let size = metadata.len();
-
         let hash = compute_file_hash(path, size)?;
         Some(Self::new(modified, size, hash))
     }
 }
 
+struct Fnv1a64(u64);
+
+impl Fnv1a64 {
+    const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+
+    fn new() -> Self {
+        Self(Self::OFFSET_BASIS)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 ^= u64::from(byte);
+            self.0 = self.0.wrapping_mul(Self::PRIME);
+        }
+    }
+
+    fn finish(self) -> u64 {
+        self.0
+    }
+}
+
+fn hash_up_to(file: &mut File, hasher: &mut Fnv1a64, buf: &mut [u8], limit: u64) -> Option<()> {
+    let mut read_total = 0u64;
+    while read_total < limit {
+        let to_read = (limit - read_total).min(buf.len() as u64) as usize;
+        let n = file.read(&mut buf[..to_read]).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.write(&buf[..n]);
+        read_total += n as u64;
+    }
+    Some(())
+}
+
 fn compute_file_hash(path: &Path, size: u64) -> Option<u64> {
-    use std::hash::{Hash, Hasher};
-    let mut file = File::open(path).ok()?;
-    let mut hasher = hash_map::DefaultHasher::new();
-    size.hash(&mut hasher);
     const CHUNK_SIZE: usize = 64 * 1024;
-    let mut buf = [0u8; CHUNK_SIZE];
     const FULL_HASH_THRESHOLD: u64 = 16 * 1024 * 1024;
+    const SAMPLE_SIZE: u64 = 1024 * 1024;
+
+    let mut file = File::open(path).ok()?;
+    let mut hasher = Fnv1a64::new();
+    hasher.write(&size.to_le_bytes());
+
+    let mut buf = [0u8; CHUNK_SIZE];
     if size <= FULL_HASH_THRESHOLD {
-        loop {
-            let n = file.read(&mut buf).ok()?;
-            if n == 0 {
-                break;
-            }
-            hasher.write(&buf[..n]);
-        }
+        hash_up_to(&mut file, &mut hasher, &mut buf, size)?;
     } else {
-        const SAMPLE_SIZE: u64 = 1024 * 1024;
-        let mut head_read = 0;
-        while head_read < SAMPLE_SIZE {
-            let to_read = (SAMPLE_SIZE - head_read).min(CHUNK_SIZE as u64) as usize;
-            let n = file.read(&mut buf[..to_read]).ok()?;
-            if n == 0 {
-                break;
-            }
-            hasher.write(&buf[..n]);
-            head_read += n as u64;
-        }
+        hash_up_to(&mut file, &mut hasher, &mut buf, SAMPLE_SIZE)?;
         if size > SAMPLE_SIZE * 2 && file.seek(SeekFrom::End(-(SAMPLE_SIZE as i64))).is_ok() {
-            let mut tail_read = 0;
-            while tail_read < SAMPLE_SIZE {
-                let to_read = (SAMPLE_SIZE - tail_read).min(CHUNK_SIZE as u64) as usize;
-                let n = file.read(&mut buf[..to_read]).ok()?;
-                if n == 0 {
-                    break;
-                }
-                hasher.write(&buf[..n]);
-                tail_read += n as u64;
-            }
+            hash_up_to(&mut file, &mut hasher, &mut buf, SAMPLE_SIZE)?;
         }
     }
     Some(hasher.finish())
@@ -107,6 +113,7 @@ impl AnalysisCache {
             files: HashMap::new(),
         }
     }
+
     pub(crate) fn load(route_path: &Path) -> Self {
         let path = cache_path(route_path);
         let Ok(data) = fs::read(&path) else {
@@ -138,37 +145,42 @@ impl AnalysisCache {
         }
         Self { files }
     }
+
     pub(crate) fn get(&self, name: &str, stamp: FileStamp) -> Option<&CachedFile> {
         let cached = self.files.get(name)?;
         (cached.stamp == stamp).then_some(cached)
     }
+
     pub(crate) fn put(&mut self, name: String, file: CachedFile) {
         self.files.insert(name, file);
     }
+
     pub(crate) fn retain(&mut self, names: &HashMap<String, ()>) {
         self.files.retain(|name, _| names.contains_key(name));
     }
+
     pub(crate) fn save(&self, route_path: &Path) -> Result<(), String> {
         let path = cache_path(route_path);
-        let mut assets: Vec<String> = Vec::new();
+        let mut assets: Vec<&str> = Vec::new();
         let mut asset_indexes: HashMap<&str, u32> = HashMap::new();
-        let mut files = HashMap::with_capacity(self.files.len());
+        let mut files: HashMap<&str, StoredFile> = HashMap::with_capacity(self.files.len());
+
         for (name, file) in &self.files {
             let mut uses = Vec::with_capacity(file.uses.len());
             for (asset, count, kind) in &file.uses {
                 let index = match asset_indexes.get(asset.as_str()) {
-                    Some(index) => *index,
+                    Some(&index) => index,
                     None => {
                         let index = assets.len() as u32;
-                        assets.push(asset.clone());
+                        assets.push(asset.as_str());
                         asset_indexes.insert(asset.as_str(), index);
                         index
                     }
                 };
-                uses.push([index, *count, kind.to_code().into()]);
+                uses.push([index, *count, u32::from(kind.to_code())]);
             }
             files.insert(
-                name.clone(),
+                name.as_str(),
                 StoredFile {
                     modified: file.stamp.modified,
                     size: file.stamp.size,
@@ -177,16 +189,25 @@ impl AnalysisCache {
                 },
             );
         }
-        let stored = StoredCache {
+
+        let stored = StoredCacheRef {
             version: CACHE_VERSION,
             assets,
             files,
         };
-        let data = serde_json::to_vec(&stored)
-            .map_err(|error| format!("Не удалось подготовить кэш разбора: {error}"))?;
+
         let temporary = path.with_extension("tmp");
-        fs::write(&temporary, &data)
-            .map_err(|error| format!("Не удалось записать кэш разбора: {error}"))?;
+        {
+            let file = File::create(&temporary)
+                .map_err(|error| format!("Не удалось записать кэш разбора: {error}"))?;
+            let mut writer = BufWriter::new(file);
+            serde_json::to_writer(&mut writer, &stored)
+                .map_err(|error| format!("Не удалось подготовить кэш разбора: {error}"))?;
+            writer
+                .flush()
+                .map_err(|error| format!("Не удалось записать кэш разбора: {error}"))?;
+        }
+
         if let Err(error) = fs::rename(&temporary, &path) {
             if fs::copy(&temporary, &path).is_ok() {
                 let _ = fs::remove_file(&temporary);
@@ -203,11 +224,18 @@ pub(crate) fn cache_path(route_path: &Path) -> PathBuf {
     route_path.join(ANALYSIS_CACHE_FILE_NAME)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct StoredCache {
     version: u32,
     assets: Vec<String>,
     files: HashMap<String, StoredFile>,
+}
+
+#[derive(Serialize)]
+struct StoredCacheRef<'a> {
+    version: u32,
+    assets: Vec<&'a str>,
+    files: HashMap<&'a str, StoredFile>,
 }
 
 #[derive(Serialize, Deserialize)]
