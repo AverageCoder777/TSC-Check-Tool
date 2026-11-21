@@ -39,10 +39,10 @@ pub(crate) fn lod_from_name(name: &str) -> Option<u32> {
         let end = digits
             .find(|character: char| !character.is_ascii_digit())
             .unwrap_or(digits.len());
-        if end > 0 {
-            if let Ok(level) = digits[..end].parse::<u32>() {
-                return Some(level);
-            }
+        if end > 0
+            && let Ok(level) = digits[..end].parse::<u32>()
+        {
+            return Some(level);
         }
     }
     // RailWorks LOD distance prefixes: "1_0500_", "1_1000_", "2_...", etc.
@@ -258,10 +258,10 @@ pub(crate) fn resolve_texture_data(
                         .map(|mut archive| {
                             let mut names = Vec::with_capacity(archive.len());
                             for index in 0..archive.len() {
-                                if let Ok(entry) = archive.by_index(index) {
-                                    if let Ok(name) = entry.name() {
-                                        names.push(name.to_string().replace('/', "\\"));
-                                    }
+                                if let Ok(entry) = archive.by_index(index)
+                                    && let Ok(name) = entry.name()
+                                {
+                                    names.push(name.to_string().replace('/', "\\"));
                                 }
                             }
                             names

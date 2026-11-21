@@ -13,10 +13,13 @@ use crate::auditor::AuditorController;
 use crate::common::external_editor;
 use crate::{AuditorState, MainWindow, TextureViewerWindow, log_event};
 
+pub type LoadedTexture = (u32, u32, Vec<u8>, PathBuf);
+pub type SharedTextureState = Arc<Mutex<Option<LoadedTexture>>>;
+
 pub struct TextureController {
     pub window: TextureViewerWindow,
     pub weak: Weak<TextureViewerWindow>,
-    pub tex_state: Arc<Mutex<Option<(u32, u32, Vec<u8>, PathBuf)>>>,
+    pub tex_state: SharedTextureState,
     pub preview_generation: Arc<AtomicU64>,
     pub auditor_state: Arc<Mutex<AuditorState>>,
 }

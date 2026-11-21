@@ -48,32 +48,29 @@ pub fn decode_tgpcdx_with_max_dimension(
     let mut rgba = Vec::with_capacity(rgba_bytes);
 
     if is_uncompressed || (!is_bc3 && !is_bc2 && !is_bc1 && bytes.len() >= pixels * 4) {
-        // Uncompressed 32-bit (RGBA/BGRA)
         let bgra = format_upper.contains("BGRA");
         let argb = format_upper.contains("ARGB");
-        for i in 0..pixels {
-            let off = i * 4;
-            if off + 4 > bytes.len() {
-                break;
-            }
+        for (dst, &[b0, b1, b2, b3]) in image_u32
+            .iter_mut()
+            .take(pixels)
+            .zip(bytes.as_chunks::<4>().0)
+        {
             let (r, g, b, a) = if bgra {
-                (bytes[off + 2], bytes[off + 1], bytes[off], bytes[off + 3])
+                (b2, b1, b0, b3)
             } else if argb {
-                (bytes[off + 1], bytes[off + 2], bytes[off + 3], bytes[off])
+                (b1, b2, b3, b0)
             } else {
-                (bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3])
+                (b0, b1, b2, b3)
             };
-            image_u32[i] = (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | (b as u32);
+            *dst = (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | (b as u32);
         }
     } else if is_bc2 {
         texture2ddecoder::decode_bc2(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
     } else if is_bc3 || (!is_bc1 && bytes.len() >= pixels) {
-        // BC3 / DXT5 (16 bytes per 4x4 block)
         texture2ddecoder::decode_bc3(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
     } else {
-        // BC1 / DXT1 (8 bytes per 4x4 block)
         texture2ddecoder::decode_bc1(bytes, width as usize, height as usize, &mut image_u32)
             .map_err(|e| e.to_string())?;
     }

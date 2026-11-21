@@ -21,7 +21,6 @@ pub(crate) struct Camera {
     pub(crate) distance: f32,
     pub(crate) pan_x: f32,
     pub(crate) pan_y: f32,
-    /// World-space orbit pivot in model-centered RH coordinates.
     pub(crate) target: Vec3,
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -138,6 +137,10 @@ impl Texture {
     }
 }
 
+type TextureSourceKey = (PathBuf, String);
+type TextureCatalogEntry = (String, Result<Arc<Texture>, String>);
+type TextureCatalog = HashMap<TextureSourceKey, TextureCatalogEntry>;
+
 struct LoadedModel {
     model: GeoModel,
     texture_sources: Vec<(PathBuf, String)>,
@@ -146,7 +149,7 @@ struct LoadedModel {
     texture_status: String,
     center: Vec3,
     radius: f32,
-    texture_catalog: HashMap<(PathBuf, String), (String, Result<Arc<Texture>, String>)>,
+    texture_catalog: TextureCatalog,
 }
 
 impl LoadedModel {
@@ -599,9 +602,7 @@ fn render_cpu(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
     let width = camera.width.clamp(1, MAX_DIMENSION);
     let height = camera.height.clamp(1, MAX_DIMENSION);
     let mut pixels = vec![0u8; (width * height * 4) as usize];
-    for pixel in pixels.chunks_exact_mut(4) {
-        pixel.copy_from_slice(&[28, 32, 40, 255]);
-    }
+    pixels.as_chunks_mut::<4>().0.fill([28, 32, 40, 255]);
     let mut depth = vec![f32::INFINITY; (width * height) as usize];
     let aspect = width as f32 / height as f32;
     let matrices = camera.compute_matrices(aspect, model.radius);
@@ -638,10 +639,10 @@ fn render_cpu(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<u8>) {
             .get(submesh.texture_index as usize)
             .unwrap_or(&model.texture);
         let alpha_cutoff = (submesh.alpha_cutoff.clamp(0.0, 1.0) * 255.0) as u8;
-        for triangle in model.model.indices[start..end].chunks_exact(3) {
-            let a = projected.get(triangle[0] as usize).copied().flatten();
-            let b = projected.get(triangle[1] as usize).copied().flatten();
-            let c = projected.get(triangle[2] as usize).copied().flatten();
+        for &[i0, i1, i2] in model.model.indices[start..end].as_chunks::<3>().0 {
+            let a = projected.get(i0 as usize).copied().flatten();
+            let b = projected.get(i1 as usize).copied().flatten();
+            let c = projected.get(i2 as usize).copied().flatten();
             let (Some(a), Some(b), Some(c)) = (a, b, c) else {
                 continue;
             };

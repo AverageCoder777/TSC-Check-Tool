@@ -7,9 +7,7 @@ use crate::geo::types::GeoVertex;
 pub(crate) enum PositionFormat {
     #[default]
     Float3,
-    /// `D3DDECLTYPE_FLOAT16_4` / `D3DDECLTYPE_HALF4`: xyz of four half-precision floats.
     Float16_4,
-    /// `D3DDECLTYPE_SHORT4N`: xyz of four signed, normalized shorts.
     Short4N,
 }
 
@@ -23,8 +21,7 @@ pub(crate) fn half_to_f32(bits: u16) -> f32 {
             if mantissa == 0 {
                 return if sign == 0 { 0.0 } else { -0.0 };
             }
-            // Denormal: mantissa * 2^-24
-            return (sign as f32 * 2.0 - 1.0) * (mantissa as f32) * 5.960464477539063e-8;
+            return (sign as f32 * 2.0 - 1.0) * (mantissa as f32) * 5.960_464_5e-8;
         }
         31 => {
             if mantissa == 0 {
@@ -105,10 +102,10 @@ pub(crate) fn read_position(
 
 pub(crate) fn fill_missing_normals(vertices: &mut [GeoVertex], indices: &[u32]) {
     let mut generated = vec![[0.0; 3]; vertices.len()];
-    for triangle in indices.chunks_exact(3) {
-        let a = vertices[triangle[0] as usize].position;
-        let b = vertices[triangle[1] as usize].position;
-        let c = vertices[triangle[2] as usize].position;
+    for &[i0, i1, i2] in indices.as_chunks::<3>().0 {
+        let a = vertices[i0 as usize].position;
+        let b = vertices[i1 as usize].position;
+        let c = vertices[i2 as usize].position;
         let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
         let normal = [
@@ -116,7 +113,7 @@ pub(crate) fn fill_missing_normals(vertices: &mut [GeoVertex], indices: &[u32]) 
             ab[2] * ac[0] - ab[0] * ac[2],
             ab[0] * ac[1] - ab[1] * ac[0],
         ];
-        for &index in triangle {
+        for index in [i0, i1, i2] {
             let vertex_index = index as usize;
             let vertex = &mut vertices[vertex_index];
             let normal_length = vertex.normal.iter().map(|value| value * value).sum::<f32>();

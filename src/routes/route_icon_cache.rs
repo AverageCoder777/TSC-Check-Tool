@@ -8,7 +8,9 @@ use std::thread;
 /// Канал запросов на асинхронную загрузку иконок (UI → фоновый поток).
 static ICON_LOAD_TX: OnceLock<mpsc::Sender<PathBuf>> = OnceLock::new();
 /// Канал результатов загрузки иконок (фоновый поток → UI): (путь, сырые байты файла).
-static ICON_RESULT_RX: OnceLock<Arc<Mutex<mpsc::Receiver<(PathBuf, Vec<u8>)>>>> = OnceLock::new();
+type LoadedIcon = (PathBuf, Vec<u8>);
+type IconResultReceiver = Arc<Mutex<mpsc::Receiver<LoadedIcon>>>;
+static ICON_RESULT_RX: OnceLock<IconResultReceiver> = OnceLock::new();
 
 thread_local! {
     static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());

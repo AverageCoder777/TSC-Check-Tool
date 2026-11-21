@@ -1,10 +1,10 @@
 //! Route scanning and icon caching.
 
 mod route_icon_cache;
-mod routes;
+mod routes_main;
 
 pub(crate) mod incomplete_folders_controller;
 
 pub(crate) use incomplete_folders_controller::IncompleteFoldersController;
 pub(crate) use route_icon_cache::*;
-pub(crate) use routes::*;
+pub(crate) use routes_main::*;
