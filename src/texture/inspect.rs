@@ -192,11 +192,6 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
     })
 }
 
-pub fn inspect_tgpcdx_file(path: &Path) -> Result<TextureInfo, String> {
-    let data = fs::read(path).map_err(|e| e.to_string())?;
-    inspect_tgpcdx_with_path(&data, Some(path))
-}
-
 /// Валидация и нормализация внутреннего имени текстуры.
 /// Возвращает нормализованное имя или ошибку.
 pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String> {
@@ -205,12 +200,10 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
         return Err("Внутреннее имя текстуры не может быть пустым".into());
     }
 
-    // Проверка на не-ASCII символы (TS Classic не поддерживает Unicode в SERZ).
     if !trimmed.is_ascii() {
         return Err("Внутреннее имя должно содержать только ASCII символы (без кириллицы)".into());
     }
 
-    // Запрещаем расширения на конце (без аллокации to_lowercase).
     const FORBIDDEN_EXTS: [&str; 4] = [".tgpcdx", ".dds", ".ace", ".tgpc"];
     if FORBIDDEN_EXTS.iter().any(|ext| {
         trimmed.len() >= ext.len()
@@ -221,15 +214,12 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
         ));
     }
 
-    // Проверка на спецсимволы, которые могут сломать парсинг.
     if trimmed
         .bytes()
         .any(|b| b.is_ascii_control() || matches!(b, b'"' | b'<' | b'>'))
     {
         return Err("Внутреннее имя содержит недопустимые символы".into());
     }
-
-    // Нормализация: прямые слэши -> обратные.
     Ok(trimmed.replace('/', "\\"))
 }
 
