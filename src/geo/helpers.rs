@@ -61,8 +61,11 @@ pub(crate) fn collect_float_values(node: &SerzNode) -> Vec<f32> {
             children.iter().flat_map(collect_float_values).collect()
         }
         SerzNode::Blob { data } => data
-            .chunks_exact(4)
-            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("4-byte float chunk")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .copied()
+            .map(f32::from_le_bytes)
             .collect(),
         _ => Vec::new(),
     }
@@ -102,8 +105,11 @@ pub(crate) fn collect_i32_values(node: &SerzNode) -> Vec<i32> {
             children.iter().flat_map(collect_i32_values).collect()
         }
         SerzNode::Blob { data } => data
-            .chunks_exact(4)
-            .map(|bytes| i32::from_le_bytes(bytes.try_into().expect("4-byte integer chunk")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .copied()
+            .map(i32::from_le_bytes)
             .collect(),
         _ => Vec::new(),
     }
@@ -435,9 +441,7 @@ pub(crate) fn vertex_element_size(type_name: &str) -> Option<usize> {
             return Some(components * 4);
         }
     }
-    if type_name.contains("color") || type_name.contains("ubyte4") {
-        Some(4)
-    } else if type_name.contains("short2") {
+    if type_name.contains("color") || type_name.contains("ubyte4") || type_name.contains("short2") {
         Some(4)
     } else if type_name.contains("short4") {
         Some(8)

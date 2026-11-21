@@ -108,7 +108,9 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
         .flatten()
         .flat_map(collect_float_values)
         .collect::<Vec<_>>()
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
+        .iter()
         .map(|values| matrix_from_values(values).unwrap_or(Mat4::IDENTITY))
         .collect::<Vec<_>>();
     let transform_dependencies = find_named_values(&root, "TransformDependency")
@@ -143,14 +145,8 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
     let mut raw_batches = Vec::new();
     find_submeshes(
         &root,
-        None,
         &context,
-        Mat4::IDENTITY,
-        None,
-        None,
-        false,
-        None,
-        None,
+        TraversalState::default(),
         &mut HashSet::new(),
         &mut raw_batches,
     );
@@ -330,21 +326,19 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
                     shader_name: batch.shader_name.clone(),
                     lod_level: batch.lod_level,
                 };
+                let params = SubmeshParams {
+                    material_index,
+                    texture_index,
+                    render_mode,
+                    alpha_cutoff,
+                    info: &info,
+                    vertex_buffer_index: batch.vertex_buffer_index,
+                    base_vertex: batch.base_vertex,
+                    vertex_buffer_offset,
+                    vertex_count: source_vertices.len(),
+                };
                 if batch.transform == Mat4::IDENTITY {
-                    append_submesh(
-                        &mut indices,
-                        &mut submeshes,
-                        triangles,
-                        material_index,
-                        texture_index,
-                        render_mode,
-                        alpha_cutoff,
-                        &info,
-                        batch.vertex_buffer_index,
-                        batch.base_vertex,
-                        vertex_buffer_offset,
-                        source_vertices.len(),
-                    )?;
+                    append_submesh(&mut indices, &mut submeshes, triangles, params)?;
                 } else {
                     append_transformed_submesh(
                         &mut vertices,
@@ -353,14 +347,7 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
                         triangles,
                         &source_vertices,
                         batch.transform,
-                        material_index,
-                        texture_index,
-                        render_mode,
-                        alpha_cutoff,
-                        &info,
-                        batch.vertex_buffer_index,
-                        batch.base_vertex,
-                        vertex_buffer_offset,
+                        params,
                     )?;
                 }
                 Ok(())
@@ -388,15 +375,17 @@ pub(crate) fn parse_model(path: &Path, data: &[u8]) -> Result<GeoModel, String> 
             &mut indices,
             &mut submeshes,
             triangles,
-            0,
-            0,
-            GeoRenderMode::Opaque,
-            0.5,
-            &BatchInfo::default(),
-            0,
-            0,
-            0,
-            vertices.len(),
+            SubmeshParams {
+                material_index: 0,
+                texture_index: 0,
+                render_mode: GeoRenderMode::Opaque,
+                alpha_cutoff: 0.5,
+                info: &BatchInfo::default(),
+                vertex_buffer_index: 0,
+                base_vertex: 0,
+                vertex_buffer_offset: 0,
+                vertex_count: vertices.len(),
+            },
         ) {
             warn_parse_skip(format!("skipping unnamed geometry batch: {reason}"));
         }
@@ -451,16 +440,35 @@ pub(crate) struct NodeContext<'a> {
     pub prim_id_to_vbuf: &'a HashMap<u32, u32>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct TraversalState<'a> {
+    pub(crate) material: Option<u32>,
+    pub(crate) transform: Mat4,
+    pub(crate) transform_id: Option<usize>,
+    pub(crate) lod: Option<u32>,
+    pub(crate) excluded: bool,
+    pub(crate) node_name: Option<&'a str>,
+    pub(crate) vertex_buffer_index: Option<u32>,
+}
+
+impl Default for TraversalState<'_> {
+    fn default() -> Self {
+        Self {
+            material: None,
+            transform: Mat4::IDENTITY,
+            transform_id: None,
+            lod: None,
+            excluded: false,
+            node_name: None,
+            vertex_buffer_index: None,
+        }
+    }
+}
+
 pub(crate) fn find_submeshes(
     node: &SerzNode,
-    inherited_material: Option<u32>,
     context: &NodeContext<'_>,
-    parent_transform: Mat4,
-    inherited_transform_id: Option<usize>,
-    inherited_lod: Option<u32>,
-    inherited_excluded: bool,
-    inherited_node_name: Option<&str>,
-    inherited_vertex_buffer_index: Option<u32>,
+    state: TraversalState<'_>,
     reference_stack: &mut HashSet<u32>,
     output: &mut Vec<RawSubmesh>,
 ) {
@@ -472,25 +480,22 @@ pub(crate) fn find_submeshes(
         vb_id_to_index,
         prim_id_to_vbuf,
     } = context;
+    let TraversalState {
+        material: inherited_material,
+        transform: parent_transform,
+        transform_id: inherited_transform_id,
+        lod: inherited_lod,
+        excluded: inherited_excluded,
+        node_name: inherited_node_name,
+        vertex_buffer_index: inherited_vertex_buffer_index,
+    } = state;
     if let SerzNode::Reference { name, target_id } = node {
         if name.eq_ignore_ascii_case("material") {
             return;
         }
         if reference_stack.insert(*target_id) {
             if let Some(target) = resolve_ref_node(node, ids, &mut HashSet::new()) {
-                find_submeshes(
-                    target,
-                    inherited_material,
-                    context,
-                    parent_transform,
-                    inherited_transform_id,
-                    inherited_lod,
-                    inherited_excluded,
-                    inherited_node_name,
-                    inherited_vertex_buffer_index,
-                    reference_stack,
-                    output,
-                );
+                find_submeshes(target, context, state, reference_stack, output);
             }
             reference_stack.remove(target_id);
         }
@@ -722,7 +727,7 @@ pub(crate) fn find_submeshes(
                     })
                 })
             })
-            .or_else(|| inherited_vertex_buffer_index)
+            .or(inherited_vertex_buffer_index)
             .unwrap_or(0);
             let index_buffer_index = find_number(children, &["indexbufferindex"], ids)
                 .and_then(|value| u32::try_from(value).ok())
@@ -799,14 +804,16 @@ pub(crate) fn find_submeshes(
         };
         find_submeshes(
             child,
-            material_reference,
             context,
-            transform,
-            active_transform_id,
-            child_lod.or(lod),
-            excluded,
-            effective_node_name,
-            next_inherited_vbuf,
+            TraversalState {
+                material: material_reference,
+                transform,
+                transform_id: active_transform_id,
+                lod: child_lod.or(lod),
+                excluded,
+                node_name: effective_node_name,
+                vertex_buffer_index: next_inherited_vbuf,
+            },
             reference_stack,
             output,
         );
@@ -891,13 +898,7 @@ fn resolve_implicit_vertex_buffers(batches: &mut [RawSubmesh], vertex_data: &[Ve
 
     let vb_sizes: Vec<usize> = vertex_data
         .iter()
-        .map(|buffer| {
-            if buffer.stride == 0 {
-                0
-            } else {
-                buffer.bytes.len() / buffer.stride
-            }
-        })
+        .map(|buffer| buffer.bytes.len().checked_div(buffer.stride).unwrap_or(0))
         .collect();
 
     let mut cursors = vec![0usize; vertex_data.len()];
@@ -1206,20 +1207,35 @@ pub(crate) fn convert_to_triangle_list(
     }
 }
 
+pub(crate) struct SubmeshParams<'a> {
+    pub(crate) material_index: u32,
+    pub(crate) texture_index: u32,
+    pub(crate) render_mode: GeoRenderMode,
+    pub(crate) alpha_cutoff: f32,
+    pub(crate) info: &'a BatchInfo,
+    pub(crate) vertex_buffer_index: u32,
+    pub(crate) base_vertex: i32,
+    pub(crate) vertex_buffer_offset: i32,
+    pub(crate) vertex_count: usize,
+}
+
 pub(crate) fn append_submesh(
     indices: &mut Vec<u32>,
     submeshes: &mut Vec<GeoSubmesh>,
     triangles: Vec<u32>,
-    material_index: u32,
-    texture_index: u32,
-    render_mode: GeoRenderMode,
-    alpha_cutoff: f32,
-    info: &BatchInfo,
-    vertex_buffer_index: u32,
-    base_vertex: i32,
-    vertex_buffer_offset: i32,
-    vertex_count: usize,
+    params: SubmeshParams<'_>,
 ) -> Result<(), String> {
+    let SubmeshParams {
+        material_index,
+        texture_index,
+        render_mode,
+        alpha_cutoff,
+        info,
+        vertex_buffer_index,
+        base_vertex,
+        vertex_buffer_offset,
+        vertex_count,
+    } = params;
     let vertex_offset = i64::from(base_vertex) + i64::from(vertex_buffer_offset);
     let triangles = triangles
         .into_iter()
@@ -1270,15 +1286,19 @@ pub(crate) fn append_transformed_submesh(
     triangles: Vec<u32>,
     source_vertices: &[GeoVertex],
     transform: Mat4,
-    material_index: u32,
-    texture_index: u32,
-    render_mode: GeoRenderMode,
-    alpha_cutoff: f32,
-    info: &BatchInfo,
-    vertex_buffer_index: u32,
-    base_vertex: i32,
-    vertex_buffer_offset: i32,
+    params: SubmeshParams<'_>,
 ) -> Result<(), String> {
+    let SubmeshParams {
+        material_index,
+        texture_index,
+        render_mode,
+        alpha_cutoff,
+        info,
+        vertex_buffer_index,
+        base_vertex,
+        vertex_buffer_offset,
+        vertex_count: _,
+    } = params;
     let vertex_offset = i64::from(base_vertex) + i64::from(vertex_buffer_offset);
     let normal_transform = if transform.determinant().abs() > f32::EPSILON {
         transform.inverse().transpose()
@@ -1460,267 +1480,214 @@ pub(crate) fn find_blob(
 
 pub(crate) fn collect_vertex_buffers(
     node: &SerzNode,
-    ids: &std::collections::HashMap<u32, &SerzNode>,
+    ids: &HashMap<u32, &SerzNode>,
     vertices: &mut Vec<VertexBuffer>,
 ) -> (HashMap<u32, u32>, HashMap<u32, u32>) {
-    let mut vertex_buffer_id_map = HashMap::new();
-    let mut prim_id_to_vbuf = HashMap::new();
-    let mut vertex_data_counter = 0u32;
+    struct Collector<'a> {
+        ids: &'a HashMap<u32, &'a SerzNode>,
+        vertices: &'a mut Vec<VertexBuffer>,
+        reference_stack: HashSet<u32>,
+        visited_elements: HashSet<u32>,
+        next_slot: usize,
+        vertex_buffer_id_map: HashMap<u32, u32>,
+        prim_id_to_vbuf: HashMap<u32, u32>,
+        ancestor_ids: Vec<u32>,
+        vertex_data_counter: u32,
+    }
 
-    fn collect(
-        node: &SerzNode,
-        ids: &std::collections::HashMap<u32, &SerzNode>,
-        vertices: &mut Vec<VertexBuffer>,
-        reference_stack: &mut HashSet<u32>,
-        visited_elements: &mut HashSet<u32>,
-        next_slot: &mut usize,
-        vertex_buffer_id_map: &mut HashMap<u32, u32>,
-        prim_id_to_vbuf: &mut HashMap<u32, u32>,
-        ancestor_ids: &mut Vec<u32>,
-        vertex_data_counter: &mut u32,
-    ) {
-        if let SerzNode::Reference { target_id, .. } = node {
-            if reference_stack.insert(*target_id) {
-                if let Some(target) = resolve_ref_node(node, ids, &mut HashSet::new()) {
-                    collect(
-                        target,
-                        ids,
-                        vertices,
-                        reference_stack,
-                        visited_elements,
-                        next_slot,
-                        vertex_buffer_id_map,
-                        prim_id_to_vbuf,
-                        ancestor_ids,
-                        vertex_data_counter,
-                    );
-                }
-                reference_stack.remove(target_id);
-            }
-            return;
-        }
-        let SerzNode::Element {
-            name, id, children, ..
-        } = node
-        else {
-            return;
-        };
-        if *id != 0 && !visited_elements.insert(*id) {
-            return;
-        }
-        let clean_name = name.replace("::", "-").to_ascii_lowercase();
-
-        // Push this element's ID to ancestor stack if it's a container we care about
-        let is_vertex_data_container =
-            clean_name.contains("chcgeometryvertexdata") || clean_name.contains("chcvertexbuffer");
-        let pushed = if is_vertex_data_container && *id != 0 {
-            ancestor_ids.push(*id);
-            true
-        } else {
-            false
-        };
-
-        // When we encounter a cHcGeometryVertexDataDx, collect all References inside it
-        // that point to cHcPrimitiveSetDescDx nodes (primitive set descriptors).
-        if clean_name.contains("chcgeometryvertexdata") {
-            let buf_idx = *vertex_data_counter;
-            *vertex_data_counter += 1;
-
-            // Collect all SerzNode::Reference children inside this cHcGeometryVertexDataDx
-            // (excluding references to the vertex buffer itself and vertex type declaration)
-            fn collect_prim_refs(
-                node: &SerzNode,
-                ids: &std::collections::HashMap<u32, &SerzNode>,
-                reference_stack: &mut HashSet<u32>,
-                vb_idx: u32,
-                vb_id: u32,
-                vtd_id: Option<u32>,
-                prim_id_to_vbuf: &mut HashMap<u32, u32>,
-            ) {
-                match node {
-                    SerzNode::Reference { target_id, .. } => {
-                        // Skip references to the vertex buffer itself and vertex type declaration
-                        if *target_id == vb_id || vtd_id.is_some_and(|vtd| vtd == *target_id) {
-                            return;
-                        }
-                        prim_id_to_vbuf.insert(*target_id, vb_idx);
+    impl<'a> Collector<'a> {
+        fn collect_prim_refs(
+            &mut self,
+            node: &SerzNode,
+            vb_idx: u32,
+            vb_id: u32,
+            vtd_id: Option<u32>,
+        ) {
+            match node {
+                SerzNode::Reference { target_id, .. } => {
+                    if *target_id == vb_id || vtd_id.is_some_and(|vtd| vtd == *target_id) {
+                        return;
                     }
-                    SerzNode::Element { children, .. } => {
-                        for child in children {
-                            collect_prim_refs(
-                                child,
-                                ids,
-                                reference_stack,
-                                vb_idx,
-                                vb_id,
-                                vtd_id,
-                                prim_id_to_vbuf,
-                            );
-                        }
-                    }
-                    _ => {}
+                    self.prim_id_to_vbuf.insert(*target_id, vb_idx);
                 }
+                SerzNode::Element { children, .. } => {
+                    for child in children {
+                        self.collect_prim_refs(child, vb_idx, vb_id, vtd_id);
+                    }
+                }
+                _ => {}
             }
+        }
 
-            // Find the vertex buffer ID and vertex type declaration ID to exclude them
-            let vb_id = children
-                .iter()
-                .find_map(|c| {
-                    if let SerzNode::Element { name, id, .. } = c {
-                        if name.to_ascii_lowercase().contains("chcvertexbuffer") {
+        fn collect(&mut self, node: &SerzNode) {
+            if let SerzNode::Reference { target_id, .. } = node {
+                if self.reference_stack.insert(*target_id) {
+                    if let Some(target) = resolve_ref_node(node, self.ids, &mut HashSet::new()) {
+                        self.collect(target);
+                    }
+                    self.reference_stack.remove(target_id);
+                }
+                return;
+            }
+            let SerzNode::Element {
+                name, id, children, ..
+            } = node
+            else {
+                return;
+            };
+            if *id != 0 && !self.visited_elements.insert(*id) {
+                return;
+            }
+            let clean_name = name.replace("::", "-").to_ascii_lowercase();
+
+            let is_vertex_data_container = clean_name.contains("chcgeometryvertexdata")
+                || clean_name.contains("chcvertexbuffer");
+            let pushed = if is_vertex_data_container && *id != 0 {
+                self.ancestor_ids.push(*id);
+                true
+            } else {
+                false
+            };
+
+            if clean_name.contains("chcgeometryvertexdata") {
+                let buf_idx = self.vertex_data_counter;
+                self.vertex_data_counter += 1;
+
+                let vb_id = children
+                    .iter()
+                    .find_map(|c| {
+                        if let SerzNode::Element { name, id, .. } = c
+                            && name.to_ascii_lowercase().contains("chcvertexbuffer")
+                        {
                             return Some(*id);
                         }
-                    }
-                    None
-                })
-                .unwrap_or(0);
+                        None
+                    })
+                    .unwrap_or(0);
 
-            let vtd_id = children.iter().find_map(|c| {
-                if let SerzNode::Element { name, id, .. } = c {
-                    if name
-                        .to_ascii_lowercase()
-                        .contains("chcvertextypedeclaration")
+                let vtd_id = children.iter().find_map(|c| {
+                    if let SerzNode::Element { name, id, .. } = c
+                        && name
+                            .to_ascii_lowercase()
+                            .contains("chcvertextypedeclaration")
                     {
                         return Some(*id);
                     }
-                }
-                None
-            });
-
-            let mut ref_stack = HashSet::new();
-            for child in children {
-                collect_prim_refs(
-                    child,
-                    ids,
-                    &mut ref_stack,
-                    buf_idx,
-                    vb_id,
-                    vtd_id,
-                    prim_id_to_vbuf,
-                );
-            }
-        }
-
-        if clean_name.contains("chcvertexbuffer") {
-            let source_index =
-                find_direct_number(children, &["bufferindex", "vertexbufferindex"], ids)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .unwrap_or(*next_slot);
-            *next_slot += 1;
-            // Record this vertex buffer's SERZ ID -> source_index mapping
-            vertex_buffer_id_map.insert(*id, source_index as u32);
-            // Also record ALL ancestor IDs in the stack (intermediate containers)
-            for &ancestor_id in ancestor_ids.iter() {
-                vertex_buffer_id_map.insert(ancestor_id, source_index as u32);
-            }
-            if let Some((bytes, _fields)) = find_blob(children, "vertexdata", ids) {
-                let declared_vertex_count = find_direct_number(children, &["numvertices"], ids)
-                    .and_then(|value| usize::try_from(value).ok());
-                let fvf = find_text(children, &["fvf"], ids)
-                    .and_then(|value| value.trim().parse::<u32>().ok())
-                    .unwrap_or(0);
-                let (fvf_stride, fvf_normal_offset, fvf_uv_offset) = if fvf != 0 {
-                    parse_fvf(fvf)
-                } else {
-                    (0, None, None)
-                };
-                let declaration = find_vertex_attribute_offsets(children, ids);
-                // Вычисляем реальный шаг, просто отбрасывая мусорный паддинг в конце буфера
-                let declared_stride = declared_vertex_count
-                    .filter(|count| *count > 0 && bytes.len() >= *count)
-                    .map(|count| bytes.len() / count);
-
-                let explicit_stride = find_direct_number(
-                    children,
-                    &["vertexstride", "stride", "vertexsize", "vertexstridebytes"],
-                    ids,
-                )
-                .and_then(|value| usize::try_from(value).ok());
-
-                // Жесткий приоритет: 1. Явный размер из файла, 2. Вычисленный по кол-ву вершин, 3. Декларация
-                let stride = explicit_stride
-                    .filter(|s| *s > 0)
-                    .or(declared_stride.filter(|s| *s > 0))
-                    .or(Some(declaration.declaration_stride).filter(|s| *s > 0))
-                    .or(Some(fvf_stride).filter(|s| *s > 0))
-                    .unwrap_or(32);
-                // An explicit `PositionOffset` wins when present; otherwise fall back to the
-                // declaration's POSITION offset, then to zero.
-                let position = find_direct_number(children, &["positionoffset"], ids)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .or(declaration.position)
-                    .unwrap_or(0);
-                let position_format = declaration.position_format;
-                let normal = find_direct_number(children, &["normaloffset"], ids)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .or(declaration.normal)
-                    .or(fvf_normal_offset)
-                    .or_else(|| (stride >= 24).then_some(12));
-                let uv = find_direct_number(children, &["texcoord0offset", "uvoffset"], ids)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .or(declaration.uv)
-                    .or(fvf_uv_offset)
-                    .or_else(|| (stride >= 32).then_some(24));
-                let layout = format!(
-                    "VertexData/cHcGeometryVertexDataDx/VertexBuffer/cHcVertexBufferDx: vertices={} stride={} position={}({:?}) normal={:?} texcoord0={:?} declaration=[{}]",
-                    declared_vertex_count
-                        .map(|count| count.to_string())
-                        .unwrap_or_else(|| "?".into()),
-                    stride,
-                    position,
-                    position_format,
-                    normal,
-                    uv,
-                    declaration.declaration,
-                );
-                vertices.push(VertexBuffer {
-                    source_index,
-                    bytes,
-                    stride,
-                    declared_vertex_count: declared_vertex_count.unwrap_or(0),
-                    fvf,
-                    position_offset: position,
-                    position_format,
-                    normal_offset: normal,
-                    uv_offset: uv,
-                    layout,
+                    None
                 });
+
+                for child in children {
+                    self.collect_prim_refs(child, buf_idx, vb_id, vtd_id);
+                }
             }
-        }
-        for child in children {
-            collect(
-                child,
-                ids,
-                vertices,
-                reference_stack,
-                visited_elements,
-                next_slot,
-                vertex_buffer_id_map,
-                prim_id_to_vbuf,
-                ancestor_ids,
-                vertex_data_counter,
-            );
-        }
-        // Pop ancestor ID when backtracking
-        if pushed {
-            ancestor_ids.pop();
+
+            if clean_name.contains("chcvertexbuffer") {
+                let source_index =
+                    find_direct_number(children, &["bufferindex", "vertexbufferindex"], self.ids)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .unwrap_or(self.next_slot);
+                self.next_slot += 1;
+                self.vertex_buffer_id_map.insert(*id, source_index as u32);
+                for &ancestor_id in &self.ancestor_ids {
+                    self.vertex_buffer_id_map
+                        .insert(ancestor_id, source_index as u32);
+                }
+                if let Some((bytes, _fields)) = find_blob(children, "vertexdata", self.ids) {
+                    let declared_vertex_count =
+                        find_direct_number(children, &["numvertices"], self.ids)
+                            .and_then(|value| usize::try_from(value).ok());
+                    let fvf = find_text(children, &["fvf"], self.ids)
+                        .and_then(|value| value.trim().parse::<u32>().ok())
+                        .unwrap_or(0);
+                    let (fvf_stride, fvf_normal_offset, fvf_uv_offset) = if fvf != 0 {
+                        parse_fvf(fvf)
+                    } else {
+                        (0, None, None)
+                    };
+                    let declaration = find_vertex_attribute_offsets(children, self.ids);
+                    let declared_stride = declared_vertex_count
+                        .filter(|count| *count > 0 && bytes.len() >= *count)
+                        .map(|count| bytes.len() / count);
+
+                    let explicit_stride = find_direct_number(
+                        children,
+                        &["vertexstride", "stride", "vertexsize", "vertexstridebytes"],
+                        self.ids,
+                    )
+                    .and_then(|value| usize::try_from(value).ok());
+
+                    let stride = explicit_stride
+                        .filter(|s| *s > 0)
+                        .or(declared_stride.filter(|s| *s > 0))
+                        .or(Some(declaration.declaration_stride).filter(|s| *s > 0))
+                        .or(Some(fvf_stride).filter(|s| *s > 0))
+                        .unwrap_or(32);
+                    let position = find_direct_number(children, &["positionoffset"], self.ids)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .or(declaration.position)
+                        .unwrap_or(0);
+                    let position_format = declaration.position_format;
+                    let normal = find_direct_number(children, &["normaloffset"], self.ids)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .or(declaration.normal)
+                        .or(fvf_normal_offset)
+                        .or_else(|| (stride >= 24).then_some(12));
+                    let uv =
+                        find_direct_number(children, &["texcoord0offset", "uvoffset"], self.ids)
+                            .and_then(|value| usize::try_from(value).ok())
+                            .or(declaration.uv)
+                            .or(fvf_uv_offset)
+                            .or_else(|| (stride >= 32).then_some(24));
+                    let layout = format!(
+                        "VertexData/cHcGeometryVertexDataDx/VertexBuffer/cHcVertexBufferDx: vertices={} stride={} position={}({:?}) normal={:?} texcoord0={:?} declaration=[{}]",
+                        declared_vertex_count
+                            .map(|count| count.to_string())
+                            .unwrap_or_else(|| "?".into()),
+                        stride,
+                        position,
+                        position_format,
+                        normal,
+                        uv,
+                        declaration.declaration,
+                    );
+                    self.vertices.push(VertexBuffer {
+                        source_index,
+                        bytes,
+                        stride,
+                        declared_vertex_count: declared_vertex_count.unwrap_or(0),
+                        fvf,
+                        position_offset: position,
+                        position_format,
+                        normal_offset: normal,
+                        uv_offset: uv,
+                        layout,
+                    });
+                }
+            }
+
+            for child in children {
+                self.collect(child);
+            }
+            if pushed {
+                self.ancestor_ids.pop();
+            }
         }
     }
 
-    collect(
-        node,
+    let mut collector = Collector {
         ids,
         vertices,
-        &mut HashSet::new(),
-        &mut HashSet::new(),
-        &mut 0,
-        &mut vertex_buffer_id_map,
-        &mut prim_id_to_vbuf,
-        &mut Vec::new(),
-        &mut vertex_data_counter,
-    );
+        reference_stack: HashSet::new(),
+        visited_elements: HashSet::new(),
+        next_slot: 0,
+        vertex_buffer_id_map: HashMap::new(),
+        prim_id_to_vbuf: HashMap::new(),
+        ancestor_ids: Vec::new(),
+        vertex_data_counter: 0,
+    };
+    collector.collect(node);
 
-    (vertex_buffer_id_map, prim_id_to_vbuf)
+    (collector.vertex_buffer_id_map, collector.prim_id_to_vbuf)
 }
 
 /// Collect index buffers (requires batches for vertex count inference).
@@ -1731,90 +1698,74 @@ pub(crate) fn collect_index_buffers(
     vertices: &[VertexBuffer],
     indices: &mut Vec<IndexBuffer>,
 ) {
-    fn collect(
-        node: &SerzNode,
-        ids: &std::collections::HashMap<u32, &SerzNode>,
-        batches: &[RawSubmesh],
-        vertices: &[VertexBuffer],
-        indices: &mut Vec<IndexBuffer>,
-        reference_stack: &mut HashSet<u32>,
-        visited_elements: &mut HashSet<u32>,
-        next_slot: &mut usize,
-    ) {
-        if let SerzNode::Reference { target_id, .. } = node {
-            if reference_stack.insert(*target_id) {
-                if let Some(target) = resolve_ref_node(node, ids, &mut HashSet::new()) {
-                    collect(
-                        target,
-                        ids,
-                        batches,
-                        vertices,
-                        indices,
-                        reference_stack,
-                        visited_elements,
-                        next_slot,
-                    );
-                }
-                reference_stack.remove(target_id);
-            }
-            return;
-        }
-        let SerzNode::Element {
-            name, id, children, ..
-        } = node
-        else {
-            return;
-        };
-        if *id != 0 && !visited_elements.insert(*id) {
-            return;
-        }
-        let clean_name = name.replace("::", "-").to_ascii_lowercase();
-        if clean_name.contains("chcindexbuffer") {
-            let buffer_index =
-                find_direct_number(children, &["bufferindex", "indexbufferindex"], ids)
-                    .and_then(|value| usize::try_from(value).ok())
-                    .unwrap_or(*next_slot);
-            *next_slot += 1;
-            let vertex_counts = vertices
-                .iter()
-                .map(|buffer| {
-                    if buffer.stride == 0 {
-                        0
-                    } else {
-                        buffer.bytes.len() / buffer.stride
+    struct Collector<'a> {
+        ids: &'a std::collections::HashMap<u32, &'a SerzNode>,
+        batches: &'a [RawSubmesh],
+        vertex_counts: &'a [usize],
+        indices: &'a mut Vec<IndexBuffer>,
+        reference_stack: HashSet<u32>,
+        visited_elements: HashSet<u32>,
+        next_slot: usize,
+    }
+
+    impl<'a> Collector<'a> {
+        fn collect(&mut self, node: &SerzNode) {
+            if let SerzNode::Reference { target_id, .. } = node {
+                if self.reference_stack.insert(*target_id) {
+                    if let Some(target) = resolve_ref_node(node, self.ids, &mut HashSet::new()) {
+                        self.collect(target);
                     }
-                })
-                .collect::<Vec<_>>();
-            if let Some(index_buffer) =
-                find_index_data(children, ids, buffer_index, batches, &vertex_counts)
-            {
-                indices.push(index_buffer);
+                    self.reference_stack.remove(target_id);
+                }
+                return;
             }
-        }
-        for child in children {
-            collect(
-                child,
-                ids,
-                batches,
-                vertices,
-                indices,
-                reference_stack,
-                visited_elements,
-                next_slot,
-            );
+            let SerzNode::Element {
+                name, id, children, ..
+            } = node
+            else {
+                return;
+            };
+            if *id != 0 && !self.visited_elements.insert(*id) {
+                return;
+            }
+            let clean_name = name.replace("::", "-").to_ascii_lowercase();
+            if clean_name.contains("chcindexbuffer") {
+                let buffer_index =
+                    find_direct_number(children, &["bufferindex", "indexbufferindex"], self.ids)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .unwrap_or(self.next_slot);
+                self.next_slot += 1;
+                if let Some(index_buffer) = find_index_data(
+                    children,
+                    self.ids,
+                    buffer_index,
+                    self.batches,
+                    self.vertex_counts,
+                ) {
+                    self.indices.push(index_buffer);
+                }
+            }
+            for child in children {
+                self.collect(child);
+            }
         }
     }
 
-    collect(
-        node,
+    let vertex_counts: Vec<usize> = vertices
+        .iter()
+        .map(|buffer| buffer.bytes.len().checked_div(buffer.stride).unwrap_or(0))
+        .collect();
+
+    let mut collector = Collector {
         ids,
         batches,
-        vertices,
+        vertex_counts: &vertex_counts,
         indices,
-        &mut HashSet::new(),
-        &mut HashSet::new(),
-        &mut 0,
-    );
+        reference_stack: HashSet::new(),
+        visited_elements: HashSet::new(),
+        next_slot: 0,
+    };
+    collector.collect(node);
 }
 
 fn find_vertex_attribute_offsets(
@@ -1895,7 +1846,7 @@ fn find_vertex_attribute_offsets(
                                 .and_then(|value| usize::try_from(value).ok());
                         let offset = explicit_offset
                             .unwrap_or_else(|| *stream_offsets.entry(stream_index).or_default());
-                        let size = vertex_element_size(&type_name);
+                        let size = vertex_element_size(type_name);
                         if let Some(size) = size {
                             stream_offsets.insert(stream_index, offset.saturating_add(size));
                             let stream_size: &mut usize =
@@ -1906,7 +1857,7 @@ fn find_vertex_attribute_offsets(
                             let usage_lower = usage.to_ascii_lowercase();
                             if usage_lower.contains("position") && attributes.position.is_none() {
                                 attributes.position = Some(offset);
-                                attributes.position_format = position_format_from_type(&type_name);
+                                attributes.position_format = position_format_from_type(type_name);
                             } else if usage_lower.contains("normal") && attributes.normal.is_none()
                             {
                                 attributes.normal = Some(offset);
@@ -2092,17 +2043,9 @@ pub(crate) fn find_material_bindings(
                 .trim()
                 .to_ascii_uppercase();
             let subtract_alpha = frame_alpha_mode == "ALPHA_MODE_SUBTRACT";
-            // Invisible/shadow/collision materials are stripped from the texture table by
-            // `auditor::filter_material_blocks`, so they must not consume a `material_index`
-            // slot here, otherwise `material_index` desynchronizes from `textures` and
-            // visible batches fall back to the wrong texture index.
             let excluded =
-                is_hidden_shader_name(&shader_name) || texture_is_shadow || subtract_alpha;
+                is_hidden_shader_name(shader_name) || texture_is_shadow || subtract_alpha;
             let material_index = *next_index;
-            // Always advance the index counter so excluded materials (shadows,
-            // subtractive, hidden) still consume a slot and material_index stays
-            // synchronized with the full material table (0..N). The `excluded`
-            // flag only marks the batch as non-renderable.
             *next_index = (*next_index).saturating_add(1);
             let texture_index = texture_references
                 .iter()
@@ -2151,7 +2094,7 @@ pub(crate) fn find_material_bindings(
                 .and_then(|value| value.trim().parse::<f32>().ok())
                 .map(|value| (value / 255.0).clamp(0.0, 1.0))
                 .unwrap_or(0.5);
-            let mut render_mode = classify_shader(&shader_name);
+            let mut render_mode = classify_shader(shader_name);
             // Shader classification gives a baseline. Material settings can only
             // *upgrade* Opaque -> Cutout/Blended, never downgrade Cutout/Blended -> Opaque.
             if render_mode == GeoRenderMode::Opaque {
@@ -2287,14 +2230,13 @@ fn collect_text_values(
                     collect_descendant_text(child, ids, reference_stack, output);
                 }
             }
-            SerzNode::Reference { target_id, .. } => {
-                if reference_stack.insert(*target_id) {
-                    if let Some(target) = ids.get(target_id) {
-                        collect_descendant_text(target, ids, reference_stack, output);
-                    }
-                    reference_stack.remove(target_id);
+            SerzNode::Reference { target_id, .. } if reference_stack.insert(*target_id) => {
+                if let Some(target) = ids.get(target_id) {
+                    collect_descendant_text(target, ids, reference_stack, output);
                 }
+                reference_stack.remove(target_id);
             }
+
             _ => {}
         }
     }

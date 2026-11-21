@@ -1676,15 +1676,16 @@ pub fn compile_tracks_xml_to_bin(xml: &str) -> Result<Vec<u8>, String> {
     use xml::reader::{EventReader, XmlEvent};
 
     fn decode_blob_hex(text: &str) -> Result<Vec<u8>, String> {
-        let digits = text
+        let digits: Vec<char> = text
             .chars()
             .filter(|character| !character.is_ascii_whitespace())
-            .collect::<Vec<_>>();
-        if digits.len() % 2 != 0 {
+            .collect();
+        let (pairs, remainder) = digits.as_chunks::<2>();
+        if !remainder.is_empty() {
             return Err("SERZ blob contains an incomplete hexadecimal byte".into());
         }
-        digits
-            .chunks_exact(2)
+        pairs
+            .iter()
             .map(|pair| {
                 let high = pair[0]
                     .to_digit(16)

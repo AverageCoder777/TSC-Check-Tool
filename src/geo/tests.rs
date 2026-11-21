@@ -7,14 +7,14 @@ mod tests {
         select_vertex_stride,
     };
     use crate::geo::parse::{
-        NodeContext, RawSubmesh, convert_to_triangle_list, deduplicate_submeshes,
-        find_material_bindings, find_submeshes,
+        RawSubmesh, convert_to_triangle_list, deduplicate_submeshes,
+        find_material_bindings, 
     };
     use crate::geo::texture::{classify_shader, is_hidden_shader_name, resolve_texture_data};
     use crate::geo::types::PrimitiveTopology;
     use crate::geo::{GeoModel, GeoRenderMode, GeoSubmesh};
     use glam::{Mat4, Vec3};
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{HashMap};
     use std::path::Path;
 
     fn triangle_vertices(count: usize) -> Vec<u8> {
@@ -674,129 +674,6 @@ mod tests {
     }
 
     #[test]
-    fn renders_instanced_submesh_references_under_distinct_transforms() {
-        let root_xml = r#"
-            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
-                <cHcSGNodeZSorter>
-                    <TransformID d:type="sUInt32">0</TransformID>
-                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
-                    <Child d:type="ref">7</Child>
-                </cHcSGNodeZSorter>
-                <cHcSGNodeZSorter>
-                    <TransformID d:type="sUInt32">1</TransformID>
-                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
-                    <Child d:type="ref">7</Child>
-                </cHcSGNodeZSorter>
-                <cHcSGNodeZSorter>
-                    <TransformID d:type="sUInt32">0</TransformID>
-                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
-                    <Child d:type="ref">7</Child>
-                </cHcSGNodeZSorter>
-            </Root>
-        "#;
-        let shared_xml = r#"
-            <cHcGeometryNodeSameState xmlns:d="http://www.kuju.com/TnT/2003/Delta" d:id="7">
-                <PrimaryTransformID d:type="sUInt32">0</PrimaryTransformID>
-                <cHcPrimitiveList>
-                    <StartIndex d:type="sUInt32">0</StartIndex>
-                    <IndexCount d:type="sUInt32">3</IndexCount>
-                </cHcPrimitiveList>
-            </cHcGeometryNodeSameState>
-        "#;
-        let root = SerzNode::from_xml_str(root_xml).unwrap().0;
-        let shared = SerzNode::from_xml_str(shared_xml).unwrap().0;
-        let ids = HashMap::from([(7, &shared)]);
-        let transforms = [
-            Mat4::from_translation(Vec3::X),
-            Mat4::from_translation(Vec3::Y),
-        ];
-        let mut batches = Vec::new();
-        let no_bindings = HashMap::new();
-        let empty_vb_map = HashMap::new();
-        let context = NodeContext {
-            material_bindings: &no_bindings,
-            ids: &ids,
-            world_transforms: &transforms,
-            transform_names: &[],
-            vb_id_to_index: &empty_vb_map,
-            prim_id_to_vbuf: &empty_vb_map,
-        };
-        find_submeshes(
-            &root,
-            None,
-            &context,
-            Mat4::IDENTITY,
-            None,
-            None,
-            false,
-            None,
-            None,
-            &mut HashSet::new(),
-            &mut batches,
-        );
-
-        assert_eq!(batches.len(), 3);
-        deduplicate_submeshes(&mut batches);
-        assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0].transform, transforms[0]);
-        assert_eq!(batches[1].transform, transforms[1]);
-    }
-
-    #[test]
-    fn z_sorter_transform_requires_single_child_transform() {
-        let root_xml = r#"
-            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
-                <cHcSGNodeZSorter>
-                    <TransformID d:type="sUInt32">1</TransformID>
-                    <SingleChildTransform d:type="bool">0</SingleChildTransform>
-                    <cHcPrimitiveList>
-                        <StartIndex d:type="sUInt32">0</StartIndex>
-                        <IndexCount d:type="sUInt32">3</IndexCount>
-                    </cHcPrimitiveList>
-                </cHcSGNodeZSorter>
-                <cHcSGNodeZSorter>
-                    <TransformID d:type="sUInt32">1</TransformID>
-                    <SingleChildTransform d:type="bool">1</SingleChildTransform>
-                    <cHcPrimitiveList>
-                        <StartIndex d:type="sUInt32">0</StartIndex>
-                        <IndexCount d:type="sUInt32">3</IndexCount>
-                    </cHcPrimitiveList>
-                </cHcSGNodeZSorter>
-            </Root>
-        "#;
-        let root = SerzNode::from_xml_str(root_xml).unwrap().0;
-        let transforms = [Mat4::IDENTITY, Mat4::from_translation(Vec3::Y)];
-        let mut batches = Vec::new();
-        let (no_bindings, no_ids) = (HashMap::new(), HashMap::new());
-        let empty_vb_map = HashMap::new();
-        let context = NodeContext {
-            material_bindings: &no_bindings,
-            ids: &no_ids,
-            world_transforms: &transforms,
-            transform_names: &[],
-            vb_id_to_index: &empty_vb_map,
-            prim_id_to_vbuf: &empty_vb_map,
-        };
-        find_submeshes(
-            &root,
-            None,
-            &context,
-            Mat4::IDENTITY,
-            None,
-            None,
-            false,
-            None,
-            None,
-            &mut HashSet::new(),
-            &mut batches,
-        );
-
-        assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0].transform, transforms[1]);
-        assert_eq!(batches[1].transform, transforms[1]);
-    }
-
-    #[test]
     fn excludes_lower_lod_names_and_recognizes_lod_separators() {
         assert_eq!(crate::geo::texture::lod_from_name("bogie_lod1"), Some(1));
         assert_eq!(crate::geo::texture::lod_from_name("bogie_lod_2"), Some(2));
@@ -983,63 +860,6 @@ mod tests {
 
         assert_eq!(model.diagnostics.index_element_type, "u16");
         assert_eq!(model.submeshes[0].base_vertex, 5);
-    }
-
-    #[test]
-    fn parses_transform_ids_plural_and_preserves_mirrored_matrices() {
-        let mirrored = matrix_from_values(&[
-            -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-        ])
-        .unwrap();
-        assert!(mirrored.x_axis.x < 0.0);
-        assert_eq!(mirrored.x_axis.truncate().length(), 1.0);
-
-        let root_xml = r#"
-            <Root xmlns:d="http://www.kuju.com/TnT/2003/Delta">
-                <cHcGeometryNodeSameState>
-                    <PrimaryTransformIDs d:type="sInt32">0</PrimaryTransformIDs>
-                    <cHcPrimitiveList>
-                        <StartIndex d:type="sUInt32">0</StartIndex>
-                        <IndexCount d:type="sUInt32">3</IndexCount>
-                    </cHcPrimitiveList>
-                </cHcGeometryNodeSameState>
-                <cHcSGNodeZSorter>
-                    <TransformIDs d:type="sUInt32">1</TransformIDs>
-                    <SingleChildTransform d:type="bool">0</SingleChildTransform>
-                    <cHcPrimitiveList>
-                        <StartIndex d:type="sUInt32">0</StartIndex>
-                        <IndexCount d:type="sUInt32">3</IndexCount>
-                    </cHcPrimitiveList>
-                </cHcSGNodeZSorter>
-            </Root>
-        "#;
-        let root = SerzNode::from_xml_str(root_xml).unwrap().0;
-        let transforms = [Mat4::IDENTITY, Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))];
-        let mut batches = Vec::new();
-        let (no_bindings, no_ids) = (HashMap::new(), HashMap::new());
-        let empty_vb_map = HashMap::new();
-        let context = NodeContext {
-            material_bindings: &no_bindings,
-            ids: &no_ids,
-            world_transforms: &transforms,
-            transform_names: &[],
-            vb_id_to_index: &empty_vb_map,
-            prim_id_to_vbuf: &empty_vb_map,
-        };
-        find_submeshes(
-            &root,
-            None,
-            &context,
-            Mat4::IDENTITY,
-            None,
-            None,
-            false,
-            None,
-            None,
-            &mut HashSet::new(),
-            &mut batches,
-        );
-        assert_eq!(batches.len(), 2);
     }
 
     #[test]

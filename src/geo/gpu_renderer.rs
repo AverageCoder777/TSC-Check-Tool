@@ -137,23 +137,15 @@ impl GpuRenderer {
             let end = start
                 .saturating_add(submesh.index_count as usize)
                 .min(total_indices);
-            let slice = &indices[start..end];
-            let tri_count = (slice.len() / 3) * 3;
-            triangle_ranges.push((start as u32, tri_count as u32));
+            let (triangles, _) = indices[start..end].as_chunks::<3>();
+            triangle_ranges.push((start as u32, (triangles.len() * 3) as u32));
 
             let wire_start = wire_lines.len() as u32;
             let mut min_pt = Vec3::splat(f32::INFINITY);
             let mut max_pt = Vec3::splat(f32::NEG_INFINITY);
-            for triangle in slice.chunks_exact(3) {
-                wire_lines.extend_from_slice(&[
-                    triangle[0],
-                    triangle[1],
-                    triangle[1],
-                    triangle[2],
-                    triangle[2],
-                    triangle[0],
-                ]);
-                for &idx in triangle {
+            for &[a, b, c] in triangles {
+                wire_lines.extend_from_slice(&[a, b, b, c, c, a]);
+                for idx in [a, b, c] {
                     if let Some(v) = packed_vertices.get(idx as usize) {
                         let p = Vec3::from_array(v.position);
                         min_pt = min_pt.min(p);
