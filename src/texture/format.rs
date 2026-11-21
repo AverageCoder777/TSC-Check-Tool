@@ -1,5 +1,7 @@
 //! Texture format handling and mip size calculations.
 
+use ddsfile::{D3DFormat, Dds, DxgiFormat, FourCC};
+
 /// Сжатие DDS, которое движок TS Classic ожидает от импортируемого файла.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DdsCompression {
@@ -16,253 +18,84 @@ pub enum DdsCompression {
 impl DdsCompression {
     pub fn as_dds_name(self) -> &'static str {
         match self {
-            DdsCompression::Dxt1 => "DXT1",
-            DdsCompression::Dxt3 => "DXT3",
-            DdsCompression::Dxt5 => "DXT5",
-            DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => "RGBA8888",
-            DdsCompression::L8 => "L8",
-            DdsCompression::A8 => "A8",
-            DdsCompression::Unknown => "неизвестный формат",
+            Self::Dxt1 => "DXT1",
+            Self::Dxt3 => "DXT3",
+            Self::Dxt5 => "DXT5",
+            Self::Rgba8888 | Self::Bgra8888 => "RGBA8888",
+            Self::L8 => "L8",
+            Self::A8 => "A8",
+            Self::Unknown => "неизвестный формат",
         }
     }
 }
 
 /// Распознаёт формат сжатия по заголовку DDS_HEADER файла .dds.
-pub fn dds_compression_of(dds: &ddsfile::Dds) -> DdsCompression {
+pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
     if let Some(dxgi) = dds.get_dxgi_format() {
-        let s = format!("{dxgi:?}");
-        if s.contains("BC3") {
-            return DdsCompression::Dxt5;
-        }
-        if s.contains("BC2") {
-            return DdsCompression::Dxt3;
-        }
-        if s.contains("BC1") {
-            return DdsCompression::Dxt1;
-        }
-        if s.contains("B8G8R8A8") || s.contains("B8G8R8X8") {
-            return DdsCompression::Bgra8888;
-        }
-        if s.contains("R8G8B8A8") || s.contains("R8G8B8X8") {
-            return DdsCompression::Rgba8888;
-        }
-        if s.contains("A8_UNORM") {
-            return DdsCompression::A8;
-        }
-        if s.contains("R8_UNORM") || s.contains("L8_UNORM") {
-            return DdsCompression::L8;
-        }
-        return DdsCompression::Unknown;
-    }
-    if let Some(d3d) = dds.get_d3d_format() {
-        return match d3d {
-            ddsfile::D3DFormat::DXT5 | ddsfile::D3DFormat::DXT4 => DdsCompression::Dxt5,
-            ddsfile::D3DFormat::DXT3 | ddsfile::D3DFormat::DXT2 => DdsCompression::Dxt3,
-            ddsfile::D3DFormat::DXT1 => DdsCompression::Dxt1,
-            ddsfile::D3DFormat::A8R8G8B8
-            | ddsfile::D3DFormat::X8R8G8B8
-            | ddsfile::D3DFormat::A8B8G8R8
-            | ddsfile::D3DFormat::X8B8G8R8 => DdsCompression::Bgra8888,
-            ddsfile::D3DFormat::L8 => DdsCompression::L8,
-            ddsfile::D3DFormat::A8 => DdsCompression::A8,
+        return match dxgi {
+            DxgiFormat::BC3_Typeless | DxgiFormat::BC3_UNorm | DxgiFormat::BC3_UNorm_sRGB => {
+                DdsCompression::Dxt5
+            }
+            DxgiFormat::BC2_Typeless | DxgiFormat::BC2_UNorm | DxgiFormat::BC2_UNorm_sRGB => {
+                DdsCompression::Dxt3
+            }
+            DxgiFormat::BC1_Typeless | DxgiFormat::BC1_UNorm | DxgiFormat::BC1_UNorm_sRGB => {
+                DdsCompression::Dxt1
+            }
+            DxgiFormat::B8G8R8A8_Typeless
+            | DxgiFormat::B8G8R8A8_UNorm
+            | DxgiFormat::B8G8R8A8_UNorm_sRGB
+            | DxgiFormat::B8G8R8X8_Typeless
+            | DxgiFormat::B8G8R8X8_UNorm
+            | DxgiFormat::B8G8R8X8_UNorm_sRGB => DdsCompression::Bgra8888,
+            DxgiFormat::R8G8B8A8_Typeless
+            | DxgiFormat::R8G8B8A8_UNorm
+            | DxgiFormat::R8G8B8A8_UNorm_sRGB
+            | DxgiFormat::R8G8B8A8_UInt
+            | DxgiFormat::R8G8B8A8_SNorm
+            | DxgiFormat::R8G8B8A8_SInt => DdsCompression::Rgba8888,
+            DxgiFormat::A8_UNorm => DdsCompression::A8,
+            DxgiFormat::R8_Typeless
+            | DxgiFormat::R8_UNorm
+            | DxgiFormat::R8_UInt
+            | DxgiFormat::R8_SNorm
+            | DxgiFormat::R8_SInt => DdsCompression::L8,
             _ => DdsCompression::Unknown,
         };
     }
-    if let Some(ref fourcc) = dds.header.spf.fourcc {
-        let s = format!("{fourcc:?}");
-        if s.contains("DXT5") {
-            return DdsCompression::Dxt5;
-        }
-        if s.contains("DXT3") {
-            return DdsCompression::Dxt3;
-        }
-        if s.contains("DXT1") {
-            return DdsCompression::Dxt1;
-        }
+
+    if let Some(d3d) = dds.get_d3d_format() {
+        return match d3d {
+            D3DFormat::DXT5 | D3DFormat::DXT4 => DdsCompression::Dxt5,
+            D3DFormat::DXT3 | D3DFormat::DXT2 => DdsCompression::Dxt3,
+            D3DFormat::DXT1 => DdsCompression::Dxt1,
+            D3DFormat::A8R8G8B8 | D3DFormat::X8R8G8B8 => DdsCompression::Bgra8888,
+            D3DFormat::A8B8G8R8 | D3DFormat::X8B8G8R8 => DdsCompression::Rgba8888,
+            D3DFormat::L8 => DdsCompression::L8,
+            D3DFormat::A8 => DdsCompression::A8,
+            _ => DdsCompression::Unknown,
+        };
     }
-    if dds.header.spf.fourcc.is_none()
-        && let Some(bpp) = dds.header.spf.rgb_bit_count
-        && bpp == 32
-    {
+
+    if let Some(fourcc) = dds.header.spf.fourcc {
+        return match fourcc.0 {
+            FourCC::DXT5 | FourCC::DXT4 => DdsCompression::Dxt5,
+            FourCC::DXT3 | FourCC::DXT2 => DdsCompression::Dxt3,
+            FourCC::DXT1 => DdsCompression::Dxt1,
+            _ => DdsCompression::Unknown,
+        };
+    }
+
+    if dds.header.spf.rgb_bit_count == Some(32) {
         return DdsCompression::Rgba8888;
     }
+
     DdsCompression::Unknown
-}
-
-/// (человекочитаемая метка, эквивалент в DDS) для тега `Format` из .TgPcDx.
-pub fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
-    let u = fmt.to_uppercase();
-    if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
-        return ("DXT5 (BC3, плавная альфа)".into(), Some("DXT5"));
-    }
-    if u.contains("EXPL_ALPHA") || u.contains("DXT3") || u.contains("BC2") {
-        return ("DXT3 (BC2, явная альфа)".into(), Some("DXT3"));
-    }
-    if u.contains("DXT1") || u.contains("BC1") || u.contains("COMPRESSED") {
-        return ("DXT1 (BC1, без альфы / 1-bit альфа)".into(), Some("DXT1"));
-    }
-    if u.contains("8888")
-        || u.contains("ARGB")
-        || u.contains("RGBA")
-        || u.contains("BGRA")
-        || u.contains("UNCOMPRESSED")
-    {
-        return ("RGBA8888 (без сжатия)".into(), Some("RGBA8888"));
-    }
-    if u.contains("L8") || u.contains("A8") {
-        return ("L8 / A8 (8-bit градации серого)".into(), {
-            if u.contains("L8") {
-                Some("L8")
-            } else {
-                Some("A8")
-            }
-        });
-    }
-    (fmt.to_owned(), None)
-}
-
-/// Ожидаемый размер одного уровня мипмапа в байтах.
-pub fn mip_level_bytes(w: u32, h: u32, fmt: DdsCompression) -> Option<usize> {
-    let bw = w.div_ceil(4).max(1) as usize;
-    let bh = h.div_ceil(4).max(1) as usize;
-    match fmt {
-        DdsCompression::Dxt1 => Some(bw * bh * 8),
-        DdsCompression::Dxt3 | DdsCompression::Dxt5 => Some(bw * bh * 16),
-        DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => {
-            Some((w as usize) * (h as usize) * 4)
-        }
-        DdsCompression::L8 | DdsCompression::A8 => Some((w as usize) * (h as usize)),
-        DdsCompression::Unknown => None,
-    }
-}
-
-/// DDS format to TgPcDx format string.
-pub fn dds_format_to_tgpcdx(dds: &ddsfile::Dds) -> String {
-    if let Some(ref fourcc) = dds.header.spf.fourcc {
-        let s = format!("{:?}", fourcc);
-        if s.contains("DXT5") {
-            return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".into();
-        }
-        if s.contains("DXT3") {
-            return "HC_IMAGE_FORMAT_COMPRESSED_EXPL_ALPHA".into();
-        }
-        if s.contains("DXT1") {
-            return "HC_IMAGE_FORMAT_COMPRESSED".into();
-        }
-    }
-    if let Some(d3d) = dds.get_d3d_format() {
-        match d3d {
-            ddsfile::D3DFormat::DXT5 => return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".into(),
-            ddsfile::D3DFormat::DXT3 => return "HC_IMAGE_FORMAT_COMPRESSED_EXPL_ALPHA".into(),
-            ddsfile::D3DFormat::DXT1 => return "HC_IMAGE_FORMAT_COMPRESSED".into(),
-            ddsfile::D3DFormat::A8R8G8B8
-            | ddsfile::D3DFormat::A8B8G8R8
-            | ddsfile::D3DFormat::X8R8G8B8
-            | ddsfile::D3DFormat::X8B8G8R8 => return "HC_IMAGE_FORMAT_8888".into(),
-            ddsfile::D3DFormat::L8 => return "HC_IMAGE_FORMAT_L8".into(),
-            ddsfile::D3DFormat::A8 => return "HC_IMAGE_FORMAT_A8".into(),
-            _ => {}
-        }
-    }
-    if let Some(dxgi) = dds.get_dxgi_format() {
-        let s = format!("{:?}", dxgi);
-        if s.contains("BC3") {
-            return "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA".into();
-        }
-        if s.contains("BC2") {
-            return "HC_IMAGE_FORMAT_COMPRESSED_EXPL_ALPHA".into();
-        }
-        if s.contains("BC1") {
-            return "HC_IMAGE_FORMAT_COMPRESSED".into();
-        }
-        if s.contains("R8G8B8A8")
-            || s.contains("B8G8R8A8")
-            || s.contains("R8G8B8X8")
-            || s.contains("B8G8R8X8")
-        {
-            return "HC_IMAGE_FORMAT_8888".into();
-        }
-        if s.contains("A8_UNORM") {
-            return "HC_IMAGE_FORMAT_A8".into();
-        }
-        if s.contains("R8_UNORM") || s.contains("L8_UNORM") {
-            return "HC_IMAGE_FORMAT_L8".into();
-        }
-    }
-    // Uncompressed heuristic: if no fourcc/DXT and pitch is 4 bytes per pixel.
-    if dds.header.spf.fourcc.is_none() {
-        let bpp = dds.header.spf.rgb_bit_count;
-        if bpp == Some(32) {
-            return "HC_IMAGE_FORMAT_8888".into();
-        }
-    }
-    "HC_IMAGE_FORMAT_COMPRESSED".into()
-}
-
-/// TgPcDx format string to D3D format for DDS export.
-pub fn tgpcdx_format_to_d3d(fmt: &str) -> ddsfile::D3DFormat {
-    let u = fmt.to_uppercase();
-    if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
-        return ddsfile::D3DFormat::DXT5;
-    }
-    if u.contains("EXPL_ALPHA") || u.contains("DXT3") || u.contains("BC2") {
-        return ddsfile::D3DFormat::DXT3;
-    }
-    if u.contains("DXT1") || u.contains("BC1") || u.contains("COMPRESSED") {
-        return ddsfile::D3DFormat::DXT1;
-    }
-    if u.contains("BGRA") {
-        return ddsfile::D3DFormat::A8R8G8B8;
-    }
-    if u.contains("RGBA") || u.contains("ARGB") {
-        return ddsfile::D3DFormat::A8B8G8R8;
-    }
-    if u.contains("L8") {
-        return ddsfile::D3DFormat::L8;
-    }
-    if u.contains("A8") {
-        return ddsfile::D3DFormat::A8;
-    }
-    if u.contains("8888") {
-        return ddsfile::D3DFormat::A8B8G8R8;
-    }
-    ddsfile::D3DFormat::DXT1
-}
-
-/// Expected mip size for validation during DDS export.
-pub fn expected_mip_size(w: u32, h: u32, fmt: ddsfile::D3DFormat) -> usize {
-    match fmt {
-        ddsfile::D3DFormat::DXT1
-        | ddsfile::D3DFormat::DXT2
-        | ddsfile::D3DFormat::DXT3
-        | ddsfile::D3DFormat::DXT4
-        | ddsfile::D3DFormat::DXT5 => {
-            let bw = (w as usize).div_ceil(4);
-            let bh = (h as usize).div_ceil(4);
-            let block = if matches!(fmt, ddsfile::D3DFormat::DXT1) {
-                8
-            } else {
-                16
-            };
-            bw.max(1) * bh.max(1) * block
-        }
-        ddsfile::D3DFormat::A8 | ddsfile::D3DFormat::L8 | ddsfile::D3DFormat::A4L4 => {
-            (w as usize) * (h as usize)
-        }
-        ddsfile::D3DFormat::R5G6B5
-        | ddsfile::D3DFormat::A1R5G5B5
-        | ddsfile::D3DFormat::X1R5G5B5
-        | ddsfile::D3DFormat::A4R4G4B4
-        | ddsfile::D3DFormat::X4R4G4B4
-        | ddsfile::D3DFormat::A8L8
-        | ddsfile::D3DFormat::L16 => (w as usize) * (h as usize) * 2,
-        _ => (w as usize) * (h as usize) * 4,
-    }
 }
 
 /// DdsCompression from TgPcDx format string.
 pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
-    let u = fmt.to_uppercase();
+    let u = fmt.to_ascii_uppercase();
     if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
         return DdsCompression::Dxt5;
     }
@@ -272,7 +105,14 @@ pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
     if u.contains("COMPRESSED") || u.contains("DXT1") || u.contains("BC1") {
         return DdsCompression::Dxt1;
     }
-    if u.contains("8888") || u.contains("RGBA") || u.contains("BGRA") || u.contains("ARGB") {
+    if u.contains("BGRA") {
+        return DdsCompression::Bgra8888;
+    }
+    if u.contains("8888")
+        || u.contains("RGBA")
+        || u.contains("ARGB")
+        || u.contains("UNCOMPRESSED")
+    {
         return DdsCompression::Rgba8888;
     }
     if u.contains("L8") {
@@ -282,6 +122,89 @@ pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
         return DdsCompression::A8;
     }
     DdsCompression::Unknown
+}
+
+/// (человекочитаемая метка, эквивалент в DDS) для тега `Format` из .TgPcDx.
+pub fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
+    match tgpcdx_dds_compression(fmt) {
+        DdsCompression::Dxt5 => ("DXT5 (BC3, плавная альфа)".into(), Some("DXT5")),
+        DdsCompression::Dxt3 => ("DXT3 (BC2, явная альфа)".into(), Some("DXT3")),
+        DdsCompression::Dxt1 => ("DXT1 (BC1, без альфы / 1-bit альфа)".into(), Some("DXT1")),
+        DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => {
+            ("RGBA8888 (без сжатия)".into(), Some("RGBA8888"))
+        }
+        DdsCompression::L8 => ("L8 / A8 (8-bit градации серого)".into(), Some("L8")),
+        DdsCompression::A8 => ("L8 / A8 (8-bit градации серого)".into(), Some("A8")),
+        DdsCompression::Unknown => (fmt.to_owned(), None),
+    }
+}
+
+/// Ожидаемый размер одного уровня мипмапа в байтах.
+pub fn mip_level_bytes(w: u32, h: u32, fmt: DdsCompression) -> Option<usize> {
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let bw = w.div_ceil(4) as usize;
+    let bh = h.div_ceil(4) as usize;
+    match fmt {
+        DdsCompression::Dxt1 => bw.checked_mul(bh)?.checked_mul(8),
+        DdsCompression::Dxt3 | DdsCompression::Dxt5 => bw.checked_mul(bh)?.checked_mul(16),
+        DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => {
+            (w as usize).checked_mul(h as usize)?.checked_mul(4)
+        }
+        DdsCompression::L8 | DdsCompression::A8 => (w as usize).checked_mul(h as usize),
+        DdsCompression::Unknown => None,
+    }
+}
+
+/// DDS format to TgPcDx format string.
+pub fn dds_format_to_tgpcdx(dds: &Dds) -> String {
+    match dds_compression_of(dds) {
+        DdsCompression::Dxt5 => "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA",
+        DdsCompression::Dxt3 => "HC_IMAGE_FORMAT_COMPRESSED_EXPL_ALPHA",
+        DdsCompression::Dxt1 | DdsCompression::Unknown => "HC_IMAGE_FORMAT_COMPRESSED",
+        DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => "HC_IMAGE_FORMAT_8888",
+        DdsCompression::L8 => "HC_IMAGE_FORMAT_L8",
+        DdsCompression::A8 => "HC_IMAGE_FORMAT_A8",
+    }
+    .into()
+}
+
+/// TgPcDx format string to D3D format for DDS export.
+pub fn tgpcdx_format_to_d3d(fmt: &str) -> D3DFormat {
+    match tgpcdx_dds_compression(fmt) {
+        DdsCompression::Dxt5 => D3DFormat::DXT5,
+        DdsCompression::Dxt3 => D3DFormat::DXT3,
+        DdsCompression::Dxt1 | DdsCompression::Unknown => D3DFormat::DXT1,
+        DdsCompression::Bgra8888 => D3DFormat::A8R8G8B8,
+        DdsCompression::Rgba8888 => D3DFormat::A8B8G8R8,
+        DdsCompression::L8 => D3DFormat::L8,
+        DdsCompression::A8 => D3DFormat::A8,
+    }
+}
+
+/// Expected mip size for validation during DDS export.
+pub fn expected_mip_size(w: u32, h: u32, fmt: D3DFormat) -> usize {
+    if w == 0 || h == 0 {
+        return 0;
+    }
+    match fmt {
+        D3DFormat::DXT1 | D3DFormat::DXT2 | D3DFormat::DXT3 | D3DFormat::DXT4 | D3DFormat::DXT5 => {
+            let bw = w.div_ceil(4) as usize;
+            let bh = h.div_ceil(4) as usize;
+            let block = if fmt == D3DFormat::DXT1 { 8 } else { 16 };
+            bw.saturating_mul(bh).saturating_mul(block)
+        }
+        D3DFormat::A8 | D3DFormat::L8 | D3DFormat::A4L4 => (w as usize).saturating_mul(h as usize),
+        D3DFormat::R5G6B5
+        | D3DFormat::A1R5G5B5
+        | D3DFormat::X1R5G5B5
+        | D3DFormat::A4R4G4B4
+        | D3DFormat::X4R4G4B4
+        | D3DFormat::A8L8
+        | D3DFormat::L16 => (w as usize).saturating_mul(h as usize).saturating_mul(2),
+        _ => (w as usize).saturating_mul(h as usize).saturating_mul(4),
+    }
 }
 
 /// Результат проверки цепочки мипмапов .dds.
@@ -313,6 +236,9 @@ pub fn validate_dds_mip_chain(
     if fmt == DdsCompression::Unknown {
         return Err("неизвестный формат сжатия DDS".into());
     }
+    if width == 0 || height == 0 {
+        return Err("некорректные размеры DDS".into());
+    }
     if declared_levels == 0 {
         return Err("в DDS-файле не объявлено ни одного уровня мипмапов".into());
     }
@@ -325,8 +251,7 @@ pub fn validate_dds_mip_chain(
             _ => "уровней",
         };
         return Err(format!(
-            "В DDS-файле {} {} мипмапов, ожидается {}. Включите генерацию MipMaps при сохранении DDS",
-            declared_levels, level_word, expected
+            "В DDS-файле {declared_levels} {level_word} мипмапов, ожидается {expected}. Включите генерацию MipMaps при сохранении DDS"
         ));
     }
 
