@@ -14,7 +14,6 @@ use crate::common::domain::MissingAsset;
 use crate::common::domain::TileKind;
 use crate::common::external_editor::open_and_sync_with_vscode;
 use crate::common::windows::open_in_explorer;
-use crate::common::windows::open_in_file_explorer;
 use crate::schedule_ui_sync;
 
 pub struct InventoryController {
@@ -157,7 +156,7 @@ impl InventoryController {
                     if full.exists() {
                         open_in_explorer(&full);
                     } else if let Some(target) = existing_directory_upwards(&full) {
-                        open_in_file_explorer(&target);
+                        open_in_explorer(&target);
                     }
                 }
                 #[cfg(not(windows))]

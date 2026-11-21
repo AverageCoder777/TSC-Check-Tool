@@ -585,7 +585,7 @@ fn main() {
             let Some(path) = path else {
                 return;
             };
-            common::windows::open_in_file_explorer(&path);
+            common::windows::open_in_explorer(&path);
             if let Some(ui) = ui_weak_open.upgrade() {
                 log_event(
                     &ui,

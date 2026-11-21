@@ -357,7 +357,7 @@ impl ScenarioController {
                         LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
-                    open_in_file_explorer(&scenario.path);
+                    open_in_explorer(&scenario.path);
                 }
             });
         }
@@ -614,7 +614,7 @@ impl ScenarioController {
                             }
                         }
                         #[cfg(windows)]
-                        open_in_file_explorer(cur);
+                        open_in_explorer(cur);
                     }
                 } else {
                     app.log_event(
@@ -686,7 +686,7 @@ impl ScenarioController {
                             }
                         }
                         #[cfg(windows)]
-                        open_in_file_explorer(cur);
+                        open_in_explorer(cur);
                     }
                 } else {
                     let provider = vehicle.provider.clone();
