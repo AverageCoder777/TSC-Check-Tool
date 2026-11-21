@@ -1,7 +1,8 @@
-use std::fs;
+use std::fs::{self, DirEntry};
 use std::path::{Path, PathBuf};
 
-use crate::common::translit::*;
+use crate::common::translit::BROKEN_CHARACTERS;
+
 /// Буквы, которые выглядят одинаково, но различаются кодом.
 ///
 /// В именах файлов игры встречается кириллическая «Е» вместо латинской: такой
@@ -56,9 +57,12 @@ pub(crate) const HOMOGLYPHS: [(char, char); 45] = [
 
 /// Являются ли две буквы похожими начертанием.
 pub(crate) fn is_homoglyph(left: char, right: char) -> bool {
-    HOMOGLYPHS.iter().any(|(first, second)| {
-        (*first == left && *second == right) || (*first == right && *second == left)
-    })
+    let (cyrillic, ascii) = match (left.is_ascii(), right.is_ascii()) {
+        (false, true) => (left, right),
+        (true, false) => (right, left),
+        _ => return false,
+    };
+    homoglyph_ascii(cyrillic) == Some(ascii)
 }
 
 /// Совпадают ли имена, если считать похожие буквы одинаковыми.
@@ -66,27 +70,30 @@ pub(crate) fn is_homoglyph(left: char, right: char) -> bool {
 /// Отличаться могут только буквы-«двойники» и испорченные символы: любые другие
 /// различия означают, что это другой файл.
 pub(crate) fn names_match(expected: &str, candidate: &str) -> bool {
-    if expected.chars().count() != candidate.chars().count() {
-        return false;
+    let mut left_chars = expected.chars();
+    let mut right_chars = candidate.chars();
+    loop {
+        match (left_chars.next(), right_chars.next()) {
+            (Some(left), Some(right)) => {
+                let matched = left == right
+                    || left.eq_ignore_ascii_case(&right)
+                    || BROKEN_CHARACTERS.contains(&left)
+                    || BROKEN_CHARACTERS.contains(&right)
+                    || is_homoglyph(left, right);
+                if !matched {
+                    return false;
+                }
+            }
+            (None, None) => return true,
+            _ => return false,
+        }
     }
-    expected
-        .chars()
-        .zip(candidate.chars())
-        .all(|(left, right)| {
-            left == right
-                || left.eq_ignore_ascii_case(&right)
-                || BROKEN_CHARACTERS.contains(&left)
-                || BROKEN_CHARACTERS.contains(&right)
-                || is_homoglyph(left, right)
-        })
 }
 
 pub(crate) fn has_corrupted_or_nonascii(value: &str) -> bool {
-    !value.is_ascii()
-        || has_broken_character(value)
-        || value.chars().any(|character| {
-            matches!(character, '\u{FFFD}' | '?' | '¦' | '¢') || character.is_control()
-        })
+    value
+        .bytes()
+        .any(|byte| !byte.is_ascii() || byte == b'?' || byte.is_ascii_control())
 }
 
 /// Ищет файл ассета по ссылке из маршрута.
@@ -98,20 +105,20 @@ pub(crate) fn has_corrupted_or_nonascii(value: &str) -> bool {
 pub(crate) const GLITCH_WILDCARD: char = '\u{E000}';
 
 pub(crate) fn normalize_fuzzy_segment(value: &str) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(value.len());
     for ch in value.chars() {
         if ch.is_alphanumeric() || ch == '_' {
             let folded = match ch {
-                'ä' | 'Ä' | 'á' | 'à' | 'â' | 'ã' | 'å' => 'a',
-                'ö' | 'Ö' | 'ó' | 'ò' | 'ô' | 'õ' => 'o',
-                'ü' | 'Ü' | 'ú' | 'ù' | 'û' => 'u',
-                'é' | 'è' | 'ê' | 'ë' => 'e',
-                'í' | 'ì' | 'î' | 'ï' => 'i',
-                'ß' => 's',
+                'ä' | 'Ä' | 'á' | 'Á' | 'à' | 'À' | 'â' | 'Â' | 'ã' | 'Ã' | 'å' | 'Å' => 'a',
+                'ö' | 'Ö' | 'ó' | 'Ó' | 'ò' | 'Ò' | 'ô' | 'Ô' | 'õ' | 'Õ' => 'o',
+                'ü' | 'Ü' | 'ú' | 'Ú' | 'ù' | 'Ù' | 'û' | 'Û' => 'u',
+                'é' | 'É' | 'è' | 'È' | 'ê' | 'Ê' | 'ë' | 'Ë' => 'e',
+                'í' | 'Í' | 'ì' | 'Ì' | 'î' | 'Î' | 'ï' | 'Ï' => 'i',
+                'ß' | 'ẞ' => 's',
                 _ => ch.to_ascii_lowercase(),
             };
             out.push(folded);
-        } else if matches!(ch, '¦' | '|' | '\u{FFFD}' | '?') {
+        } else if matches!(ch, '¦' | '|' | '?') || BROKEN_CHARACTERS.contains(&ch) {
             out.push(GLITCH_WILDCARD);
         }
     }
@@ -122,25 +129,8 @@ pub(crate) fn fold_german_diphthongs(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut chars = value.chars().peekable();
     while let Some(ch) = chars.next() {
-        if let Some(next) = chars.peek().copied() {
-            match (ch, next) {
-                ('a', 'e') => {
-                    out.push('a');
-                    chars.next();
-                    continue;
-                }
-                ('o', 'e') => {
-                    out.push('o');
-                    chars.next();
-                    continue;
-                }
-                ('u', 'e') => {
-                    out.push('u');
-                    chars.next();
-                    continue;
-                }
-                _ => {}
-            }
+        if matches!(ch, 'a' | 'o' | 'u') && chars.peek() == Some(&'e') {
+            chars.next();
         }
         out.push(ch);
     }
@@ -148,55 +138,21 @@ pub(crate) fn fold_german_diphthongs(value: &str) -> String {
 }
 
 pub(crate) fn glitch_match(query: &[char], candidate: &[char]) -> bool {
-    if query.is_empty() {
-        return candidate.is_empty();
+    let wildcards = query.iter().filter(|&&ch| ch == GLITCH_WILDCARD).count();
+    let Some(extra_budget) = candidate.len().checked_sub(query.len()) else {
+        return false;
+    };
+    if extra_budget > wildcards {
+        return false;
     }
-    if query[0] == GLITCH_WILDCARD {
-        for extra in 1..=2 {
-            if candidate.len() >= extra && glitch_match(&query[1..], &candidate[extra..]) {
-                return true;
-            }
-        }
-        false
-    } else {
-        !candidate.is_empty()
-            && query[0] == candidate[0]
-            && glitch_match(&query[1..], &candidate[1..])
-    }
+    glitch_match_inner(query, candidate, extra_budget, wildcards)
 }
 
 pub(crate) fn fuzzy_match_name(query: &str, candidate: &str) -> bool {
-    let query_digits: String = query
-        .chars()
-        .filter(|character| character.is_ascii_digit())
-        .collect();
-    let candidate_digits: String = candidate
-        .chars()
-        .filter(|character| character.is_ascii_digit())
-        .collect();
-    if query_digits != candidate_digits {
+    if !ascii_digits_equal(query, candidate) {
         return false;
     }
-
-    let left = normalize_fuzzy_segment(query);
-    let right_raw = normalize_fuzzy_segment(candidate);
-    if left.is_empty() || right_raw.is_empty() {
-        return false;
-    }
-
-    let has_glitch = left.contains(GLITCH_WILDCARD);
-    if !has_glitch {
-        // Clean path: exact normalized equality only.
-        return left == right_raw;
-    }
-
-    // Glitch tolerance: allow 1-2 characters in the candidate at the glitch
-    // position. Try both raw and diphthong-folded candidate forms.
-    let right_folded = fold_german_diphthongs(&right_raw);
-    let left_chars: Vec<char> = left.chars().collect();
-    let right_raw_chars: Vec<char> = right_raw.chars().collect();
-    let right_folded_chars: Vec<char> = right_folded.chars().collect();
-    glitch_match(&left_chars, &right_raw_chars) || glitch_match(&left_chars, &right_folded_chars)
+    PreparedFuzzyQuery::new(query).is_some_and(|prepared| prepared.matches(candidate))
 }
 
 pub(crate) fn find_fuzzy_child(
@@ -204,75 +160,230 @@ pub(crate) fn find_fuzzy_child(
     query: &str,
     want_directory: bool,
 ) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(entries) = fs::read_dir(parent) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() != want_directory {
-                continue;
-            }
-            let Some(name) = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-            else {
-                continue;
-            };
-            if fuzzy_match_name(query, &name) {
-                candidates.push(path);
-            }
+    let prepared = PreparedFuzzyQuery::new(query)?;
+    let entries = fs::read_dir(parent).ok()?;
+    let mut fallback = None;
+
+    for entry in entries.flatten() {
+        if entry_is_dir(&entry) != want_directory {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        if !prepared.matches(&name) {
+            continue;
+        }
+        if name.is_ascii() {
+            return Some(entry.path());
+        }
+        if fallback.is_none() {
+            fallback = Some(entry.path());
         }
     }
-    candidates
-        .iter()
-        .find(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().is_ascii())
-                .unwrap_or(false)
-        })
-        .cloned()
-        .or_else(|| candidates.into_iter().next())
+    fallback
 }
 
 pub(crate) fn fuzzy_resolve_disk_path(
     assets_path: &Path,
     relative_asset: &str,
 ) -> Option<(PathBuf, String)> {
-    let normalized = relative_asset.replace('\\', "/");
-    let parts: Vec<&str> = normalized
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect();
-    if parts.len() < 3 {
+    let mut parts = relative_asset
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty());
+    let provider = parts.next()?;
+    let product = parts.next()?;
+    let relative_segments: Vec<&str> = parts.collect();
+    if relative_segments.is_empty() {
         return None;
     }
-    let mut current = assets_path.join(parts[0]).join(parts[1]);
-    if !current.is_dir() {
-        current = find_fuzzy_child(assets_path, parts[0], true)?.join(parts[1]);
-        if !current.is_dir() {
-            return None;
-        }
-    }
-    let relative_segments = &parts[2..];
-    let last_index = relative_segments.len().saturating_sub(1);
-    let mut matched_segments = Vec::new();
+
+    let (provider_dir, provider_name) = resolve_segment(assets_path, provider, true)?;
+    let (mut current, product_name) = resolve_segment(&provider_dir, product, true)?;
+
+    let last_index = relative_segments.len() - 1;
+    let mut matched_segments = Vec::with_capacity(relative_segments.len());
     for (index, segment) in relative_segments.iter().enumerate() {
-        if index == last_index {
-            let matched = find_fuzzy_child(&current, segment, false)?;
-            let name = matched
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())?;
-            matched_segments.push(name);
-            let disk_path = matched;
-            let relative_repair =
-                format!("{}/{}/{}", parts[0], parts[1], matched_segments.join("/"));
-            return Some((disk_path, relative_repair));
-        }
-        let matched = find_fuzzy_child(&current, segment, true)?;
-        let name = matched
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())?;
+        let want_directory = index != last_index;
+        let (matched, name) = resolve_segment(&current, segment, want_directory)?;
         matched_segments.push(name);
         current = matched;
     }
-    None
+
+    let relative_repair = format!(
+        "{provider_name}/{product_name}/{}",
+        matched_segments.join("/")
+    );
+    Some((current, relative_repair))
+}
+
+struct PreparedFuzzyQuery<'a> {
+    raw: &'a str,
+    normalized: String,
+    chars: Vec<char>,
+    has_glitch: bool,
+}
+
+impl<'a> PreparedFuzzyQuery<'a> {
+    fn new(query: &'a str) -> Option<Self> {
+        let normalized = normalize_fuzzy_segment(query);
+        if normalized.is_empty() {
+            return None;
+        }
+        let has_glitch = normalized.contains(GLITCH_WILDCARD);
+        let chars = if has_glitch {
+            normalized.chars().collect()
+        } else {
+            Vec::new()
+        };
+        Some(Self {
+            raw: query,
+            normalized,
+            chars,
+            has_glitch,
+        })
+    }
+
+    fn matches(&self, candidate: &str) -> bool {
+        if !ascii_digits_equal(self.raw, candidate) {
+            return false;
+        }
+        let right_raw = normalize_fuzzy_segment(candidate);
+        if right_raw.is_empty() {
+            return false;
+        }
+        if !self.has_glitch {
+            // Clean path: exact normalized equality only.
+            return self.normalized == right_raw;
+        }
+
+        // Glitch tolerance: allow 1-2 characters in the candidate at the glitch
+        // position. Try both raw and diphthong-folded candidate forms.
+        let right_raw_chars: Vec<char> = right_raw.chars().collect();
+        if glitch_match(&self.chars, &right_raw_chars) {
+            return true;
+        }
+        let right_folded = fold_german_diphthongs(&right_raw);
+        if right_folded == right_raw {
+            return false;
+        }
+        let right_folded_chars: Vec<char> = right_folded.chars().collect();
+        glitch_match(&self.chars, &right_folded_chars)
+    }
+}
+
+fn resolve_segment(parent: &Path, segment: &str, want_directory: bool) -> Option<(PathBuf, String)> {
+    if !has_corrupted_or_nonascii(segment) {
+        let direct = parent.join(segment);
+        let matches_type = if want_directory {
+            direct.is_dir()
+        } else {
+            direct.is_file()
+        };
+        if matches_type {
+            return Some((direct, segment.to_owned()));
+        }
+    }
+    let matched = find_fuzzy_child(parent, segment, want_directory)?;
+    let name = matched.file_name()?.to_string_lossy().into_owned();
+    Some((matched, name))
+}
+
+fn entry_is_dir(entry: &DirEntry) -> bool {
+    entry.file_type().map_or_else(
+        |_| entry.path().is_dir(),
+        |file_type| {
+            if file_type.is_symlink() {
+                entry.path().is_dir()
+            } else {
+                file_type.is_dir()
+            }
+        },
+    )
+}
+
+fn ascii_digits_equal(left: &str, right: &str) -> bool {
+    left.bytes()
+        .filter(u8::is_ascii_digit)
+        .eq(right.bytes().filter(u8::is_ascii_digit))
+}
+
+fn glitch_match_inner(
+    mut query: &[char],
+    mut candidate: &[char],
+    extra_budget: usize,
+    wildcards: usize,
+) -> bool {
+    loop {
+        if extra_budget > wildcards || candidate.len() < query.len() {
+            return false;
+        }
+        let Some((&first, rest_query)) = query.split_first() else {
+            return candidate.is_empty();
+        };
+        if first == GLITCH_WILDCARD {
+            let next_wildcards = wildcards - 1;
+            if extra_budget <= next_wildcards
+                && glitch_match_inner(rest_query, &candidate[1..], extra_budget, next_wildcards)
+            {
+                return true;
+            }
+            return extra_budget > 0
+                && candidate.len() >= 2
+                && glitch_match_inner(
+                    rest_query,
+                    &candidate[2..],
+                    extra_budget - 1,
+                    next_wildcards,
+                );
+        }
+        let Some((&cand_first, rest_cand)) = candidate.split_first() else {
+            return false;
+        };
+        if first != cand_first {
+            return false;
+        }
+        query = rest_query;
+        candidate = rest_cand;
+    }
+}
+
+fn homoglyph_ascii(character: char) -> Option<char> {
+    let mapped = match character {
+        'а' => 'a',
+        'б' | 'в' | 'ъ' | 'ы' | 'ь' => 'b',
+        'г' | 'я' => 'r',
+        'д' => 'd',
+        'е' | 'ё' | 'э' => 'e',
+        'ж' | 'х' => 'x',
+        'з' => '3',
+        'и' | 'й' | 'ц' => 'u',
+        'к' => 'k',
+        'л' => 'l',
+        'м' => 'm',
+        'н' => 'h',
+        'о' => 'o',
+        'п' => 'n',
+        'р' => 'p',
+        'с' => 'c',
+        'т' => 't',
+        'у' => 'y',
+        'ф' => 'f',
+        'ч' => '4',
+        'ш' | 'щ' => 'w',
+        'ю' => 'i',
+        'А' => 'A',
+        'В' => 'B',
+        'Е' => 'E',
+        'К' => 'K',
+        'М' => 'M',
+        'Н' => 'H',
+        'О' => 'O',
+        'Р' => 'P',
+        'С' => 'C',
+        'Т' => 'T',
+        'У' => 'Y',
+        'Х' => 'X',
+        _ => return None,
+    };
+    Some(mapped)
 }
