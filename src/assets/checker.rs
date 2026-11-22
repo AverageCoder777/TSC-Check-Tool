@@ -2,11 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use rayon::iter::*;
 use regex::Regex;
-use tempfile::tempdir;
 use zip::ZipArchive;
 
 use crate::assets::{
@@ -19,26 +21,14 @@ use crate::common::serz::{SerzNode, SerzReader};
 use crate::common::translit::*;
 
 pub type ApCache = HashMap<PathBuf, HashSet<String>>;
+type ZipCache = HashMap<PathBuf, ZipArchive<fs::File>>;
 
 pub struct FileAnalysis {
-    /// Разбор взят из кэша: файл не менялся с прошлой проверки.
     from_cache: bool,
     file: RouteFile,
     stamp: Option<FileStamp>,
-    /// Сколько раз каждый ассет встречается в файле.
     uses: Vec<(String, u32, AssetKind)>,
     error: Option<String>,
-}
-
-/// Автоматически удаляет временный файл, извлечённый из архива, при выходе из области видимости.
-struct TempFileGuard(Option<PathBuf>);
-
-impl Drop for TempFileGuard {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = fs::remove_file(path);
-        }
-    }
 }
 
 /// Сравнивает имя SERZ-узла с эталоном через `-`, считая `::` эквивалентным `-` (без аллокаций).
@@ -56,74 +46,94 @@ fn name_matches_dash(name: &str, expected_dash: &str) -> bool {
 
 fn analyze_route_file_with_stamp(
     route_file: &RouteFile,
-    temp_dir: &Path,
     stamp: Option<FileStamp>,
+    zip_cache: &mut ZipCache,
 ) -> FileAnalysis {
-    let is_archive = matches!(route_file, RouteFile::Archive { .. });
-    // Запись архива читается через временный файл: конвертеру Serz нужен
-    // настоящий файл на диске.
-    let file_path = match route_file.materialize(temp_dir) {
-        Ok(path) => path,
-        Err(error) => {
-            return FileAnalysis {
-                from_cache: false,
-                file: route_file.clone(),
-                stamp,
-                uses: Vec::new(),
-                error: Some(error),
-            };
-        }
-    };
-    let _guard = TempFileGuard(is_archive.then(|| file_path.clone()));
-
-    let is_binary = file_path
+    let is_binary = route_file
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
 
-    // .bin файлы: разбираем SERZ-дерево напрямую, без сериализации в XML-строку
-    // и без регулярных выражений по тексту.
-    if is_binary {
-        // Проверка размера: слишком маленький BIN не содержит ссылок на ассеты.
-        if fs::metadata(&file_path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0)
-            < 256
-        {
-            return FileAnalysis {
-                from_cache: false,
-                file: route_file.clone(),
-                stamp,
-                uses: Vec::new(),
-                error: None,
-            };
-        }
-        // Serz хранит имена элементов обычными строками, поэтому файл без
-        // `BlueprintID` заведомо не содержит ссылок на ассеты.
-        if !may_contain_asset_reference(&file_path) {
-            return FileAnalysis {
-                from_cache: false,
-                file: route_file.clone(),
-                stamp,
-                uses: Vec::new(),
-                error: None,
-            };
-        }
-        let xml_bytes = match fs::read(&file_path) {
-            Ok(data) => data,
-            Err(error) => {
-                return FileAnalysis {
-                    from_cache: false,
-                    file: route_file.clone(),
-                    stamp,
-                    uses: Vec::new(),
-                    error: Some(format!(
-                        "{}: не удалось прочитать BIN: {error}",
-                        file_path.display()
-                    )),
-                };
+    let bytes = match route_file {
+        RouteFile::Path(file_path) => {
+            if is_binary {
+                if fs::metadata(file_path)
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0)
+                    < 256
+                {
+                    return FileAnalysis {
+                        from_cache: false,
+                        file: route_file.clone(),
+                        stamp,
+                        uses: Vec::new(),
+                        error: None,
+                    };
+                }
+                if !may_contain_asset_reference(file_path) {
+                    return FileAnalysis {
+                        from_cache: false,
+                        file: route_file.clone(),
+                        stamp,
+                        uses: Vec::new(),
+                        error: None,
+                    };
+                }
             }
-        };
-        let mut reader = SerzReader::new(&xml_bytes);
+            match fs::read(file_path) {
+                Ok(data) => data,
+                Err(error) => {
+                    return FileAnalysis {
+                        from_cache: false,
+                        file: route_file.clone(),
+                        stamp,
+                        uses: Vec::new(),
+                        error: Some(format!(
+                            "{}: не удалось прочитать файл: {error}",
+                            file_path.display()
+                        )),
+                    };
+                }
+            }
+        }
+        RouteFile::Archive { archive, name, .. } => {
+            let min_size = is_binary.then_some(256);
+            match read_archive_member_bytes(archive, name, zip_cache, min_size) {
+                Ok(Some(data)) => {
+                    if is_binary && !may_contain_asset_reference_bytes(&data) {
+                        return FileAnalysis {
+                            from_cache: false,
+                            file: route_file.clone(),
+                            stamp,
+                            uses: Vec::new(),
+                            error: None,
+                        };
+                    }
+                    data
+                }
+                Ok(None) => {
+                    return FileAnalysis {
+                        from_cache: false,
+                        file: route_file.clone(),
+                        stamp,
+                        uses: Vec::new(),
+                        error: None,
+                    };
+                }
+                Err(error) => {
+                    return FileAnalysis {
+                        from_cache: false,
+                        file: route_file.clone(),
+                        stamp,
+                        uses: Vec::new(),
+                        error: Some(error),
+                    };
+                }
+            }
+        }
+    };
+
+    if is_binary {
+        let mut reader = SerzReader::new(&bytes);
         let node = match reader.parse() {
             Ok(node) => node,
             Err(error) => {
@@ -132,7 +142,7 @@ fn analyze_route_file_with_stamp(
                     file: route_file.clone(),
                     stamp,
                     uses: Vec::new(),
-                    error: Some(format!("{}: {error}", file_path.display())),
+                    error: Some(format!("{}: {error}", route_file.display())),
                 };
             }
         };
@@ -145,24 +155,7 @@ fn analyze_route_file_with_stamp(
         };
     }
 
-    // .xml файлы: оставляем существующий путь через текстовый XML.
-    let xml_data = match fs::read(&file_path) {
-        Ok(data) => data,
-        Err(error) => {
-            return FileAnalysis {
-                from_cache: false,
-                file: route_file.clone(),
-                stamp,
-                uses: Vec::new(),
-                error: Some(format!(
-                    "{}: не удалось прочитать XML: {error}",
-                    file_path.display()
-                )),
-            };
-        }
-    };
-
-    let xml_text = crate::routes::decode_xml_bytes(&xml_data);
+    let xml_text = crate::routes::decode_xml_bytes(&bytes);
     let references = extract_asset_references_with_locations(&xml_text);
 
     FileAnalysis {
@@ -450,10 +443,6 @@ where
     };
     route_files.sort_by_key(|a| !is_tracks_bin(a));
     let all_files = route_files;
-
-    let temp_dir = tempdir()
-        .map_err(|error| format!("Не удалось создать временную папку для Serz: {error}"))?;
-
     let normal_binary_count = all_files
         .iter()
         .filter(|path| {
@@ -470,40 +459,44 @@ where
         .num_threads(worker_count)
         .build()
         .map_err(|error| format!("Не удалось создать пул проверки файлов: {error}"))?;
-
-    let mut analyses = Vec::with_capacity(all_files.len());
     let mut cache = AnalysisCache::load(route_path);
-    for (chunk_index, chunk) in all_files.chunks(32).enumerate() {
-        let start_index = chunk_index * 32;
+    let total_files = all_files.len();
+    let processed = AtomicUsize::new(0);
+
+    if total_files > 0 {
         report_progress(&format!(
-            "Анализ файлов: {} из {}; параллельных Serz-процессов: {}...",
-            start_index + 1,
-            all_files.len(),
-            worker_count
+            "Анализ файлов: 1 из {total_files}; параллельных Serz-процессов: {worker_count}...",
         ));
-        let chunk_analyses: Vec<FileAnalysis> = pool.install(|| {
-            chunk
-                .par_iter()
-                .map(|route_file| {
-                    let name = route_file.route_name(route_path);
-                    let stamp = route_file.stamp();
-                    if let (Some(name), Some(stamp)) = (&name, stamp)
-                        && let Some(cached) = cache.get(name, stamp)
-                    {
-                        return FileAnalysis {
-                            from_cache: true,
-                            file: route_file.clone(),
-                            stamp: Some(stamp),
-                            uses: cached.uses.clone(),
-                            error: None,
-                        };
-                    }
-                    analyze_route_file_with_stamp(route_file, temp_dir.path(), stamp)
-                })
-                .collect()
-        });
-        analyses.extend(chunk_analyses);
     }
+
+    let analyses: Vec<FileAnalysis> = pool.install(|| {
+        all_files
+            .par_iter()
+            .map_init(ZipCache::new, |zip_cache, route_file| {
+                let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                if done % 32 == 0 || done == total_files {
+                    report_progress(&format!(
+                        "Анализ файлов: {done} из {total_files}; параллельных Serz-процессов: {worker_count}...",
+                    ));
+                }
+
+                let name = route_file.route_name(route_path);
+                let stamp = route_file.stamp();
+                if let (Some(name), Some(stamp)) = (&name, stamp)
+                    && let Some(cached) = cache.get(name, stamp)
+                {
+                    return FileAnalysis {
+                        from_cache: true,
+                        file: route_file.clone(),
+                        stamp: Some(stamp),
+                        uses: cached.uses.clone(),
+                        error: None,
+                    };
+                }
+                analyze_route_file_with_stamp(route_file, stamp, zip_cache)
+            })
+            .collect()
+    });
 
     let mut asset_uses: HashMap<String, Vec<AssetUse>> = HashMap::new();
     // Написание пути, как оно встретилось в маршруте: ключ в asset_uses приведён
@@ -684,19 +677,13 @@ fn route_properties_exists(route_path: &Path) -> bool {
         let Ok(file) = fs::File::open(&path) else {
             continue;
         };
-        let Ok(mut archive) = ZipArchive::new(file) else {
+        let Ok(archive) = ZipArchive::new(file) else {
             continue;
         };
-        for index in 0..archive.len() {
-            let Ok(member) = archive.by_index(index) else {
-                continue;
-            };
-            if !member.is_file() {
+        for raw_name in archive.file_names().flatten() {
+            if raw_name.ends_with(['/', '\\']) {
                 continue;
             }
-            let Ok(raw_name) = member.name() else {
-                continue;
-            };
             let base = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
             if base.eq_ignore_ascii_case("RouteProperties.xml") {
                 return true;
@@ -728,25 +715,26 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
         let Ok(mut archive) = ZipArchive::new(file) else {
             continue;
         };
-        for index in 0..archive.len() {
-            let Ok(mut member) = archive.by_index(index) else {
-                continue;
-            };
-            if !member.is_file() {
-                continue;
-            }
-            let Ok(raw_name) = member.name() else {
-                continue;
-            };
-            let base = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
-            if !base.eq_ignore_ascii_case("RouteProperties.xml") {
-                continue;
-            }
+        let found_name = archive
+            .file_names()
+            .flatten()
+            .find(|raw_name| {
+                !raw_name.ends_with(['/', '\\'])
+                    && raw_name
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or_default()
+                        .eq_ignore_ascii_case("RouteProperties.xml")
+            })
+            .map(|name| name.into_owned());
+
+        if let Some(member_name) = found_name
+            && let Ok(mut member) = archive.by_name(&member_name)
+        {
             let mut bytes = Vec::new();
-            if member.read_to_end(&mut bytes).is_err() {
-                continue;
+            if member.read_to_end(&mut bytes).is_ok() {
+                return Ok(crate::routes::decode_xml_bytes(&bytes));
             }
-            return Ok(crate::routes::decode_xml_bytes(&bytes));
         }
     }
     Err("RouteProperties.xml не найден".to_owned())
@@ -1022,4 +1010,58 @@ pub(crate) fn resolve_missing_and_corrupted(
     missing_assets.sort_by(|left, right| left.path.cmp(&right.path));
     asset_inventory.sort_by(|left, right| left.path.cmp(&right.path));
     (missing_assets, asset_inventory)
+}
+
+fn may_contain_asset_reference_bytes(bytes: &[u8]) -> bool {
+    let marker = BLUEPRINT_ID_MARKER.as_bytes();
+    marker.is_empty() || memchr::memmem::find(bytes, marker).is_some()
+}
+
+fn read_archive_member_bytes(
+    archive_path: &Path,
+    member_name: &str,
+    zip_cache: &mut ZipCache,
+    skip_if_smaller_than: Option<u64>,
+) -> Result<Option<Vec<u8>>, String> {
+    let zip = match zip_cache.entry(archive_path.to_path_buf()) {
+        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            let file = fs::File::open(archive_path).map_err(|error| {
+                format!(
+                    "Не удалось открыть архив {}: {error}",
+                    archive_path.display()
+                )
+            })?;
+            let archive = ZipArchive::new(file).map_err(|error| {
+                format!(
+                    "Не удалось прочитать архив {}: {error}",
+                    archive_path.display()
+                )
+            })?;
+            entry.insert(archive)
+        }
+    };
+
+    // collect_archive_members сохраняет точное имя записи из архива, поэтому by_name работает за O(1).
+    let mut member = zip.by_name(member_name).map_err(|error| {
+        format!(
+            "Не удалось найти {member_name} в {}: {error}",
+            archive_path.display()
+        )
+    })?;
+
+    if let Some(min_size) = skip_if_smaller_than
+        && member.size() < min_size
+    {
+        return Ok(None);
+    }
+
+    let mut bytes = Vec::with_capacity(member.size().min(64 * 1024 * 1024) as usize);
+    member.read_to_end(&mut bytes).map_err(|error| {
+        format!(
+            "Не удалось прочитать {member_name} из {}: {error}",
+            archive_path.display()
+        )
+    })?;
+    Ok(Some(bytes))
 }
