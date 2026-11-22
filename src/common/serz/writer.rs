@@ -167,9 +167,10 @@ impl<W: Write> SerzWriter<W> {
             return None;
         }
         let mut res = [0u8; 8];
-        for (dst, pair) in res.iter_mut().zip(bytes.chunks_exact(2)) {
-            let hi = (pair[0] as char).to_digit(16)?;
-            let lo = (pair[1] as char).to_digit(16)?;
+        let (pairs, _) = bytes.as_chunks::<2>();
+        for (dst, &[hi, lo]) in res.iter_mut().zip(pairs) {
+            let hi = (hi as char).to_digit(16)?;
+            let lo = (lo as char).to_digit(16)?;
             *dst = ((hi << 4) | lo) as u8;
         }
         Some(res)

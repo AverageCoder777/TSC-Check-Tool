@@ -708,10 +708,7 @@ impl CheckerApp {
     }
 
     fn poll_check_messages(&mut self) {
-        loop {
-            let Some(rx) = self.check.as_ref() else {
-                break;
-            };
+        while let Some(rx) = self.check.as_ref() {
             let check_message = match rx.try_recv() {
                 Ok(message) => Ok(message),
                 Err(TryRecvError::Disconnected) => {

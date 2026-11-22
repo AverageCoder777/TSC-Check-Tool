@@ -474,7 +474,7 @@ where
             .par_iter()
             .map_init(ZipCache::new, |zip_cache, route_file| {
                 let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
-                if done % 32 == 0 || done == total_files {
+                if done.is_multiple_of(32) || done == total_files {
                     report_progress(&format!(
                         "Анализ файлов: {done} из {total_files}; параллельных Serz-процессов: {worker_count}...",
                     ));
