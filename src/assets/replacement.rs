@@ -91,7 +91,7 @@ where
     F: FnMut(&mut SerzNode, &str, &str, &str) -> usize,
 {
     let (provider, product, blueprint) = asset_blueprint_ref(asset_path);
-    let source_files = collect_and_validate_source_files(route_path, uses, "удаления")?;
+    let source_files = collect_and_validate_source_files(route_path, uses, "deletions")?;
 
     let mut staged = Vec::new();
     let mut removed_instances = 0usize;

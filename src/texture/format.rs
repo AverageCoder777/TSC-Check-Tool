@@ -24,7 +24,7 @@ impl DdsCompression {
             Self::Rgba8888 | Self::Bgra8888 => "RGBA8888",
             Self::L8 => "L8",
             Self::A8 => "A8",
-            Self::Unknown => "неизвестный формат",
+            Self::Unknown => "unknown format",
         }
     }
 }

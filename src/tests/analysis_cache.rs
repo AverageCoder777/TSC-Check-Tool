@@ -35,7 +35,7 @@ fn saves_and_reuses_unchanged_files() {
     let loaded = AnalysisCache::load(route);
     let cached = loaded
         .get("Scenery/+000000+000000.bin", stamp)
-        .expect("файл не менялся — разбор должен взять из кэша");
+        .expect("file has not changed — analysis should be taken from the cache.");
     assert_eq!(cached.uses.len(), 1);
     assert_eq!(cached.uses[0].0, "Provider/Product/Scenery/asset.bin");
     assert_eq!(cached.uses[0].1, 3);
@@ -62,7 +62,7 @@ fn stores_repeated_assets_as_single_entry_with_count() {
     assert_eq!(
         text.matches("Provider/Product/Scenery/asset.bin").count(),
         1,
-        "путь должен храниться один раз"
+        "path must be stored once"
     );
     let loaded = AnalysisCache::load(route);
     assert_eq!(

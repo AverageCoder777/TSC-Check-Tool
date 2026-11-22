@@ -1,7 +1,7 @@
 import { VerticalBox, HorizontalBox, Button, LineEdit } from "std-widgets.slint";
 
 export component TextureViewerWindow inherits Window {
-    title: @tr("Просмотр текстур");
+    title: @tr("Texture viewer");
     preferred-width: 950px;
     preferred-height: 750px;
     min-width: 600px;
@@ -27,16 +27,16 @@ export component TextureViewerWindow inherits Window {
     VerticalBox {
         HorizontalBox {
             spacing: 6px;
-            Text { text: @tr("Имя:"); vertical-alignment: center; }
+            Text { text: @tr("Internal name:"); vertical-alignment: center; }
             LineEdit {
                 text <=> root.texture-name;
                 enabled: root.texture-name-enabled;
                 horizontal-stretch: 1;
                 accepted => { root.save-texture-internal-name(self.text); }
             }
-            Button { text: @tr("Сохранить"); enabled: root.texture-name-enabled; clicked => { root.save-texture-internal-name(root.texture-name); } }
-            Button { text: @tr("Открыть в редакторе"); clicked => { root.open-in-editor(); } }
-            Button { text: @tr("По имени файла"); enabled: root.texture-name-enabled; clicked => { root.texture-name-from-file(); } }
+            Button { text: @tr("Save"); enabled: root.texture-name-enabled; clicked => { root.save-texture-internal-name(root.texture-name); } }
+            Button { text: @tr("Open in editor"); clicked => { root.open-in-editor(); } }
+            Button { text: @tr("Rename by file name"); enabled: root.texture-name-enabled; clicked => { root.texture-name-from-file(); } }
         }
         Rectangle {
             background: #252525;
@@ -110,8 +110,8 @@ export component TextureViewerWindow inherits Window {
                 }
             }
         }
-        Button { text: show-alpha ? @tr("Обычный режим") : @tr("Альфа-канал"); clicked => { toggle-alpha(); } }
-        Button { text: @tr("Экспортировать DDS"); clicked => { export-dds(); } }
-        Button { text: @tr("Заменить из DDS"); clicked => { replace-from-dds(); } }
+        Button { text: show-alpha ? @tr("Default mode") : @tr("Alpha mode"); clicked => { toggle-alpha(); } }
+        Button { text: @tr("Export to DDS"); clicked => { export-dds(); } }
+        Button { text: @tr("Import from DDS"); clicked => { replace-from-dds(); } }
     }
 }

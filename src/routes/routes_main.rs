@@ -439,7 +439,7 @@ pub(crate) fn inspect_route_folder(
                     let mut bytes = Vec::new();
                     member.read_to_end(&mut bytes).map_err(|error| {
                         format!(
-                            "Failed to read {} из {}: {error}",
+                            "Failed to read {} from {}: {error}",
                             member_name,
                             child_path.display()
                         )

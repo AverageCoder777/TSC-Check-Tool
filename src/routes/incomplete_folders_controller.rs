@@ -202,9 +202,8 @@ fn update_window(window: &IncompleteFoldersWindow, folders: &[IncompleteRouteFol
     let total_bytes: u64 = folders.iter().map(|f| f.total_size_bytes).sum();
     let count = folders.len();
     let summary = format!(
-        "All: {} {} • total size: {}",
+        "All: {} folders, total size: {}",
         count,
-        folder_count_word(count),
         format_size_bytes(total_bytes)
     );
     window.set_folders(ModelRc::new(VecModel::from(items)));
@@ -244,24 +243,11 @@ fn validate_delete_path_against(path: &Path, canon_routes: &Path) -> Result<(), 
 
 fn format_size_bytes(bytes: u64) -> String {
     if bytes >= 1_048_576 {
-        format!("{:.1} МБ", bytes as f64 / 1_048_576.0)
+        format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
     } else if bytes >= 1024 {
-        format!("{:.0} КБ", bytes as f64 / 1024.0)
+        format!("{:.0} KiB", bytes as f64 / 1024.0)
     } else {
-        "< 1 КБ".to_owned()
-    }
-}
-
-fn folder_count_word(count: usize) -> &'static str {
-    let n = count % 100;
-    if (5..=20).contains(&n) {
-        "папок"
-    } else {
-        match n % 10 {
-            1 => "папка",
-            2..=4 => "папки",
-            _ => "папок",
-        }
+        "< 1 KiB".to_owned()
     }
 }
 

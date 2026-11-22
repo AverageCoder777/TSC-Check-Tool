@@ -256,7 +256,7 @@ impl AuditorController {
                         let h = thread_handle.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = h.upgrade() {
-                                w.set_scan_status_text(format!("Ошибка аудита: {msg}").into());
+                                w.set_scan_status_text(format!("Check failure: {msg}").into());
                                 w.set_is_scanning(false);
                             }
                         });
@@ -411,7 +411,7 @@ impl AuditorController {
                             .collect::<Vec<_>>()
                             .join("\n")
                     };
-                    let outgoing_str = format_refs_preview(outgoing_set, "Нет зависимостей");
+                    let outgoing_str = format_refs_preview(outgoing_set, "No dependencies");
                     Some((is_tex, has_missing, incoming_str, outgoing_str))
                 })
                 .unwrap_or_else(|| {
@@ -419,7 +419,7 @@ impl AuditorController {
                         false,
                         false,
                         NO_PARENTS_MSG.to_string(),
-                        "Нет зависимостей".to_string(),
+                        "No dependencies".to_string(),
                     )
                 });
 

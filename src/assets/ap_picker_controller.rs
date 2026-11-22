@@ -164,9 +164,9 @@ impl ApPickerController {
                         });
                     }
                     Err(err) => {
-                        eprintln!("[ApPicker] Ошибка извлечения: {err}");
+                        eprintln!("[ApPicker] Extracting error: {err}");
                         if let Ok(mut app) = app_t.lock() {
-                            app.log_event(format!("Ошибка распаковки: {err}"), LogLevel::Error);
+                            app.log_event(format!("Unpacking error: {err}"), LogLevel::Error);
                             crate::schedule_ui_sync();
                         }
                         let _ = slint::invoke_from_event_loop(move || {
@@ -174,7 +174,7 @@ impl ApPickerController {
                                 pw.set_extracting(false);
                             }
                         });
-                        show_native_error("Unpack error", &err);
+                        show_native_error("Unpacking error", &err);
                     }
                 }
             });

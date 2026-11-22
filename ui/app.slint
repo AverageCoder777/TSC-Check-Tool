@@ -412,8 +412,6 @@ export component MainWindow inherits Window {
                 clip: true;
 
                 VerticalLayout {
-                    spacing: 0px;
-
                     HorizontalLayout {
                         preferred-height: 24px;
                         min-height: 24px;
@@ -2369,8 +2367,6 @@ export component FolderAuditorWindow inherits Window {
             }
 
             if root.current-filter != "orphans": HorizontalLayout {
-                spacing: 0px;
-
                 Text {
                     text: sort-col == 1 ? (sort-ascending ? @tr("Missing file ↑") : @tr("Missing file ↓")) : @tr("Missing file");
                     width: root.col-missing-width;
@@ -2431,7 +2427,6 @@ export component FolderAuditorWindow inherits Window {
                     HorizontalLayout {
                         padding-left: 10px;
                         padding-right: 10px;
-                        spacing: 0px;
 
                         Text {
                             text: item.kind_str;
@@ -2447,8 +2442,6 @@ export component FolderAuditorWindow inherits Window {
                         }
 
                         if root.current-filter != "orphans": HorizontalLayout {
-                            spacing: 0px;
-
                             Text {
                                 text: item.expected_path;
                                 width: root.col-missing-width;

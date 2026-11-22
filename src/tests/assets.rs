@@ -35,7 +35,7 @@ fn rechecks_route_using_analysis_cache() {
         .asset_inventory
         .iter()
         .find(|asset| asset.path == "First/ProductA/Scenery/one.bin")
-        .expect("ассет должен попасть в инвентарь");
+        .expect("asset must be included in the inventory");
     assert_eq!(first_asset.uses.iter().map(|u| u.count).sum::<u32>(), 2);
 
     // Файлы не менялись — всё берётся из кэша.
@@ -45,7 +45,7 @@ fn rechecks_route_using_analysis_cache() {
         .asset_inventory
         .iter()
         .find(|asset| asset.path == "First/ProductA/Scenery/one.bin")
-        .expect("ассет должен попасть в инвентарь");
+        .expect("asset must be included in the inventory");
     assert_eq!(first_asset.uses.iter().map(|u| u.count).sum::<u32>(), 2);
 
     // Один файл изменился: пересобирается только он.

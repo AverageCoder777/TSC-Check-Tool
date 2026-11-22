@@ -370,7 +370,7 @@ pub fn patch_tgpcdx_blobs(
     new_mips: &[(u32, u32, Vec<u8>)],
 ) -> Result<Vec<u8>, String> {
     if !orig_bytes.starts_with(b"SERZ") {
-        return Err("Файл не является бинарным SERZ".into());
+        return Err("File is not binary SERZ type".into());
     }
 
     let mut reader = SerzReader::new(orig_bytes);

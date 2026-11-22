@@ -162,14 +162,14 @@ fn bind_external_editor(window: &GeoViewerWindow, path: &Path) {
             external_editor::open_and_sync_with_vscode(&editor_path, move |result| {
                 let status = match result {
                     Ok(message) => message,
-                    Err(error) => format!("Ошибка редактора: {error}"),
+                    Err(error) => format!("Editor error: {error}"),
                 };
                 set_status(&callback_weak, status);
             })
         {
             set_status(
                 &editor_weak,
-                format!("Не удалось открыть редактор: {error}"),
+                format!("Failed to open editor: {error}"),
             );
         }
     });

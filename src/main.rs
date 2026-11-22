@@ -254,7 +254,7 @@ fn open_texture_viewer(path: &Path) {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
-            common::external_editor::show_native_error("Ошибка", &e.to_string());
+            common::external_editor::show_native_error("Error", &e.to_string());
             std::process::exit(1);
         }
     };
@@ -296,7 +296,7 @@ fn open_texture_viewer(path: &Path) {
             std::process::exit(0);
         }
         Err(e) => {
-            common::external_editor::show_native_error("Ошибка", &e);
+            common::external_editor::show_native_error("Error", &e);
             std::process::exit(1);
         }
     }
@@ -345,7 +345,7 @@ fn handle_cli_args() {
                 .map(|e| e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("xsec"))
                 .unwrap_or(false);
         if is_asset {
-            println!("[ExternalEditor] Запуск синхронизации для: {:?}", path);
+            println!("[ExternalEditor] Starting synchronization for: {:?}", path);
             match common::external_editor::run_headless(&path) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {

@@ -68,22 +68,22 @@ export component GeoViewerWindow inherits Window {
             spacing: 8px;
             Text { text: root.model-name; color: #e5e5e5; vertical-alignment: center; horizontal-stretch: 1; }
             Button {
-                text: @tr("Открыть в редакторе");
+                text: @tr("Open in editor");
                 clicked => { root.open-in-editor(); }
             }
             Button {
-                text: root.wireframe ? "Solid" : "Wireframe";
+                text: root.wireframe ? @tr("Solid") : @tr("Wireframe");
                 clicked => {
                     root.wireframe = !root.wireframe;
                     root.emit-camera();
                 }
             }
             Button {
-                text: "Reset camera";
+                text: @tr("Reset camera");
                 clicked => { root.reset-camera(); }
             }
             Button {
-                text: root.batches-expanded ? "Hide batches" : "Batches";
+                text: root.batches-expanded ? @tr("Hide batches") : @tr("Batches");
                 clicked => { root.batches-expanded = !root.batches-expanded; }
             }
         }
@@ -103,8 +103,6 @@ export component GeoViewerWindow inherits Window {
                     image-fit: contain;
                 }
                 viewport-focus := FocusScope {
-                    width: 100%;
-                    height: 100%;
 
                     key-pressed(event) => {
                         let step = Math.max(0.01, root.distance * 0.08);
@@ -146,8 +144,6 @@ export component GeoViewerWindow inherits Window {
                     }
 
                     TouchArea {
-                        width: 100%;
-                        height: 100%;
                         property <float> last-x: 0;
                         property <float> last-y: 0;
                         property <bool> dragging: false;
@@ -227,7 +223,6 @@ export component GeoViewerWindow inherits Window {
                         color: #c9d1dc;
                         font-size: 12px;
                         vertical-alignment: center;
-                        wrap: TextWrap.no-wrap;
                     }
                 }
                 if root.textures-expanded : Rectangle {
@@ -248,7 +243,6 @@ export component GeoViewerWindow inherits Window {
                         text: root.texture-status;
                         color: #e5e5e5;
                         font-size: 11px;
-                        vertical-alignment: top;
                         wrap: TextWrap.word-wrap;
                     }
                 }
@@ -265,15 +259,15 @@ export component GeoViewerWindow inherits Window {
                     HorizontalBox {
                         spacing: 4px;
                         Button { text: "LOD0"; clicked => { root.apply-batch-preset("lod0"); } }
-                        Button { text: "All"; clicked => { root.apply-batch-preset("all"); } }
-                        Button { text: "None"; clicked => { root.apply-batch-preset("none"); } }
+                        Button { text: @tr("All"); clicked => { root.apply-batch-preset("all"); } }
+                        Button { text: @tr("None"); clicked => { root.apply-batch-preset("none"); } }
                     }
                     LineEdit {
-                        placeholder-text: "Filter node / material / shader";
+                        placeholder-text: @tr("Filter node / material / shader");
                         edited(text) => { root.filter-batches(text); }
                     }
                     Text {
-                        text: "\{root.batch-items.length} batches";
+                        text: @tr("{n} batch" | "{n} batches" % root.batch-items.length);
                         color: #8993a2;
                         font-size: 11px;
                     }
@@ -311,13 +305,13 @@ export component GeoViewerWindow inherits Window {
             }
         }
         Button {
-            text: root.textures-expanded ? "Hide textures" : "Show textures";
+            text: root.textures-expanded ? @tr("Hide textures") : @tr("Show textures");
             clicked => {
                 root.textures-expanded = !root.textures-expanded;
             }
         }
         Text {
-            text: "Left drag: orbit    Right/Middle drag: pan    Wheel: zoom    Arrows/WASD/QE: move    R: reset";
+            text: @tr("Left drag: orbit    Right/Middle drag: pan    Wheel: zoom    Arrows/WASD/QE: move    R: reset");
             color: #8993a2;
             font-size: 11px;
         }

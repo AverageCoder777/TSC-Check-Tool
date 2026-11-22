@@ -346,7 +346,7 @@ fn complete_route_scan_includes_route_icon_path() {
 
     match scan_item {
         super::RouteScanItem::Route(route) => assert_eq!(route.icon_path, Some(icon)),
-        _ => panic!("Ожидался полный маршрут."),
+        _ => panic!("Full route expected."),
     }
 }
 

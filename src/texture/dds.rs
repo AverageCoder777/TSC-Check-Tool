@@ -171,7 +171,7 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
                 mw = (mw / 2).max(1);
                 mh = (mh / 2).max(1);
                 let sz = mip_level_bytes(mw, mh, compression)
-                    .ok_or("невозможно вычислить размер уровня мипмапа")?;
+                    .ok_or("it is impossible to calculate size of the mipmap level")?;
                 if sz == 0 || sz > blob_len - sum {
                     break;
                 }

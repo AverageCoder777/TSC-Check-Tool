@@ -16,7 +16,7 @@ fn checks_real_route_x() {
                 r.structure_issues.len()
             );
             if let Some(last) = r.conversion_errors.last() {
-                println!("последняя ошибка: {last}");
+                println!("last error: {last}");
             }
         }
         Err(e) => panic!("{e}"),

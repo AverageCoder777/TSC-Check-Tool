@@ -136,7 +136,7 @@ pub fn asset_chain_umlaut_evidence(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
                 return Err(format!(
-                    "Не удалось проверить {}: {error}",
+                    "Failed to check {}: {error}",
                     asset_path.display()
                 ));
             }
@@ -155,7 +155,7 @@ pub fn asset_chain_umlaut_evidence(
             let reference_text = reference.to_text();
             if has_umlauts(&reference_text) {
                 evidence.push(format!(
-                    "Ссылка из {}: {reference_text}",
+                    "Link from {}: {reference_text}",
                     canonical.file_name().unwrap_or_default().to_string_lossy()
                 ));
             }

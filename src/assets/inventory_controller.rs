@@ -449,7 +449,7 @@ impl InventoryController {
                     existing_directory_upwards(&asset_directory(&assets_dir, &asset.path))
                         .unwrap_or_else(|| assets_dir.clone());
                 let Some(picked) = rfd::FileDialog::new()
-                    .set_title("Заменить в маршруте...")
+                    .set_title("Replace on route...")
                     .add_filter("RailWorks Blueprint (*.bin)", &["bin"])
                     .set_directory(&start_dir)
                     .pick_file()
