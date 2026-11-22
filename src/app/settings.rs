@@ -2,35 +2,39 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::common::domain::AssetReplacementLogEntry;
 
-fn default_language() -> String {
-    "ru".to_owned()
-}
-
-fn default_true() -> bool {
-    true
-}
-
 /// Единая конфигурация приложения, хранящаяся в `config.json`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub game_path: Option<PathBuf>,
     pub locoswap_path: Option<PathBuf>,
     pub serz_process_limit: usize,
-    #[serde(default = "default_true")]
     pub route_thumbnails_enabled: bool,
-    #[serde(default)]
     pub route_scan_on_hdd: bool,
-    #[serde(default)]
     pub hide_quick_drive_free_roam: bool,
-    #[serde(default = "default_language")]
     pub language: String,
-    #[serde(default)]
     pub ignore_incomplete_warning: bool,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            game_path: None,
+            locoswap_path: None,
+            serz_process_limit: maximum_serz_processes(),
+            route_thumbnails_enabled: true,
+            route_scan_on_hdd: false,
+            hide_quick_drive_free_roam: false,
+            language: "ru".to_owned(),
+            ignore_incomplete_warning: false,
+        }
+    }
 }
 
 impl AppConfig {
@@ -160,9 +164,6 @@ pub(crate) fn append_asset_replacement_log(
     path: &Path,
     entry: &mut AssetReplacementLogEntry,
 ) -> Result<(), String> {
-    use std::io::Write;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     let parent = path
         .parent()
         .ok_or_else(|| "Некорректный путь к журналу замен.".to_owned())?;
@@ -190,12 +191,6 @@ pub(crate) fn append_asset_replacement_log(
             "Не удалось записать журнал замен {}: {error}",
             path.display()
         )
-    })?;
-    file.flush().map_err(|error| {
-        format!(
-            "Не удалось записать журнал замен {}: {error}",
-            path.display()
-        )
     })
 }
 
@@ -213,9 +208,6 @@ pub(crate) fn route_scan_max_threads(serz_process_limit: usize, on_hdd: bool) ->
     if on_hdd { 4 } else { serz_process_limit.max(1) }
 }
 
-/// Количество потоков сканирования маршрутов.
-/// На HDD — жёстко 4 (I/O-bound, больше потоков только гасят диск).
-/// Иначе — лимит серз-процессов (CPU-bound).
 #[cfg(test)]
 pub(crate) fn read_route_thumbnail_setting(path: &Path) -> Result<bool, String> {
     match fs::read_to_string(path) {
@@ -259,12 +251,7 @@ pub(crate) fn read_serz_process_limit(path: &Path) -> Result<usize, String> {
                 path.display()
             )
         })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            std::thread::available_parallelism()
-                .map(usize::from)
-                .unwrap_or(1)
-                .max(1)
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => maximum_serz_processes(),
         Err(error) => {
             return Err(format!(
                 "Не удалось прочитать настройку Serz {}: {error}",

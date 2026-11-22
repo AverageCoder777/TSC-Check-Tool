@@ -8,11 +8,17 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::app::settings::*;
+use crate::app::settings::{
+    AppConfig, append_asset_replacement_log, asset_replacement_log_file, load_ignored_route_ids,
+    load_last_game_path, maximum_serz_processes, route_scan_max_threads,
+};
 use crate::assets::inventory_ui::InventorySort;
-use crate::common::domain::*;
-use crate::common::fs_utils::*;
-use crate::common::translit::*;
+use crate::common::domain::{
+    AssetReplacementLogEntry, AssetReplacementLogUse, AssetReplacementReport, CheckResult,
+    IncompleteRouteFolder, MissingAsset, ReferencedAsset, Route, RouteScanOutcome, UmlautAsset,
+};
+use crate::common::fs_utils::clean_rw_path;
+use crate::common::translit::CharacterFixes;
 use crate::routes::clear_route_icon_cache;
 use crate::scenarios::read_route_scenarios;
 
@@ -124,18 +130,12 @@ impl Default for CheckerApp {
             ),
             Err(error) => (HashSet::new(), error),
         };
-        let ignore_incomplete_warning = config.ignore_incomplete_warning;
-        let language = config.language.clone();
-        let serz_process_limit = config.serz_process_limit.clamp(1, available);
-        let route_thumbnails_enabled = config.route_thumbnails_enabled;
-        let route_scan_on_hdd = config.route_scan_on_hdd;
-        let hide_quick_drive_free_roam = config.hide_quick_drive_free_roam;
         Self {
             rw_path,
             routes: Vec::new(),
             incomplete_folders: Vec::new(),
             show_incomplete_warning: false,
-            ignore_incomplete_warning,
+            ignore_incomplete_warning: config.ignore_incomplete_warning,
             selected_incomplete: None,
             ignored_route_ids,
             selected_route: None,
@@ -160,16 +160,16 @@ impl Default for CheckerApp {
             asset_replacement: None,
             asset_replacement_queue: VecDeque::new(),
             asset_replacement_feedback: None,
-            route_thumbnails_enabled,
-            serz_process_limit,
-            route_scan_on_hdd,
-            hide_quick_drive_free_roam,
+            route_thumbnails_enabled: config.route_thumbnails_enabled,
+            serz_process_limit: config.serz_process_limit.clamp(1, available),
+            route_scan_on_hdd: config.route_scan_on_hdd,
+            hide_quick_drive_free_roam: config.hide_quick_drive_free_roam,
             locoswap_path: config
                 .locoswap_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            language,
+            language: config.language,
             asset_inventory_state: Arc::new(Mutex::new(AssetInventoryWindowState::default())),
             inventory_scan: None,
             missing_assets_popup: None,
@@ -190,8 +190,9 @@ impl Default for CheckerApp {
 
 impl CheckerApp {
     pub(crate) fn clean_rw_path(&self) -> PathBuf {
-        crate::common::fs_utils::clean_rw_path(&self.rw_path)
+        clean_rw_path(&self.rw_path)
     }
+
     pub(crate) fn open_asset_inventory(&mut self) {
         let Some(result) = self.result.as_ref() else {
             return;
@@ -216,6 +217,7 @@ impl CheckerApp {
             );
         }
     }
+
     pub(crate) fn start_asset_replacement(
         &mut self,
         missing: MissingAsset,
@@ -234,8 +236,7 @@ impl CheckerApp {
         else {
             return;
         };
-        let rw_path = clean_rw_path(&self.rw_path);
-        let assets_path = rw_path.join("Assets");
+        let assets_path = self.clean_rw_path().join("Assets");
         let (tx, rx) = mpsc::channel();
         self.asset_replacement = Some(rx);
         self.asset_replacement_feedback = None;
@@ -261,6 +262,7 @@ impl CheckerApp {
                                 "Не удалось переименовать новый ассет под английские имена: {error}"
                             )),
                         ));
+                        crate::schedule_ui_sync();
                         return;
                     }
                 }
@@ -319,6 +321,7 @@ impl CheckerApp {
             crate::schedule_ui_sync();
         });
     }
+
     pub(crate) fn start_next_asset_replacement(&mut self) {
         if self.asset_replacement.is_some() {
             return;
@@ -335,14 +338,16 @@ impl CheckerApp {
             );
         }
     }
+
     pub(crate) fn start_route_scan(&mut self) {
         self.begin_route_scan(false, true);
     }
+
     fn begin_route_scan(&mut self, preserve_incomplete: bool, allow_cache: bool) {
         if self.route_scan.is_some() {
             return;
         }
-        let root = clean_rw_path(&self.rw_path);
+        let root = self.clean_rw_path();
         let (tx, rx) = mpsc::channel();
         self.route_scan = Some(rx);
         self.routes.clear();
@@ -370,6 +375,7 @@ impl CheckerApp {
             crate::schedule_ui_sync();
         });
     }
+
     pub(crate) fn start_check(&mut self) {
         if self.is_checking() {
             return;
@@ -381,8 +387,7 @@ impl CheckerApp {
         else {
             return;
         };
-        let rw_path = clean_rw_path(&self.rw_path);
-        let assets_path = rw_path.join("Assets");
+        let assets_path = self.clean_rw_path().join("Assets");
         let ignore_scenarios = self.ignore_scenarios;
         let max_concurrent_serz = self.serz_process_limit;
         let (tx, rx) = mpsc::channel();
@@ -421,6 +426,7 @@ impl CheckerApp {
             crate::schedule_ui_sync();
         });
     }
+
     pub(crate) fn refresh_scenarios(&mut self) {
         let Some(route) = self.selected_route.and_then(|index| self.routes.get(index)) else {
             self.scenarios.clear();
@@ -439,12 +445,21 @@ impl CheckerApp {
         self.scenario_consist_info = None;
         self.scenario_vehicle_files = None;
     }
+
+    fn push_log_entry(&mut self, entry: LogEntry) {
+        self.check_log.push_front(entry);
+        if self.check_log.len() > MAX_LOG_ENTRIES {
+            self.check_log.pop_back();
+        }
+    }
+
     fn pop_ephemeral_progress(&mut self) {
         if self.has_ephemeral_progress {
             self.check_log.pop_front();
             self.has_ephemeral_progress = false;
         }
     }
+
     fn flush_progress_log(&mut self, force: bool) {
         let Some(pending) = self.progress_pending.take() else {
             return;
@@ -458,118 +473,117 @@ impl CheckerApp {
             return;
         }
         self.pop_ephemeral_progress();
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
-        self.check_log.push_front(LogEntry {
-            text: format!("[{}] {}", timestamp, pending),
+        self.push_log_entry(LogEntry {
+            text: format!("[{}] {pending}", current_timestamp()),
             level: LogLevel::Info,
         });
-        if self.check_log.len() > MAX_LOG_ENTRIES {
-            self.check_log.pop_back();
-        }
         self.has_ephemeral_progress = true;
         self.last_progress_log = Some(Instant::now());
     }
+
     pub(crate) fn log_event(&mut self, message: impl Into<String>, level: LogLevel) {
+        self.pop_ephemeral_progress();
         let message = message.into();
-        let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
         self.status = message.clone();
         let new_entry = LogEntry {
-            text: format!("[{}] {}", timestamp, message),
+            text: format!("[{}] {message}", current_timestamp()),
             level,
         };
         if let Some(tx) = &self.log_tx {
             let _ = tx.send(new_entry.clone());
         }
-        self.check_log.push_front(new_entry);
-        if self.check_log.len() > MAX_LOG_ENTRIES {
-            self.check_log.pop_back();
-        }
+        self.push_log_entry(new_entry);
     }
+
     pub(crate) fn is_checking(&self) -> bool {
         self.check.is_some()
     }
+
     pub(crate) fn receive_background_results(&mut self) {
         self.flush_progress_log(false);
-        let inventory_scan_result =
-            self.inventory_scan
-                .as_ref()
-                .and_then(|rx| match rx.try_recv() {
-                    Ok(result) => Some(result),
-                    Err(TryRecvError::Disconnected) => Some(Err(
-                        "Не удалось получить результат проверки умляутов.".to_owned(),
-                    )),
-                    Err(TryRecvError::Empty) => None,
-                });
-        if let Some(result) = inventory_scan_result {
-            self.inventory_scan = None;
-            match result {
-                Ok((assets, errors)) => {
-                    if let Some(check_result) = self.result.as_mut() {
-                        check_result.umlaut_assets = assets.clone();
-                        for error in &errors {
-                            if !check_result.conversion_errors.contains(error) {
-                                check_result.conversion_errors.push(error.clone());
-                            }
+        self.poll_inventory_scan();
+        self.poll_asset_replacement();
+        self.poll_route_scan();
+        self.poll_check_messages();
+    }
+
+    fn poll_inventory_scan(&mut self) {
+        let Some(result) = poll_receiver(
+            &mut self.inventory_scan,
+            "Не удалось получить результат проверки умляутов.",
+        ) else {
+            return;
+        };
+        match result {
+            Ok((assets, errors)) => {
+                if let Some(check_result) = self.result.as_mut() {
+                    check_result.umlaut_assets = assets.clone();
+                    for error in &errors {
+                        if !check_result.conversion_errors.contains(error) {
+                            check_result.conversion_errors.push(error.clone());
                         }
-                        check_result.conversion_errors.sort();
                     }
-                    let window_error = match self.asset_inventory_state.lock() {
-                        Ok(mut state) => {
-                            state.umlaut_assets = assets.clone();
-                            state.scanning_umlauts = false;
-                            state.show_umlauts = true;
-                            state.error = if errors.is_empty() {
-                                None
-                            } else {
-                                Some(errors.join("\n"))
-                            };
-                            None
-                        }
-                        Err(error) => Some(error.to_string()),
-                    };
-                    self.log_event(
-                        if errors.is_empty() {
-                            format!("Проверка умляутов завершена. Найдено: {}.", assets.len())
-                        } else {
-                            format!(
-                                "Проверка завершена: найдено ассетов {}, ошибок анализа {}.",
-                                assets.len(),
-                                errors.len()
-                            )
-                        },
-                        if errors.is_empty() {
-                            LogLevel::Success
-                        } else {
-                            LogLevel::Warning
-                        },
-                    );
-                    if let Some(error) = window_error {
-                        self.status.push_str(&format!(
-                            " Не удалось обновить состояние окна инвентаря: {error}"
-                        ));
-                    }
+                    check_result.conversion_errors.sort();
                 }
-                Err(error) => {
-                    if let Ok(mut state) = self.asset_inventory_state.lock() {
+                let window_error = match self.asset_inventory_state.lock() {
+                    Ok(mut state) => {
+                        state.umlaut_assets = assets.clone();
                         state.scanning_umlauts = false;
-                        state.error = Some(error.clone());
+                        state.show_umlauts = true;
+                        state.error = if errors.is_empty() {
+                            None
+                        } else {
+                            Some(errors.join("\n"))
+                        };
+                        None
                     }
-                    self.log_event(error, LogLevel::Error);
+                    Err(error) => Some(error.to_string()),
+                };
+                let (message, level) = if errors.is_empty() {
+                    (
+                        format!("Проверка умляутов завершена. Найдено: {}.", assets.len()),
+                        LogLevel::Success,
+                    )
+                } else {
+                    (
+                        format!(
+                            "Проверка завершена: найдено ассетов {}, ошибок анализа {}.",
+                            assets.len(),
+                            errors.len()
+                        ),
+                        LogLevel::Warning,
+                    )
+                };
+                self.log_event(message, level);
+                if let Some(error) = window_error {
+                    self.status.push_str(&format!(
+                        " Не удалось обновить состояние окна инвентаря: {error}"
+                    ));
                 }
             }
+            Err(error) => {
+                if let Ok(mut state) = self.asset_inventory_state.lock() {
+                    state.scanning_umlauts = false;
+                    state.error = Some(error.clone());
+                }
+                self.log_event(error, LogLevel::Error);
+            }
         }
-        let asset_replacement_result =
-            self.asset_replacement
-                .as_ref()
-                .and_then(|rx| match rx.try_recv() {
-                    Ok(result) => Some(result),
-                    Err(TryRecvError::Disconnected) => Some((
-                        String::new(),
-                        Err("Не удалось получить результат замены ассетов.".to_owned()),
-                    )),
-                    Err(TryRecvError::Empty) => None,
-                });
-        if let Some((missing_path, result)) = asset_replacement_result {
+    }
+
+    fn poll_asset_replacement(&mut self) {
+        let received = self
+            .asset_replacement
+            .as_ref()
+            .and_then(|rx| match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Disconnected) => Some((
+                    String::new(),
+                    Err("Не удалось получить результат замены ассетов.".to_owned()),
+                )),
+                Err(TryRecvError::Empty) => None,
+            });
+        if let Some((missing_path, result)) = received {
             self.asset_replacement = None;
             match result {
                 Ok(report) => {
@@ -597,12 +611,7 @@ impl CheckerApp {
                             .iter()
                             .map(|a| a.path.clone())
                             .collect();
-                        if paths.is_empty() {
-                            self.missing_assets_popup = None;
-                            self.missing_assets_shown = false;
-                        } else {
-                            self.missing_assets_popup = Some(paths);
-                        }
+                        self.missing_assets_popup = (!paths.is_empty()).then_some(paths);
                     }
                     self.missing_assets_shown = false;
                     self.asset_replacement_feedback = Some(Ok(format!(
@@ -623,12 +632,11 @@ impl CheckerApp {
                             LogLevel::Info,
                         );
                     }
-                    let all_done = remaining_assets == Some((0, 0));
-                    if all_done {
+                    if remaining_assets == Some((0, 0)) {
                         self.log_event(
-                        "Все отсутствующие ассеты обработаны. Выполняется итоговая проверка маршрута...".to_owned(),
-                        LogLevel::Info,
-                    );
+                            "Все отсутствующие ассеты обработаны. Выполняется итоговая проверка маршрута...".to_owned(),
+                            LogLevel::Info,
+                        );
                         self.inventory_replacement_pending_check = false;
                         self.start_check();
                     } else if let Some((remaining, umlauts)) = remaining_assets {
@@ -656,85 +664,78 @@ impl CheckerApp {
             self.inventory_replacement_pending_check = false;
             self.start_check();
         }
-        let route_result = self.route_scan.as_ref().and_then(|rx| match rx.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Disconnected) => Some(Err(
-                "Не удалось получить результат сканирования маршрутов.".to_owned(),
-            )),
-            Err(TryRecvError::Empty) => None,
-        });
-        if let Some(result) = route_result {
-            self.route_scan = None;
-            match result {
-                Ok(outcome) => {
-                    let routes = outcome.result;
-                    let source = if outcome.from_cache {
-                        " (загружено из кэша)"
-                    } else {
-                        " (полное сканирование)"
-                    };
-                    self.log_event(
-                        format!(
-                            "Найдено маршрутов: {}; неполных папков: {}.",
-                            routes.routes.len(),
-                            routes.incomplete_folders.len()
-                        ),
-                        LogLevel::Info,
-                    );
-                    self.status.push_str(source);
-                    if let Some(notice) = outcome.notice {
-                        self.status.push(' ');
-                        self.status.push_str(&notice);
-                    }
-                    self.routes = routes.routes;
-                    self.incomplete_folders = routes.incomplete_folders;
-                    self.routes_revision = self.routes_revision.wrapping_add(1);
-                    self.selected_incomplete = (!self.incomplete_folders.is_empty()).then_some(0);
-                    self.selected_route = (!self.routes.is_empty()).then_some(0);
-                    if !self.incomplete_folders.is_empty() && !self.ignore_incomplete_warning {
-                        self.show_incomplete_warning = true;
-                    }
+    }
+
+    fn poll_route_scan(&mut self) {
+        let Some(result) = poll_receiver(
+            &mut self.route_scan,
+            "Не удалось получить результат сканирования маршрутов.",
+        ) else {
+            return;
+        };
+        match result {
+            Ok(outcome) => {
+                let routes = outcome.result;
+                let source = if outcome.from_cache {
+                    " (загружено из кэша)"
+                } else {
+                    " (полное сканирование)"
+                };
+                self.log_event(
+                    format!(
+                        "Найдено маршрутов: {}; неполных папок: {}.",
+                        routes.routes.len(),
+                        routes.incomplete_folders.len()
+                    ),
+                    LogLevel::Info,
+                );
+                self.status.push_str(source);
+                if let Some(notice) = outcome.notice {
+                    self.status.push(' ');
+                    self.status.push_str(&notice);
                 }
-                Err(error) => self.log_event(error, LogLevel::Error),
+                self.routes = routes.routes;
+                self.incomplete_folders = routes.incomplete_folders;
+                self.routes_revision = self.routes_revision.wrapping_add(1);
+                self.selected_incomplete = (!self.incomplete_folders.is_empty()).then_some(0);
+                self.selected_route = (!self.routes.is_empty()).then_some(0);
+                if !self.incomplete_folders.is_empty() && !self.ignore_incomplete_warning {
+                    self.show_incomplete_warning = true;
+                }
             }
+            Err(error) => self.log_event(error, LogLevel::Error),
         }
-        while self.check.is_some() {
-            let check_message = {
-                let rx = self.check.as_ref().unwrap();
-                match rx.try_recv() {
-                    Ok(message) => Some(Ok(message)),
-                    Err(TryRecvError::Disconnected) => Some(Err(
-                        "Не удалось получить результат проверки маршрута.".to_owned(),
-                    )),
-                    Err(TryRecvError::Empty) => None,
-                }
-            };
-            let Some(check_message) = check_message else {
+    }
+
+    fn poll_check_messages(&mut self) {
+        loop {
+            let Some(rx) = self.check.as_ref() else {
                 break;
+            };
+            let check_message = match rx.try_recv() {
+                Ok(message) => Ok(message),
+                Err(TryRecvError::Disconnected) => {
+                    Err("Не удалось получить результат проверки маршрута.".to_owned())
+                }
+                Err(TryRecvError::Empty) => break,
             };
             match check_message {
                 Ok(CheckMessage::Progress(status)) => {
-                    if status.starts_with("Анализ файла:") || status.starts_with("Анализ файлов:")
-                    {
+                    if status.starts_with("Анализ файла:") || status.starts_with("Анализ файлов:") {
                         self.progress_pending = Some(status);
                     } else {
-                        self.flush_progress_log(true);
+                        self.progress_pending = None;
                         self.pop_ephemeral_progress();
-                        self.check_log.insert(
-                            0,
-                            LogEntry {
-                                text: format!(
-                                    "[{}] {}",
-                                    chrono::Local::now().format("%H:%M:%S"),
-                                    status
-                                ),
-                                level: LogLevel::Info,
-                            },
-                        );
+                        self.push_log_entry(LogEntry {
+                            text: format!("[{}] {status}", current_timestamp()),
+                            level: LogLevel::Info,
+                        });
                     }
                 }
                 Ok(CheckMessage::Finished(result)) => {
                     self.check = None;
+                    self.progress_pending = None;
+                    self.pop_ephemeral_progress();
                     match result {
                         Ok(result) => {
                             let mut summary = Vec::new();
@@ -770,29 +771,18 @@ impl CheckerApp {
                                 },
                                 LogLevel::Info,
                             );
-                            self.flush_progress_log(true);
-                            self.pop_ephemeral_progress();
-                            let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+                            let timestamp = current_timestamp();
                             for issue in &result.structure_issues {
-                                self.check_log.insert(
-                                    0,
-                                    LogEntry {
-                                        text: format!(
-                                            "[{}] Проблема структуры: {issue}",
-                                            timestamp
-                                        ),
-                                        level: LogLevel::Warning,
-                                    },
-                                );
+                                self.push_log_entry(LogEntry {
+                                    text: format!("[{timestamp}] Проблема структуры: {issue}"),
+                                    level: LogLevel::Warning,
+                                });
                             }
                             for error in &result.conversion_errors {
-                                self.check_log.insert(
-                                    0,
-                                    LogEntry {
-                                        text: format!("[{}] Ошибка Serz/XML: {error}", timestamp),
-                                        level: LogLevel::Error,
-                                    },
-                                );
+                                self.push_log_entry(LogEntry {
+                                    text: format!("[{timestamp}] Ошибка Serz/XML: {error}"),
+                                    level: LogLevel::Error,
+                                });
                             }
                             if let Ok(mut state) = self.asset_inventory_state.lock()
                                 && state.open
@@ -807,9 +797,29 @@ impl CheckerApp {
                 }
                 Err(error) => {
                     self.check = None;
+                    self.progress_pending = None;
                     self.log_event(error, LogLevel::Error);
                 }
             }
         }
     }
+}
+
+fn current_timestamp() -> String {
+    chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
+fn poll_receiver<T>(
+    slot: &mut Option<Receiver<Result<T, String>>>,
+    disconnect_msg: &str,
+) -> Option<Result<T, String>> {
+    let result = slot.as_ref().and_then(|rx| match rx.try_recv() {
+        Ok(value) => Some(value),
+        Err(TryRecvError::Disconnected) => Some(Err(disconnect_msg.to_owned())),
+        Err(TryRecvError::Empty) => None,
+    });
+    if result.is_some() {
+        *slot = None;
+    }
+    result
 }

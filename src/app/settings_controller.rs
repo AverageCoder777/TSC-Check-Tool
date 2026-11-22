@@ -1,12 +1,14 @@
-use slint::ComponentHandle;
-use slint::Model;
-use slint::Weak;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::SettingsWindow;
 use crate::app::app_controller::{CheckerApp, LogLevel};
 use crate::app::settings::*;
+
+const SUPPORTED_LANGUAGES: [&str; 3] = ["ru", "en", "de"];
+const SERZ_PRESETS: [usize; 9] = [1, 2, 4, 6, 8, 12, 16, 24, 32];
 
 pub struct SettingsController {
     pub window: SettingsWindow,
@@ -17,21 +19,24 @@ pub struct SettingsController {
 /// Сохраняет текущие значения из окна настроек в конфиг и состояние приложения.
 /// Вызывается и при нажатии «Сохранить», и при закрытии окна крестиком.
 fn save_ui_settings(
-    app: Arc<Mutex<CheckerApp>>,
-    weak: slint::Weak<SettingsWindow>,
+    app: &Arc<Mutex<CheckerApp>>,
+    weak: &Weak<SettingsWindow>,
 ) -> Result<(), String> {
     let sw = weak
         .upgrade()
         .ok_or_else(|| "Окно настроек недоступно".to_owned())?;
-    let limit = sw.get_serz_process_limit() as usize;
+    let limit = sw.get_serz_process_limit().max(1) as usize;
     let locoswap_path = sw.get_locoswap_path().to_string();
     let game_path = sw.get_game_path().to_string();
     let thumbnails = sw.get_route_thumbnails_enabled();
     let hdd = sw.get_route_scan_on_hdd();
     let hide_scenarios = sw.get_hide_quick_drive_free_roam();
-    let lang_idx = sw.get_language_index() as usize;
-    let langs = ["ru", "en", "de"];
-    let language = langs.get(lang_idx).copied().unwrap_or("ru").to_owned();
+    let language = usize::try_from(sw.get_language_index())
+        .ok()
+        .and_then(|idx| SUPPORTED_LANGUAGES.get(idx))
+        .copied()
+        .unwrap_or(SUPPORTED_LANGUAGES[0])
+        .to_owned();
 
     let mut config = AppConfig::load();
     config.game_path = (!game_path.is_empty()).then_some(PathBuf::from(&game_path));
@@ -45,8 +50,8 @@ fn save_ui_settings(
 
     if let Ok(mut app) = app.lock() {
         let path_changed = app.rw_path != game_path;
-        app.rw_path = game_path.clone();
-        app.locoswap_path = locoswap_path.clone();
+        app.rw_path = game_path;
+        app.locoswap_path = locoswap_path;
         app.serz_process_limit = limit;
         app.route_thumbnails_enabled = thumbnails;
         app.route_scan_on_hdd = hdd;
@@ -74,50 +79,48 @@ impl SettingsController {
     pub fn sync_from_app(&self) {
         let Ok(app) = self.app.lock() else { return };
         let available = maximum_serz_processes();
-        let all_presets: [usize; 9] = [1, 2, 4, 6, 8, 12, 16, 24, 32];
-        let presets: Vec<slint::SharedString> = all_presets
+        let available_presets: Vec<usize> = SERZ_PRESETS
             .iter()
-            .filter(|p| **p <= available)
+            .copied()
+            .filter(|&p| p <= available)
+            .collect();
+
+        let clamped = app.serz_process_limit.clamp(1, available);
+        let (index, current) = available_presets
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|&(_, &p)| p <= clamped)
+            .map(|(i, &p)| (i, p))
+            .unwrap_or((0, 1));
+
+        let preset_labels: Vec<SharedString> = available_presets
+            .iter()
             .map(|p| p.to_string().into())
             .collect();
-        let mut current = app.serz_process_limit.clamp(1, available);
-        if !presets.iter().any(|p| *p == current.to_string()) {
-            current = presets
-                .iter()
-                .filter(|p| p.parse::<usize>().map(|v| v <= current).unwrap_or(false))
-                .map(|p| p.parse::<usize>().unwrap_or(1))
-                .max()
-                .unwrap_or(1);
-        }
-        let index = presets
-            .iter()
-            .position(|p| *p == current.to_string())
-            .unwrap_or(0);
 
         self.window.set_serz_process_limit(current as i32);
         self.window.set_serz_process_limit_max(available as i32);
         self.window
-            .set_serz_presets(slint::ModelRc::new(slint::VecModel::from(presets)));
+            .set_serz_presets(ModelRc::new(VecModel::from(preset_labels)));
         self.window.set_serz_process_limit_index(index as i32);
         self.window
-            .set_locoswap_path(app.locoswap_path.clone().into());
+            .set_locoswap_path(app.locoswap_path.as_str().into());
         self.window
             .set_route_thumbnails_enabled(app.route_thumbnails_enabled);
         self.window.set_route_scan_on_hdd(app.route_scan_on_hdd);
         self.window
             .set_hide_quick_drive_free_roam(app.hide_quick_drive_free_roam);
-        self.window.set_game_path(app.rw_path.clone().into());
+        self.window.set_game_path(app.rw_path.as_str().into());
 
-        let langs = ["ru", "en", "de"];
+        let lang_options: Vec<SharedString> = SUPPORTED_LANGUAGES
+            .iter()
+            .map(|&s| SharedString::from(s))
+            .collect();
         self.window
-            .set_language_options(slint::ModelRc::new(slint::VecModel::from(
-                langs
-                    .iter()
-                    .map(|s| (*s).to_string().into())
-                    .collect::<Vec<slint::SharedString>>(),
-            )));
-        let lang_idx = langs.iter().position(|&l| l == app.language).unwrap_or(0);
-        self.window.set_language_index(lang_idx as i32);
+            .set_language_options(ModelRc::new(VecModel::from(lang_options)));
+        self.window
+            .set_language_index(language_index(&app.language));
     }
 
     /// Открывает окно настроек с гарантированной предварительной синхронизацией.
@@ -128,46 +131,43 @@ impl SettingsController {
 
     pub fn bind(&self) {
         self.sync_from_app();
+        self.bind_pick_locoswap();
+        self.bind_pick_game();
+        self.bind_language();
+        self.bind_serz_preset();
+        self.bind_settings_changed();
+    }
 
-        let settings_handle = self.weak.clone();
-        let settings_handle3 = self.weak.clone();
-        let settings_handle4 = self.weak.clone();
-        let settings_handle5 = self.weak.clone();
-
-        // Выбор пути к LocoSwap
+    fn bind_pick_locoswap(&self) {
         let app = self.app.clone();
         let weak = self.weak.clone();
         self.window.on_pick_locoswap(move || {
-            let Some(sw) = settings_handle.upgrade() else {
-                return;
-            };
+            let Some(sw) = weak.upgrade() else { return };
             let current = sw.get_locoswap_path().to_string();
             let mut dialog = rfd::FileDialog::new()
                 .set_title("Выберите LocoSwap.exe")
                 .add_filter("Исполняемый файл (*.exe)", &["exe"]);
-            if !current.is_empty() {
-                let p = std::path::PathBuf::from(&current);
-                if let Some(parent) = p.parent() {
-                    dialog = dialog.set_directory(parent);
-                }
+            if !current.is_empty()
+                && let Some(parent) = PathBuf::from(&current).parent()
+            {
+                dialog = dialog.set_directory(parent);
             }
             if let Some(path) = dialog.pick_file() {
-                sw.set_locoswap_path(path.to_string_lossy().to_string().into());
-                let _ = save_ui_settings(app.clone(), weak.clone());
+                sw.set_locoswap_path(path.to_string_lossy().as_ref().into());
+                let _ = save_ui_settings(&app, &weak);
             }
         });
+    }
 
-        // Выбор папки с игрой RailWorks
+    fn bind_pick_game(&self) {
         let app = self.app.clone();
         let weak = self.weak.clone();
         self.window.on_pick_game(move || {
-            let Some(sw) = settings_handle3.upgrade() else {
-                return;
-            };
+            let Some(sw) = weak.upgrade() else { return };
             let current = sw.get_game_path().to_string();
             let mut dialog = rfd::FileDialog::new().set_title("Выберите папку с игрой RailWorks");
             if !current.is_empty() {
-                let p = std::path::PathBuf::from(&current);
+                let p = PathBuf::from(&current);
                 if p.is_dir() {
                     dialog = dialog.set_directory(&p);
                 } else if let Some(parent) = p.parent() {
@@ -175,13 +175,15 @@ impl SettingsController {
                 }
             }
             if let Some(path) = dialog.pick_folder() {
-                sw.set_game_path(path.to_string_lossy().to_string().into());
-                let _ = save_ui_settings(app.clone(), weak.clone());
+                sw.set_game_path(path.to_string_lossy().as_ref().into());
+                let _ = save_ui_settings(&app, &weak);
             }
         });
+    }
 
-        // Выбор языка
+    fn bind_language(&self) {
         let app = self.app.clone();
+        let weak = self.weak.clone();
         self.window.on_language_selected(move |lang| {
             let lang = lang.to_string();
             if let Ok(mut app) = app.lock() {
@@ -189,39 +191,39 @@ impl SettingsController {
             }
             apply_saved_language(&lang);
             let _ = save_language(&lang);
-            if let Some(sw) = settings_handle5.upgrade() {
-                let langs = ["ru", "en", "de"];
-                let idx = langs.iter().position(|&l| l == lang).unwrap_or(0);
-                sw.set_language_index(idx as i32);
+            if let Some(sw) = weak.upgrade() {
+                sw.set_language_index(language_index(&lang));
             }
         });
+    }
 
-        // Выбор пресета процессов serz
+    fn bind_serz_preset(&self) {
         let app = self.app.clone();
         let weak = self.weak.clone();
         self.window.on_serz_preset_selected(move |i| {
-            let Some(sw) = settings_handle4.upgrade() else {
-                return;
-            };
-            let presets = sw.get_serz_presets();
-            if let Some(item) = presets.row_data(i as usize)
-                && let Ok(limit) = item.to_string().parse::<usize>()
+            let Some(sw) = weak.upgrade() else { return };
+            let Ok(idx) = usize::try_from(i) else { return };
+            if let Some(item) = sw.get_serz_presets().row_data(idx)
+                && let Ok(limit) = item.as_str().parse::<i32>()
             {
-                sw.set_serz_process_limit(limit as i32);
-                if let Ok(mut app) = app.lock() {
-                    app.serz_process_limit = limit;
-                }
-                let _ = save_ui_settings(app.clone(), weak.clone());
+                sw.set_serz_process_limit(limit);
+                let _ = save_ui_settings(&app, &weak);
             }
         });
+    }
 
-        // Сохранение настроек при любом изменении (включая закрытие окна крестиком)
+    fn bind_settings_changed(&self) {
         let app = self.app.clone();
         let weak = self.weak.clone();
         self.window.on_settings_changed(move || {
-            let app = app.clone();
-            let weak = weak.clone();
-            let _ = save_ui_settings(app, weak);
+            let _ = save_ui_settings(&app, &weak);
         });
     }
+}
+
+fn language_index(lang: &str) -> i32 {
+    SUPPORTED_LANGUAGES
+        .iter()
+        .position(|&l| l == lang)
+        .unwrap_or(0) as i32
 }
