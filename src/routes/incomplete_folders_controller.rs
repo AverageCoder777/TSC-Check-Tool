@@ -136,10 +136,7 @@ impl IncompleteFoldersController {
                         Ok(()) => {
                             if let Err(error) = fs::remove_dir_all(&folder.path) {
                                 app.log_event(
-                                    format!(
-                                        "Failed to delete {}: {error}.",
-                                        folder.path.display()
-                                    ),
+                                    format!("Failed to delete {}: {error}.", folder.path.display()),
                                     LogLevel::Error,
                                 );
                                 remaining.push(folder);
@@ -175,10 +172,7 @@ impl IncompleteFoldersController {
                         LogLevel::Warning,
                     );
                 } else {
-                    app.log_event(
-                        "Couldn't delete any incomplete folders.",
-                        LogLevel::Error,
-                    );
+                    app.log_event("Couldn't delete any incomplete folders.", LogLevel::Error);
                 }
 
                 if let Some(w) = weak_all.upgrade() {
@@ -236,7 +230,9 @@ fn validate_delete_path_against(path: &Path, canon_routes: &Path) -> Result<(), 
         return Err("Deleting root folder of routes is prohibited.".to_owned());
     }
     if !canon_target.starts_with(canon_routes) {
-        return Err("Target path is located outside routes folder. Deletion is prohibited.".to_owned());
+        return Err(
+            "Target path is located outside routes folder. Deletion is prohibited.".to_owned(),
+        );
     }
     Ok(())
 }

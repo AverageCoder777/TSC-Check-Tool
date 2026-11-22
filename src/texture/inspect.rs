@@ -138,12 +138,7 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
                 mh = h;
             }
         }
-        (
-            levels,
-            mw,
-            mh,
-            "Blob (1× cHcImageDx)".to_string(),
-        )
+        (levels, mw, mh, "Blob (1× cHcImageDx)".to_string())
     } else {
         (
             blocks.len() as u32,
@@ -259,12 +254,8 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
 
     let bak_path = append_path_suffix(tgpcdx_path, ".bak");
     if !bak_path.exists() {
-        fs::copy(tgpcdx_path, &bak_path).map_err(|e| {
-            format!(
-                "Failed to create backup {}: {e}",
-                bak_path.display()
-            )
-        })?;
+        fs::copy(tgpcdx_path, &bak_path)
+            .map_err(|e| format!("Failed to create backup {}: {e}", bak_path.display()))?;
         append_tgpcdx_log(&format!("Backup created: {}", bak_path.display()));
     }
 
@@ -285,7 +276,9 @@ pub fn update_tgpcdx_internal_names(root: &mut SerzNode, new_name: &str) -> Resu
     collect_c_hc_texture_names(root, &mut current_names);
 
     if current_names.is_empty() {
-        return Err("cHcTexture node with a child Name (cDeltaString) was not found in file.".into());
+        return Err(
+            "cHcTexture node with a child Name (cDeltaString) was not found in file.".into(),
+        );
     }
 
     if current_names.len() == 1 {

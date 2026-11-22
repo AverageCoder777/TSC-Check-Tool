@@ -844,10 +844,7 @@ fn scan_single_product_dir(product_dir: &Path) -> Result<ProductApScan, String> 
             });
         }
         Err(error) => {
-            return Err(format!(
-                "Failed to read {}: {error}",
-                product_dir.display()
-            ));
+            return Err(format!("Failed to read {}: {error}", product_dir.display()));
         }
     };
 
@@ -874,18 +871,10 @@ fn is_ap_archive(path: &Path) -> bool {
 }
 
 fn read_ap_archive_files(archive_path: &Path, files: &mut HashSet<String>) -> Result<(), String> {
-    let archive_file = fs::File::open(archive_path).map_err(|error| {
-        format!(
-            "Failed to open archive {}: {error}",
-            archive_path.display()
-        )
-    })?;
-    let archive = ZipArchive::new(archive_file).map_err(|error| {
-        format!(
-            "Failed to read archive {}: {error}",
-            archive_path.display()
-        )
-    })?;
+    let archive_file = fs::File::open(archive_path)
+        .map_err(|error| format!("Failed to open archive {}: {error}", archive_path.display()))?;
+    let archive = ZipArchive::new(archive_file)
+        .map_err(|error| format!("Failed to read archive {}: {error}", archive_path.display()))?;
 
     for name in archive.file_names().flatten() {
         files.insert(name.replace('/', "\\").trim().to_lowercase());
@@ -1016,16 +1005,10 @@ fn read_archive_member_bytes(
         std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
         std::collections::hash_map::Entry::Vacant(entry) => {
             let file = fs::File::open(archive_path).map_err(|error| {
-                format!(
-                    "Failed to open archive {}: {error}",
-                    archive_path.display()
-                )
+                format!("Failed to open archive {}: {error}", archive_path.display())
             })?;
             let archive = ZipArchive::new(file).map_err(|error| {
-                format!(
-                    "Failed to read arcive {}: {error}",
-                    archive_path.display()
-                )
+                format!("Failed to read arcive {}: {error}", archive_path.display())
             })?;
             entry.insert(archive)
         }

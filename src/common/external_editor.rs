@@ -132,8 +132,7 @@ fn run_sync_loop(
                 }
                 let mut validation_reader = SerzReader::new(&bytes);
                 if let Err(e) = validation_reader.parse() {
-                    let err =
-                        format!("Serialization error: generated binary is corrupted: {e}");
+                    let err = format!("Serialization error: generated binary is corrupted: {e}");
                     show_native_error("Write error", &err);
                     return Err(err);
                 }
@@ -192,9 +191,8 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
 
     if regenerate {
         let xml = if uses_structured_serz_xml(binary_asset_path) {
-            let raw = fs::read(binary_asset_path).map_err(|e| {
-                format!("Failed to read {}: {e}", binary_asset_path.display())
-            })?;
+            let raw = fs::read(binary_asset_path)
+                .map_err(|e| format!("Failed to read {}: {e}", binary_asset_path.display()))?;
             tracks_bin_to_xml(&raw)?
         } else {
             read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?
@@ -311,12 +309,8 @@ pub fn write_binary_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
         return Err(format!("Incorrect file path: {}", target.display()));
     }
     let temp_path = append_suffix(target, ".tmp");
-    fs::write(&temp_path, bytes).map_err(|error| {
-        format!(
-            "Failed to write temp file {}: {error}",
-            temp_path.display()
-        )
-    })?;
+    fs::write(&temp_path, bytes)
+        .map_err(|error| format!("Failed to write temp file {}: {error}", temp_path.display()))?;
     fs::rename(&temp_path, target).map_err(|error| {
         let _ = fs::remove_file(&temp_path);
         format!("Failed to install {}: {error}", target.display())
@@ -339,12 +333,8 @@ pub fn create_backup_file(target_bin: &Path) -> Result<Option<PathBuf>, String> 
             i += 1;
         }
     }
-    fs::copy(target_bin, &backup_path).map_err(|e| {
-        format!(
-            "Failed to create backup {}: {e}",
-            backup_path.display()
-        )
-    })?;
+    fs::copy(target_bin, &backup_path)
+        .map_err(|e| format!("Failed to create backup {}: {e}", backup_path.display()))?;
     println!("[Backup] Backup created: {backup_path:?}");
     Ok(Some(backup_path))
 }

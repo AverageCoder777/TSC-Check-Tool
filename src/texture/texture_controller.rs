@@ -164,8 +164,9 @@ impl TextureController {
                             });
                         }
                         Err(error) => {
-                            let message =
-                                format!("File was changed, but preview could not be updated: {error}");
+                            let message = format!(
+                                "File was changed, but preview could not be updated: {error}"
+                            );
                             notify(&callback_viewer, &callback_ui, &message, LogLevel::Error);
                         }
                     },

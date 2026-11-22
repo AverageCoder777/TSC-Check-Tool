@@ -256,8 +256,7 @@ pub fn validate_dds_mip_chain(
     let mut mw = width;
     let mut mh = height;
     for _ in 0..declared_levels {
-        let size =
-            mip_level_bytes(mw, mh, fmt).ok_or("failed to compute mipmap level size")?;
+        let size = mip_level_bytes(mw, mh, fmt).ok_or("failed to compute mipmap level size")?;
         total = total
             .checked_add(size)
             .ok_or("overflow when summing mipmap levels")?;

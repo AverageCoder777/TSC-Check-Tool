@@ -283,19 +283,14 @@ pub fn extract_archive_member(
             break;
         }
     }
-    let idx = idx.ok_or_else(|| {
-        format!(
-            "Can't find {member} in archive {}",
-            archive_path.display()
-        )
-    })?;
+    let idx =
+        idx.ok_or_else(|| format!("Can't find {member} in archive {}", archive_path.display()))?;
 
     let mut entry = zip
         .by_index(idx)
         .map_err(|e| format!("Failed to read {member} from archive: {e}"))?;
     let mut output = BufWriter::new(
-        File::create(dest)
-            .map_err(|e| format!("Failed to create file {}: {e}", dest.display()))?,
+        File::create(dest).map_err(|e| format!("Failed to create file {}: {e}", dest.display()))?,
     );
     std::io::copy(&mut entry, &mut output)
         .map_err(|e| format!("Failed to unpack file {member}: {e}"))?;

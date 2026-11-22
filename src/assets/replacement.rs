@@ -32,7 +32,9 @@ pub fn delete_scenery_asset(
             );
         }
         if usage.source_file.is_protected_pathway() {
-            return Err("You can't change the track infrastructure parts through the program!".to_owned());
+            return Err(
+                "You can't change the track infrastructure parts through the program!".to_owned(),
+            );
         }
     }
 
@@ -61,7 +63,9 @@ pub fn delete_loft_asset(
     }
     for usage in uses {
         if usage.source_file.is_protected_pathway() {
-            return Err("You can't change the track infrastructure parts through the program!".to_owned());
+            return Err(
+                "You can't change the track infrastructure parts through the program!".to_owned(),
+            );
         }
         if usage.tile_kind != TileKind::Loft && usage.tile_kind != TileKind::Road {
             return Err(format!(
@@ -192,10 +196,7 @@ fn collect_and_validate_source_files(
         }
         if let RouteFile::Path(path) = &source {
             let canonical_source = path.canonicalize().map_err(|error| {
-                format!(
-                    "Failed to check route file{}: {error}",
-                    source.display()
-                )
+                format!("Failed to check route file{}: {error}", source.display())
             })?;
             if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
                 return Err(format!(
@@ -355,7 +356,9 @@ pub(crate) fn replace_missing_asset(
                 ]
                 .contains(&tag.as_str())
             {
-                return Err("Type of selected asset mismatched with type of missing asset.".to_owned());
+                return Err(
+                    "Type of selected asset mismatched with type of missing asset.".to_owned(),
+                );
             }
         }
         RouteAssetType::Loft => {
@@ -367,18 +370,24 @@ pub(crate) fn replace_missing_asset(
                 ]
                 .contains(&tag.as_str())
             {
-                return Err("Type of selected asset mismatched with type of missing asset.".to_owned());
+                return Err(
+                    "Type of selected asset mismatched with type of missing asset.".to_owned(),
+                );
             }
         }
         RouteAssetType::Road => {
             if let Some(tag) = &root_tag
                 && tag != "cRoadSectionBlueprint"
             {
-                return Err("Type of selected asset mismatched with type of missing asset.".to_owned());
+                return Err(
+                    "Type of selected asset mismatched with type of missing asset.".to_owned(),
+                );
             }
         }
         RouteAssetType::TrackRules => {
-            return Err("You can't change the track infrastructure parts through the program!".to_owned());
+            return Err(
+                "You can't change the track infrastructure parts through the program!".to_owned(),
+            );
         }
         _ => {}
     }
@@ -479,10 +488,7 @@ pub(crate) fn replace_missing_asset(
             })?;
 
             let mut xml = fs::read_to_string(&xml_path).map_err(|error| {
-                format!(
-                    "Failed to read XML for {}: {error}",
-                    source_file.display()
-                )
+                format!("Failed to read XML for {}: {error}", source_file.display())
             })?;
             let references = extract_asset_references_with_locations(&xml);
             let mut edits: Vec<_> = references

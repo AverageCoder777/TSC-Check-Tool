@@ -406,10 +406,7 @@ impl ScenarioController {
                     return;
                 }
                 if !Path::new(&path).is_file() {
-                    app.log_event(
-                        format!("Locoswap is not found: {}.", path),
-                        LogLevel::Error,
-                    );
+                    app.log_event(format!("Locoswap is not found: {}.", path), LogLevel::Error);
                     crate::schedule_ui_sync();
                     return;
                 }
@@ -667,10 +664,7 @@ impl ScenarioController {
                 );
                 if let Some(path) = resolved {
                     app.log_event(
-                        format!(
-                            "Stock path is open in explorer: {}.",
-                            path.display()
-                        ),
+                        format!("Stock path is open in explorer: {}.", path.display()),
                         LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
@@ -692,10 +686,7 @@ impl ScenarioController {
                     let provider = vehicle.provider.clone();
                     let product = vehicle.product.clone();
                     app.log_event(
-                        format!(
-                            "Failed to find stock blueprint: {}/{}.",
-                            provider, product
-                        ),
+                        format!("Failed to find stock blueprint: {}/{}.", provider, product),
                         LogLevel::Error,
                     );
                     crate::schedule_ui_sync();

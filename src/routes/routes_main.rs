@@ -114,12 +114,9 @@ pub(crate) fn sorted_ids(ids: &HashSet<String>) -> Vec<String> {
 }
 
 fn clean_canonical_path(path: &Path) -> Result<PathBuf, String> {
-    let canonical = path.canonicalize().map_err(|error| {
-        format!(
-            "Failed to check game folder {}: {error}",
-            path.display()
-        )
-    })?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("Failed to check game folder {}: {error}", path.display()))?;
     let raw = canonical.to_string_lossy();
     if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
         Ok(PathBuf::from(format!(r"\\{rest}")))
@@ -187,12 +184,9 @@ pub(crate) fn scan_routes_with_cache(
         result: result.clone(),
     };
     let save_result = (|| {
-        let parent = cache_file.parent().ok_or_else(|| {
-            format!(
-                "Incorrect path to routes cache: {}",
-                cache_file.display()
-            )
-        })?;
+        let parent = cache_file
+            .parent()
+            .ok_or_else(|| format!("Incorrect path to routes cache: {}", cache_file.display()))?;
         fs::create_dir_all(parent).map_err(|error| {
             format!(
                 "Failed to create cache folder {}: {error}",
@@ -318,14 +312,11 @@ pub(crate) fn inspect_route_folder(
     let children: Vec<(PathBuf, String, bool)> = fs::read_dir(path)
         .map_err(|error| format!("Failed to read {}: {error}", path.display()))?
         .map(|entry| {
-            let entry = entry.map_err(|error| {
-                format!("Error reading content {}: {error}", path.display())
-            })?;
+            let entry = entry
+                .map_err(|error| format!("Error reading content {}: {error}", path.display()))?;
             let is_directory = entry
                 .file_type()
-                .map_err(|error| {
-                    format!("Failed to read {}: {error}", entry.path().display())
-                })?
+                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?
                 .is_dir();
             Ok((
                 entry.path(),
@@ -358,10 +349,7 @@ pub(crate) fn inspect_route_folder(
                 format!("Failed to open archive {}: {error}", child_path.display())
             })?;
             let archive = ZipArchive::new(archive_file).map_err(|error| {
-                format!(
-                    "Failed to read archive {}: {error}",
-                    child_path.display()
-                )
+                format!("Failed to read archive {}: {error}", child_path.display())
             })?;
             for name_res in archive.file_names() {
                 let Ok(raw_name) = name_res else {
@@ -413,15 +401,10 @@ pub(crate) fn inspect_route_folder(
         if *is_directory || !is_ap_archive(child_path) {
             continue;
         }
-        let archive_file = fs::File::open(child_path).map_err(|error| {
-            format!("Failed to open archive {}: {error}", child_path.display())
-        })?;
-        let mut archive = ZipArchive::new(archive_file).map_err(|error| {
-            format!(
-                "Failed to read archive {}: {error}",
-                child_path.display()
-            )
-        })?;
+        let archive_file = fs::File::open(child_path)
+            .map_err(|error| format!("Failed to open archive {}: {error}", child_path.display()))?;
+        let mut archive = ZipArchive::new(archive_file)
+            .map_err(|error| format!("Failed to read archive {}: {error}", child_path.display()))?;
         for index in 0..archive.len() {
             let mut member = archive
                 .by_index(index)
@@ -480,9 +463,8 @@ pub(crate) fn inspect_route_folder(
                 .to_string_lossy()
                 .eq_ignore_ascii_case("ScenarioProperties.xml")
         {
-            let bytes = fs::read(entry.path()).map_err(|error| {
-                format!("Failed to read {}: {error}", entry.path().display())
-            })?;
+            let bytes = fs::read(entry.path())
+                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?;
             let contents = decode_xml_bytes(&bytes);
             let relative = entry
                 .path()
@@ -502,9 +484,7 @@ pub(crate) fn inspect_route_folder(
             file_count += 1;
             let size = entry
                 .metadata()
-                .map_err(|error| {
-                    format!("Failed to read {}: {error}", entry.path().display())
-                })?
+                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?
                 .len();
             total_size_bytes += size;
             inventory.push(format!("[file, {size} bytes] {}", relative.display()));
@@ -579,12 +559,8 @@ pub(crate) fn find_route_icon_with_cache(
     for entry in fs::read_dir(route_path)
         .map_err(|error| format!("Failed to read {}: {error}", route_path.display()))?
     {
-        let entry = entry.map_err(|error| {
-            format!(
-                "Error reading content {}: {error}",
-                route_path.display()
-            )
-        })?;
+        let entry = entry
+            .map_err(|error| format!("Error reading content {}: {error}", route_path.display()))?;
         let path = entry.path();
         if route_information.is_none()
             && entry
@@ -614,9 +590,7 @@ pub(crate) fn find_route_icon_with_cache(
             })?;
             if !entry
                 .file_type()
-                .map_err(|error| {
-                    format!("Failed to read {}: {error}", entry.path().display())
-                })?
+                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?
                 .is_file()
             {
                 continue;
@@ -873,14 +847,10 @@ pub(crate) fn directory_contains_files(path: &Path) -> Result<bool, String> {
         if entry.file_type().is_file() {
             let file_path = entry.path();
             if is_ap_archive(file_path) {
-                let file = fs::File::open(file_path).map_err(|error| {
-                    format!("Failed to open {}: {error}", file_path.display())
-                })?;
+                let file = fs::File::open(file_path)
+                    .map_err(|error| format!("Failed to open {}: {error}", file_path.display()))?;
                 let archive = ZipArchive::new(file).map_err(|error| {
-                    format!(
-                        "Failed to read archive {}: {error}",
-                        file_path.display()
-                    )
+                    format!("Failed to read archive {}: {error}", file_path.display())
                 })?;
                 for name_res in archive.file_names() {
                     let name = name_res.map_err(|error| {
@@ -955,9 +925,8 @@ pub(crate) fn read_route_name(
     let data = match fs::read(&properties_path) {
         Ok(data) => data,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let entries = fs::read_dir(route_path).map_err(|error| {
-                format!("Failed to read {}: {error}", route_path.display())
-            })?;
+            let entries = fs::read_dir(route_path)
+                .map_err(|error| format!("Failed to read {}: {error}", route_path.display()))?;
             for entry in entries {
                 let entry = entry
                     .map_err(|error| format!("Read error{}: {error}", route_path.display()))?;
@@ -1005,7 +974,11 @@ pub(crate) fn read_route_name(
                     }
                     let mut bytes = Vec::new();
                     if member.read_to_end(&mut bytes).is_err() {
-                        log_route_warning(log, &archive_path, "error while reading archive element");
+                        log_route_warning(
+                            log,
+                            &archive_path,
+                            "error while reading archive element",
+                        );
                         continue;
                     }
                     let contents = decode_xml_bytes(&bytes);

@@ -51,16 +51,9 @@ pub(crate) fn install_converted_asset(
     converted_path: &Path,
 ) -> Result<PathBuf, String> {
     let backup_path = next_backup_path(source_path)?;
-    println!(
-        "[Backup] Backup created: {}",
-        backup_path.display()
-    );
-    fs::rename(source_path, &backup_path).map_err(|error| {
-        format!(
-            "Failed to save backup {}: {error}",
-            backup_path.display()
-        )
-    })?;
+    println!("[Backup] Backup created: {}", backup_path.display());
+    fs::rename(source_path, &backup_path)
+        .map_err(|error| format!("Failed to save backup {}: {error}", backup_path.display()))?;
     if let Err(error) = fs::rename(converted_path, source_path) {
         return match fs::rename(&backup_path, source_path) {
             Ok(()) => Err(format!(
@@ -130,12 +123,8 @@ pub fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFi
         .ok_or_else(|| format!("Incorrect asset path: {}", source.display()))?;
     let temp = create_temporary_work_directory(parent)?;
     let staged = temp.path().join(file_name);
-    fs::copy(source, &staged).map_err(|error| {
-        format!(
-            "Failed to prepare renaming {}: {error}",
-            source.display()
-        )
-    })?;
+    fs::copy(source, &staged)
+        .map_err(|error| format!("Failed to prepare renaming {}: {error}", source.display()))?;
     Ok(StagedUmlautFile {
         source: RouteFile::Path(source.to_path_buf()),
         target: target.to_path_buf(),
@@ -156,9 +145,7 @@ pub fn install_staged_file(staged: &StagedUmlautFile) -> Result<(), String> {
             }
             fs::copy(&staged.staged, &staged.target)
                 .map(|_| ())
-                .map_err(|error| {
-                    format!("Failed to write {}: {error}", staged.target.display())
-                })
+                .map_err(|error| format!("Failed to write {}: {error}", staged.target.display()))
         }
     }
 }
@@ -181,15 +168,9 @@ pub fn install_route_file(
     let backup = if target.exists() {
         let backup_path = next_backup_path(&target)?;
         fs::copy(&target, &backup_path).map_err(|error| {
-            format!(
-                "Failed to create backup{}: {error}",
-                backup_path.display()
-            )
+            format!("Failed to create backup{}: {error}", backup_path.display())
         })?;
-        println!(
-            "[Backup] Backup created: {}",
-            backup_path.display()
-        );
+        println!("[Backup] Backup created: {}", backup_path.display());
         Some(backup_path)
     } else {
         None

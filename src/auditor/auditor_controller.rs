@@ -42,10 +42,7 @@ pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     }
     let normalized = normalize_path(path);
     let Some(assets_root) = find_assets_root(&normalized) else {
-        return Err(
-            crate::gettext!("Folder must be inside RailWorks/Assets!")
-                .to_string(),
-        );
+        return Err(crate::gettext!("Folder must be inside RailWorks/Assets!").to_string());
     };
     if normalized == assets_root
         || normalized
@@ -220,8 +217,7 @@ impl AuditorController {
                                     0.0
                                 };
                                 w.set_scan_progress(progress);
-                                let template =
-                                    crate::gettext!("Scanning: {} / {} files...");
+                                let template = crate::gettext!("Scanning: {} / {} files...");
                                 w.set_scan_status_text(
                                     template
                                         .replacen("{}", &done.to_string(), 1)
@@ -302,7 +298,8 @@ impl AuditorController {
                         w.set_filtered_rows(map_broken_resources_to_ui(&display_items));
                         w.set_scan_progress(1.0);
                         let final_msg = if total_issues == 0 {
-                            crate::gettext!("Check completed: no missing or corrupted files.").to_string()
+                            crate::gettext!("Check completed: no missing or corrupted files.")
+                                .to_string()
                         } else {
                             crate::gettext!("Check completed. Found problems: {}.")
                                 .replace("{}", &total_issues.to_string())
@@ -506,8 +503,7 @@ impl AuditorController {
                         return;
                     };
                     if let Err(e) = generate_full_directory_graph(&full_graph, Path::new("")) {
-                        let template =
-                            crate::gettext!("Failed to build full graph: {}");
+                        let template = crate::gettext!("Failed to build full graph: {}");
                         let msg = template.replace("{}", &e.to_string());
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
@@ -565,10 +561,7 @@ impl AuditorController {
                 {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
-                            format!(
-                                "Parent folder opened in explorer: {}.",
-                                dir.display()
-                            ),
+                            format!("Parent folder opened in explorer: {}.", dir.display()),
                             LogLevel::Info,
                         );
                         crate::schedule_ui_sync();
@@ -602,9 +595,7 @@ impl AuditorController {
                     expected_path
                 } else {
                     if let Some(win) = handle.upgrade() {
-                        win.set_editor_status(
-                            "Select element is not .bin/.GeoPcDx/.XSec".into(),
-                        );
+                        win.set_editor_status("Select element is not .bin/.GeoPcDx/.XSec".into());
                     }
                     return;
                 };

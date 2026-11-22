@@ -245,12 +245,10 @@ pub(crate) fn write_route_thumbnail_setting(path: &Path, enabled: bool) -> Resul
 #[cfg(test)]
 pub(crate) fn read_serz_process_limit(path: &Path) -> Result<usize, String> {
     let value = match fs::read_to_string(path) {
-        Ok(value) => value.trim().parse::<usize>().map_err(|_| {
-            format!(
-                "Incorrect max Serz threads count in {}.",
-                path.display()
-            )
-        })?,
+        Ok(value) => value
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| format!("Incorrect max Serz threads count in {}.", path.display()))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => maximum_serz_processes(),
         Err(error) => {
             return Err(format!(
@@ -281,12 +279,8 @@ pub(crate) fn write_serz_process_limit(path: &Path, limit: usize) -> Result<(), 
         .ok_or_else(|| "Incorrect path to Serz setting.".to_owned())?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create settings folder: {error}"))?;
-    fs::write(path, limit.to_string()).map_err(|error| {
-        format!(
-            "Failed to save Serz setting {}: {error}",
-            path.display()
-        )
-    })
+    fs::write(path, limit.to_string())
+        .map_err(|error| format!("Failed to save Serz setting {}: {error}", path.display()))
 }
 
 #[cfg(test)]

@@ -114,10 +114,7 @@ pub fn asset_chain_umlaut_evidence(
             });
         }
         Err(error) => {
-            return Err(format!(
-                "Failed to check {}: {error}",
-                root_asset.display()
-            ));
+            return Err(format!("Failed to check {}: {error}", root_asset.display()));
         }
     };
     let product_root = product_root_of(&assets_root, &canonical_root)?;
@@ -135,10 +132,7 @@ pub fn asset_chain_umlaut_evidence(
             Ok(path) => path,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
-                return Err(format!(
-                    "Failed to check {}: {error}",
-                    asset_path.display()
-                ));
+                return Err(format!("Failed to check {}: {error}", asset_path.display()));
             }
         };
         if !canonical.starts_with(&scope_root) || !visited.insert(canonical.clone()) {
@@ -393,12 +387,9 @@ fn process_serz_asset_queue(
     scan_all_geometry: &mut bool,
 ) -> Result<(), String> {
     while let Some(source) = queue.pop() {
-        let canonical = source.canonicalize().map_err(|error| {
-            format!(
-                "Failed to open dependency {}: {error}",
-                source.display()
-            )
-        })?;
+        let canonical = source
+            .canonicalize()
+            .map_err(|error| format!("Failed to open dependency {}: {error}", source.display()))?;
         if !canonical.starts_with(ctx.scope_root) || !visited.insert(canonical.clone()) {
             continue;
         }
@@ -607,18 +598,11 @@ pub(crate) fn repair_umlaut_asset_chain(
     let route_root = route_path
         .canonicalize()
         .map_err(|error| format!("Failed to check route folder: {error}"))?;
-    let source_asset = resolve_asset_path(&assets_root, asset_relative_path)?.ok_or_else(|| {
-        format!(
-            "Failed to find BIN for link {}.",
-            asset_relative_path
-        )
-    })?;
-    let canonical_asset = source_asset.canonicalize().map_err(|error| {
-        format!(
-            "Failed to open asset {}: {error}",
-            source_asset.display()
-        )
-    })?;
+    let source_asset = resolve_asset_path(&assets_root, asset_relative_path)?
+        .ok_or_else(|| format!("Failed to find BIN for link {}.", asset_relative_path))?;
+    let canonical_asset = source_asset
+        .canonicalize()
+        .map_err(|error| format!("Failed to open asset {}: {error}", source_asset.display()))?;
     if !canonical_asset.starts_with(&assets_root) || !canonical_asset.is_file() {
         return Err(format!(
             "File is located outside Assets or unavailable: {}",
@@ -672,9 +656,9 @@ pub(crate) fn repair_umlaut_asset_chain(
                 continue;
             }
             let source = entry.into_path();
-            let canonical = source.canonicalize().map_err(|error| {
-                format!("Failed to open file {}: {error}", source.display())
-            })?;
+            let canonical = source
+                .canonicalize()
+                .map_err(|error| format!("Failed to open file {}: {error}", source.display()))?;
             if is_serz_asset_extension(&canonical) {
                 // Такие файлы могут ссылаться на другие объекты: их ссылки
                 // тоже нужно обновить, поэтому они идут в цепочку.
@@ -708,9 +692,8 @@ pub(crate) fn repair_umlaut_asset_chain(
 
     if scan_all_geometry {
         for entry in WalkDir::new(&scope_root).follow_links(false) {
-            let entry = entry.map_err(|error| {
-                format!("Folder check error {}: {error}", scope_root.display())
-            })?;
+            let entry = entry
+                .map_err(|error| format!("Folder check error {}: {error}", scope_root.display()))?;
             if entry.file_type().is_file()
                 && entry
                     .path()

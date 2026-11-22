@@ -124,10 +124,7 @@ impl Default for CheckerApp {
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(load_last_game_path);
         let (ignored_route_ids, status) = match load_ignored_route_ids() {
-            Ok(ids) => (
-                ids,
-                "Set Ralworks path and scan routes.".to_owned(),
-            ),
+            Ok(ids) => (ids, "Set Ralworks path and scan routes.".to_owned()),
             Err(error) => (HashSet::new(), error),
         };
         Self {
@@ -405,10 +402,7 @@ impl CheckerApp {
             state.umlaut_assets.clear();
             state.scanning_umlauts = false;
         }
-        self.log_event(
-            format!("Checking route «{}»", route.name),
-            LogLevel::Info,
-        );
+        self.log_event(format!("Checking route «{}»", route.name), LogLevel::Info);
         crate::schedule_ui_sync();
         thread::spawn(move || {
             let progress_tx = tx.clone();

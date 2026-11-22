@@ -436,7 +436,8 @@ impl InventoryController {
                 if !is_safe_for_global_replacement(&asset.path, &asset.uses) {
                     if let Ok(mut app_guard) = app.lock() {
                         app_guard.log_event(
-                            "You can't change the track infrastructure parts through the program!".to_owned(),
+                            "You can't change the track infrastructure parts through the program!"
+                                .to_owned(),
                             LogLevel::Warning,
                         );
                         schedule_ui_sync();

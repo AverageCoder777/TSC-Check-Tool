@@ -32,9 +32,7 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
         return Err("DDS sizes exceeding boundaries of TgPcDx sUInt16".into());
     }
     if !width.is_power_of_two() || !height.is_power_of_two() {
-        return Err(format!(
-            "DDS sizes is not powers of two: {width}×{height}"
-        ));
+        return Err(format!("DDS sizes is not powers of two: {width}×{height}"));
     }
 
     let compression = dds_compression_of(&dds);
