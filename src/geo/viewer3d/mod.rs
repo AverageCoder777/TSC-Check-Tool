@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
+use glam::camera::rh::{proj::directx as proj, view};
 use glam::{Mat4, Vec3};
 use slint::ComponentHandle;
 
@@ -70,10 +71,10 @@ impl Camera {
         let distance = self.distance.max(min_distance);
         let (direction, _, _) = self.basis();
         let eye = self.target + direction * distance;
-        let view = Mat4::look_at_rh(eye, self.target, Vec3::Y);
+        let view = view::look_at_mat4(eye, self.target, Vec3::Y);
         let near = (distance * 0.01).clamp(0.001, 0.5);
         let far = (distance + safe_radius * 4.0 + self.target.length() * 2.0).max(near + 1.0);
-        let projection = Mat4::perspective_rh(45.0_f32.to_radians(), aspect, near, far);
+        let projection = proj::perspective(45.0_f32.to_radians(), aspect, near, far);
         CameraMatrices {
             eye,
             view,
@@ -290,9 +291,6 @@ fn render_worker(
         while let Some(current) = pending.take() {
             match current {
                 ViewCommand::Camera(mut next) => {
-                    // Convert incoming pan deltas into world-space target translation along the
-                    // current camera's screen-right and screen-up axes so orbiting stays centered
-                    // on the panned spot. Resetting pan_x/pan_y to (0, 0) re-centers on the model.
                     if next.pan_x == 0.0
                         && next.pan_y == 0.0
                         && (camera.pan_x != 0.0 || camera.pan_y != 0.0)

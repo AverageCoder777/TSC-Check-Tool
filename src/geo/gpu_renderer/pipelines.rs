@@ -76,14 +76,18 @@ impl Pipelines {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("GeoPcDx pipeline layout"),
-            bind_group_layouts: &[camera_layout, texture_layout, material_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(camera_layout),
+                Some(texture_layout),
+                Some(material_layout),
+            ],
+            immediate_size: 0,
         });
-        let vertex_layout = wgpu::VertexBufferLayout {
+        let vertex_layout = Some(wgpu::VertexBufferLayout {
             array_stride: size_of::<GpuVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
-        };
+        });
 
         let make = |label: &'static str,
                     topology: wgpu::PrimitiveTopology,
@@ -96,12 +100,14 @@ impl Pipelines {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "vs_main",
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: slice::from_ref(&vertex_layout),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: fragment_entry_point,
+                    entry_point: Some(fragment_entry_point),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: wgpu::TextureFormat::Rgba8UnormSrgb,
                         blend,
@@ -116,13 +122,14 @@ impl Pipelines {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth24Plus,
-                    depth_write_enabled,
-                    depth_compare: wgpu::CompareFunction::Less,
+                    depth_write_enabled: Some(depth_write_enabled),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample: Default::default(),
-                multiview: None,
+                multiview_mask: None,
+                cache: None,
             })
         };
 

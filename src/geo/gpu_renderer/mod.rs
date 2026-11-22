@@ -138,17 +138,18 @@ impl GpuRenderer {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
-            .ok_or("No compatible GPU adapter is available")?;
+            .map_err(|error| format!("No compatible GPU adapter is available: {error}"))?;
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("GeoPcDx offscreen renderer"),
                     required_features: wgpu::Features::empty(),
                     required_limits: adapter.limits(),
+                    ..Default::default()
                 },
-                None,
             )
             .await
             .map_err(|error| format!("Failed to create GPU device: {error}"))?;
@@ -401,9 +402,9 @@ impl GpuRenderer {
                 label: Some("GeoPcDx offscreen pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &targets.color_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        // Linear RGB corresponding to sRGB #1C2028.
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.0116,
                             g: 0.0144,
@@ -423,6 +424,7 @@ impl GpuRenderer {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
@@ -476,15 +478,15 @@ impl GpuRenderer {
         }
 
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &targets.color_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &targets.readback_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(targets.padded_bytes_per_row),
                     rows_per_image: Some(height),
@@ -503,13 +505,17 @@ impl GpuRenderer {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| format!("GPU poll failed: {error}"))?;
         receiver
             .recv()
             .map_err(|error| format!("GPU readback channel failed: {error}"))?
             .map_err(|error| format!("GPU readback failed: {error}"))?;
 
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|error| format!("GPU readback map range failed: {error}"))?;
         let bytes_per_row = (width as usize) * 4;
         let padded_bytes_per_row = targets.padded_bytes_per_row as usize;
         let pixels = if padded_bytes_per_row == bytes_per_row {

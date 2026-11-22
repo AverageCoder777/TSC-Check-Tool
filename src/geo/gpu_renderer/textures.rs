@@ -34,7 +34,7 @@ pub(super) fn create_texture_bind_groups(
         address_mode_v: wgpu::AddressMode::Repeat,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
         anisotropy_clamp: 16,
         ..Default::default()
     });
@@ -117,14 +117,14 @@ fn upload_texture(
     let mut mip_data = pixels;
     for level in 0..mip_levels {
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: level,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             mip_data.as_ref(),
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(mip_w * 4),
                 rows_per_image: Some(mip_h),
