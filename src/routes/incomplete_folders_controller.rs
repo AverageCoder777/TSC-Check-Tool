@@ -1,7 +1,10 @@
+use std::fs;
+use std::mem;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::app::app_controller::{CheckerApp, LogLevel};
 use crate::common::domain::IncompleteRouteFolder;
@@ -27,12 +30,25 @@ impl IncompleteFoldersController {
 
     pub(crate) fn bind(&self) {
         self.window.on_open_in_explorer(move |path| {
-            let _ = std::process::Command::new("explorer").arg(&path).spawn();
+            if !path.is_empty() {
+                let _ = Command::new("explorer").arg(path.as_str()).spawn();
+            }
         });
 
         let weak_del = self.window.as_weak();
         let app_del = self.app.clone();
         self.window.on_delete_selected(move |index| {
+            let Ok(idx) = usize::try_from(index) else {
+                return;
+            };
+            let has_target = app_del
+                .lock()
+                .map(|app| idx < app.incomplete_folders.len())
+                .unwrap_or(false);
+            if !has_target {
+                return;
+            }
+
             let confirmed = rfd::MessageDialog::new()
                 .set_title("Удаление папки")
                 .set_description("Удалить выбранную неполную папку навсегда?")
@@ -41,14 +57,13 @@ impl IncompleteFoldersController {
             if confirmed != rfd::MessageDialogResult::Ok {
                 return;
             }
+
             if let Ok(mut app) = app_del.lock() {
-                let idx = index as usize;
-                if idx >= app.incomplete_folders.len() {
+                let Some(path) = app.incomplete_folders.get(idx).map(|f| f.path.clone()) else {
                     return;
-                }
-                let path = app.incomplete_folders[idx].path.clone();
+                };
                 match validate_delete_path(&path, &app) {
-                    Ok(()) => match std::fs::remove_dir_all(&path) {
+                    Ok(()) => match fs::remove_dir_all(&path) {
                         Ok(()) => {
                             app.incomplete_folders.remove(idx);
                             app.log_event(
@@ -80,6 +95,14 @@ impl IncompleteFoldersController {
         let weak_all = self.window.as_weak();
         let app_all = self.app.clone();
         self.window.on_delete_all(move || {
+            let has_folders = app_all
+                .lock()
+                .map(|app| !app.incomplete_folders.is_empty())
+                .unwrap_or(false);
+            if !has_folders {
+                return;
+            }
+
             let confirmed = rfd::MessageDialog::new()
                 .set_title("Удаление папок")
                 .set_description("Удалить все найденные неполные папки навсегда?")
@@ -88,12 +111,37 @@ impl IncompleteFoldersController {
             if confirmed != rfd::MessageDialogResult::Ok {
                 return;
             }
+
             if let Ok(mut app) = app_all.lock() {
+                if app.incomplete_folders.is_empty() {
+                    return;
+                }
+                let canon_routes = match canonical_routes_dir(&app) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        app.log_event(
+                            format!("Ошибка безопасности при удалении папок: {e}."),
+                            LogLevel::Error,
+                        );
+                        return;
+                    }
+                };
+
+                let folders = mem::take(&mut app.incomplete_folders);
+                let total = folders.len();
                 let mut remaining = Vec::new();
-                for folder in app.incomplete_folders.clone() {
-                    match validate_delete_path(&folder.path, &app) {
+
+                for folder in folders {
+                    match validate_delete_path_against(&folder.path, &canon_routes) {
                         Ok(()) => {
-                            if std::fs::remove_dir_all(&folder.path).is_err() {
+                            if let Err(error) = fs::remove_dir_all(&folder.path) {
+                                app.log_event(
+                                    format!(
+                                        "Не удалось удалить {}: {error}.",
+                                        folder.path.display()
+                                    ),
+                                    LogLevel::Error,
+                                );
                                 remaining.push(folder);
                             }
                         }
@@ -109,12 +157,28 @@ impl IncompleteFoldersController {
                         }
                     }
                 }
-                let removed = app.incomplete_folders.len() - remaining.len();
+
+                let removed = total - remaining.len();
+                let failed = remaining.len();
                 app.incomplete_folders = remaining;
-                app.log_event(
-                    format!("Удалены все неполные папки ({removed} шт.)."),
-                    LogLevel::Info,
-                );
+
+                if failed == 0 {
+                    app.log_event(
+                        format!("Удалены все неполные папки ({removed} шт.)."),
+                        LogLevel::Info,
+                    );
+                } else if removed > 0 {
+                    app.log_event(
+                        format!("Удалено неполных папок: {removed} (не удалось удалить: {failed})."),
+                        LogLevel::Warning,
+                    );
+                } else {
+                    app.log_event(
+                        "Не удалось удалить ни одной неполной папки.",
+                        LogLevel::Error,
+                    );
+                }
+
                 if let Some(w) = weak_all.upgrade() {
                     update_window(&w, &app.incomplete_folders);
                 }
@@ -141,28 +205,36 @@ fn update_window(window: &IncompleteFoldersWindow, folders: &[IncompleteRouteFol
         folder_count_word(count),
         format_size_bytes(total_bytes)
     );
-    window.set_folders(slint::ModelRc::new(slint::VecModel::from(items)));
+    window.set_folders(ModelRc::new(VecModel::from(items)));
     window.set_selected_index(-1);
     window.set_summary(summary.into());
+}
+
+fn canonical_routes_dir(app: &CheckerApp) -> Result<PathBuf, String> {
+    let routes_dir = app.clean_rw_path().join("Content").join("Routes");
+    routes_dir
+        .canonicalize()
+        .map_err(|e| format!("Не удалось определить папку маршрутов: {e}"))
 }
 
 /// Проверяет, безопасно ли удалять директорию: путь должен находиться
 /// внутри `<game_path>/Content/Routes` и не быть самой этой папкой.
 fn validate_delete_path(path: &Path, app: &CheckerApp) -> Result<(), String> {
+    let canon_routes = canonical_routes_dir(app)?;
+    validate_delete_path_against(path, &canon_routes)
+}
+
+fn validate_delete_path_against(path: &Path, canon_routes: &Path) -> Result<(), String> {
     if path.as_os_str().is_empty() {
         return Err("Путь к удалению пустой.".to_owned());
     }
-    let routes_dir = PathBuf::from(&app.rw_path).join("Content").join("Routes");
-    let canon_routes = routes_dir
-        .canonicalize()
-        .map_err(|e| format!("Не удалось определить папку маршрутов: {e}"))?;
     let canon_target = path
         .canonicalize()
         .map_err(|e| format!("Не удалось определить целевой путь: {e}"))?;
     if canon_target == canon_routes {
         return Err("Удаление корневой папки маршрутов запрещено.".to_owned());
     }
-    if !canon_target.starts_with(&canon_routes) {
+    if !canon_target.starts_with(canon_routes) {
         return Err("Целевой путь находится вне папки маршрутов. Удаление запрещено.".to_owned());
     }
     Ok(())

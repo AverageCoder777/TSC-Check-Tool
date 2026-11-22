@@ -1,16 +1,14 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::thread;
 
-/// Канал запросов на асинхронную загрузку иконок (UI → фоновый поток).
-static ICON_LOAD_TX: OnceLock<mpsc::Sender<PathBuf>> = OnceLock::new();
-/// Канал результатов загрузки иконок (фоновый поток → UI): (путь, сырые байты файла).
 type LoadedIcon = (PathBuf, Vec<u8>);
-type IconResultReceiver = Arc<Mutex<mpsc::Receiver<LoadedIcon>>>;
-static ICON_RESULT_RX: OnceLock<IconResultReceiver> = OnceLock::new();
+
+static ICON_LOAD_TX: OnceLock<mpsc::Sender<PathBuf>> = OnceLock::new();
+static ICON_RESULT_RX: OnceLock<Mutex<mpsc::Receiver<LoadedIcon>>> = OnceLock::new();
 
 thread_local! {
     static ROUTE_ICON_CACHE: RefCell<HashMap<PathBuf, slint::Image>> = RefCell::new(HashMap::new());
@@ -19,18 +17,19 @@ thread_local! {
 
 /// Инициализирует каналы и запускает фоновый поток чтения иконок.
 pub(crate) fn init() {
+    if ICON_LOAD_TX.get().is_some() {
+        return;
+    }
     let (icon_load_tx, icon_load_rx) = mpsc::channel::<PathBuf>();
-    let (icon_result_tx, icon_result_rx) = mpsc::channel::<(PathBuf, Vec<u8>)>();
-    ICON_LOAD_TX.set(icon_load_tx).ok();
-    ICON_RESULT_RX
-        .set(Arc::new(Mutex::new(icon_result_rx)))
-        .ok();
+    let (icon_result_tx, icon_result_rx) = mpsc::channel::<LoadedIcon>();
+    if ICON_LOAD_TX.set(icon_load_tx).is_err() {
+        return;
+    }
+    let _ = ICON_RESULT_RX.set(Mutex::new(icon_result_rx));
 
     thread::spawn(move || {
         while let Ok(path) = icon_load_rx.recv() {
-            // При ошибке чтения отправляем пустой буфер, чтобы путь закрылся в кэше
-            // и не запрашивался бесконечно.
-            let data = std::fs::read(&path).unwrap_or_default();
+            let data = fs::read(&path).unwrap_or_default();
             if icon_result_tx.send((path, data)).is_ok() {
                 crate::schedule_ui_sync();
             }
@@ -41,6 +40,11 @@ pub(crate) fn init() {
 pub(crate) fn clear_route_icon_cache() {
     ROUTE_ICON_CACHE.with(|cache| cache.borrow_mut().clear());
     IN_FLIGHT_ICONS.with(|set| set.borrow_mut().clear());
+    if let Some(rx_mutex) = ICON_RESULT_RX.get()
+        && let Ok(rx) = rx_mutex.lock()
+    {
+        while rx.try_recv().is_ok() {}
+    }
 }
 
 pub(crate) fn try_get_route_icon(icon_path: &Path) -> Option<slint::Image> {
@@ -53,9 +57,12 @@ pub(crate) fn request_route_icon_load(icon_path: &Path) {
     if already_handled {
         return;
     }
-    IN_FLIGHT_ICONS.with(|set| set.borrow_mut().insert(icon_path.to_path_buf()));
-    if let Some(tx) = ICON_LOAD_TX.get() {
-        let _ = tx.send(icon_path.to_path_buf());
+    let Some(tx) = ICON_LOAD_TX.get() else {
+        return;
+    };
+    let owned = icon_path.to_path_buf();
+    if tx.send(owned.clone()).is_ok() {
+        IN_FLIGHT_ICONS.with(|set| set.borrow_mut().insert(owned));
     }
 }
 
@@ -63,15 +70,15 @@ pub(crate) fn request_route_icon_load(icon_path: &Path) {
 /// Возвращает `true`, если появилась хотя бы одна новая иконка.
 pub(crate) fn drain_loaded_icons() -> bool {
     let mut updated = false;
-    if let Some(rx_arc) = ICON_RESULT_RX.get()
-        && let Ok(rx) = rx_arc.lock()
+    if let Some(rx_mutex) = ICON_RESULT_RX.get()
+        && let Ok(rx) = rx_mutex.lock()
     {
         while let Ok((path, data)) = rx.try_recv() {
             let image = decode_icon_bytes(&data);
-            ROUTE_ICON_CACHE.with(|cache| {
-                cache.borrow_mut().insert(path.clone(), image);
-            });
             IN_FLIGHT_ICONS.with(|set| set.borrow_mut().remove(&path));
+            ROUTE_ICON_CACHE.with(|cache| {
+                cache.borrow_mut().insert(path, image);
+            });
             updated = true;
         }
     }
