@@ -313,39 +313,133 @@ pub(crate) fn find_submeshes(
         }
     }
 
-    let mut next_lod = 0;
-    for child in children {
-        let is_lod_child = matches!(child, SerzNode::Element { .. })
-            || matches!(
-                child,
-                SerzNode::Reference { name, .. } if !name.eq_ignore_ascii_case("material")
-            );
-        let child_lod = if is_lod_container && is_lod_child {
-            let level = next_lod;
-            next_lod += 1;
-            if level > 0 {
-                continue;
-            }
-            Some(level)
-        } else {
-            None
-        };
-        find_submeshes(
-            child,
-            context,
-            TraversalState {
-                material: material_reference,
-                transform,
-                transform_id: active_transform_id,
-                lod: child_lod.or(lod),
-                excluded,
-                node_name: effective_node_name,
-                vertex_buffer_index: next_inherited_vbuf,
-            },
-            reference_stack,
-            output,
-        );
+    let child_state = TraversalState {
+        material: material_reference,
+        transform,
+        transform_id: active_transform_id,
+        lod,
+        excluded,
+        node_name: effective_node_name,
+        vertex_buffer_index: next_inherited_vbuf,
+    };
+
+    if is_lod_container {
+        traverse_lod_container(children, context, child_state, reference_stack, output);
+    } else {
+        for child in children {
+            find_submeshes(child, context, child_state, reference_stack, output);
+        }
     }
+}
+
+fn is_lod_selector_node(node: &SerzNode, ids: &HashMap<u32, &SerzNode>) -> bool {
+    let resolved = resolve_ref_node(node, ids, &mut HashSet::new()).unwrap_or(node);
+    matches!(
+        resolved,
+        SerzNode::Element { name, .. }
+            if contains_ignore_ascii_case(name, "chcsgnodelodselector")
+                || contains_ignore_ascii_case(name, "lodlist")
+    )
+}
+
+fn is_lod_metadata_child(node: &SerzNode) -> bool {
+    match node {
+        SerzNode::Reference { name, .. } | SerzNode::Element { name, .. } => {
+            name.eq_ignore_ascii_case("material")
+                || contains_ignore_ascii_case(name, "lodcontroller")
+                || name.eq_ignore_ascii_case("transformid")
+                || name.eq_ignore_ascii_case("point")
+                || name.eq_ignore_ascii_case("centre")
+                || name.eq_ignore_ascii_case("radius")
+        }
+        _ => true,
+    }
+}
+
+fn traverse_lod_container(
+    children: &[SerzNode],
+    context: &NodeContext<'_>,
+    state: TraversalState<'_>,
+    reference_stack: &mut HashSet<u32>,
+    output: &mut Vec<RawSubmesh>,
+) {
+    // In RailWorks GeoPcDx, `cHcSGNodeLODSelector` wraps its LOD branches inside
+    // a `<Child>` (or `<Children>`) element. Unwrap it so each sibling branch gets
+    // its own LOD index instead of the whole wrapper inheriting LOD0.
+    let mut has_child_wrapper = false;
+    let mut next_lod = 0u32;
+
+    for child in children {
+        if let SerzNode::Element {
+            name,
+            children: wrapper_children,
+            ..
+        } = child
+            && (name.eq_ignore_ascii_case("child") || name.eq_ignore_ascii_case("children"))
+        {
+            has_child_wrapper = true;
+            for branch in wrapper_children {
+                traverse_lod_branch(
+                    branch,
+                    &mut next_lod,
+                    context,
+                    state,
+                    reference_stack,
+                    output,
+                );
+            }
+        }
+    }
+
+    if !has_child_wrapper {
+        for branch in children {
+            traverse_lod_branch(
+                branch,
+                &mut next_lod,
+                context,
+                state,
+                reference_stack,
+                output,
+            );
+        }
+    }
+}
+
+fn traverse_lod_branch(
+    branch: &SerzNode,
+    next_lod: &mut u32,
+    context: &NodeContext<'_>,
+    state: TraversalState<'_>,
+    reference_stack: &mut HashSet<u32>,
+    output: &mut Vec<RawSubmesh>,
+) {
+    if is_lod_metadata_child(branch) {
+        return;
+    }
+
+    // Nested LOD selectors inside `<Child>` are separate child scene-graph parts
+    // (e.g. wheels under a bogie, wiper segments) with their own LOD0 — never skip them.
+    if is_lod_selector_node(branch, context.ids) {
+        find_submeshes(branch, context, state, reference_stack, output);
+        return;
+    }
+
+    let level = *next_lod;
+    *next_lod += 1;
+    if level > 0 {
+        return;
+    }
+
+    find_submeshes(
+        branch,
+        context,
+        TraversalState {
+            lod: Some(level).or(state.lod),
+            ..state
+        },
+        reference_stack,
+        output,
+    );
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
