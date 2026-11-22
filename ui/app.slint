@@ -1956,7 +1956,7 @@ export component SettingsWindow inherits Window {
                 line-height-factor: 0;
                 min-height: 20px;
                 overflow: TextOverflow.elide;
-                text: @tr("Путь к LocoSwap:");
+                text: @tr("LocoSwap path:");
                 vertical-alignment: TextVerticalAlignment.center;
                 wrap: TextWrap.word-wrap;
             }
@@ -1990,7 +1990,7 @@ export component SettingsWindow inherits Window {
                 line-height-factor: 0;
                 min-height: 20px;
                 overflow: TextOverflow.elide;
-                text: @tr("Папка с игрой:");
+                text: @tr("Game root folder:");
                 vertical-alignment: TextVerticalAlignment.center;
                 wrap: TextWrap.word-wrap;
             }
@@ -2008,7 +2008,7 @@ export component SettingsWindow inherits Window {
             Button {
                 icon-size: 15px;
                 min-height: 20px;
-                text: @tr("Обзор");
+                text: @tr("Review");
                 clicked => { pick-game(); }
             }
         }
@@ -2202,7 +2202,7 @@ export component FolderAuditorWindow inherits Window {
             }
 
             Button {
-                text: @tr("Обзор");
+                text: @tr("Review");
                 enabled: !root.is-scanning;
                 clicked => { root.pick-folder(); }
             }
@@ -2350,7 +2350,7 @@ export component FolderAuditorWindow inherits Window {
             padding-right: 10px;
 
             Text {
-                text: sort-col == 0 ? (sort-ascending ? @tr("Тип ↑") : @tr("Тип ↓")) : @tr("Тип");
+                text: sort-col == 0 ? (sort-ascending ? @tr("Type ↑") : @tr("Type ↓")) : @tr("Type");
                 width: root.col-kind-width;
                 horizontal-alignment: left;
                 vertical-alignment: center;
