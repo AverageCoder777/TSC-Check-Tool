@@ -365,9 +365,8 @@ pub fn translated_reference(
         .unwrap_or(Cow::Borrowed(file_name));
 
     let extra_ext = reference.extension.as_ref().map_or(0, |ext| ext.len() + 1);
-    let mut text = String::with_capacity(
-        folder.len() + reference.variant.len() + stem.len() + extra_ext,
-    );
+    let mut text =
+        String::with_capacity(folder.len() + reference.variant.len() + stem.len() + extra_ext);
     text.push_str(folder);
     text.push_str(&reference.variant);
     text.push_str(&stem);

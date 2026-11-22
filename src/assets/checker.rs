@@ -916,11 +916,7 @@ fn read_ap_archive_files(archive_path: &Path, files: &mut HashSet<String>) -> Re
     Ok(())
 }
 
-fn asset_exists_in_ap_cache(
-    assets_path: &Path,
-    relative_asset: &str,
-    ap_cache: &ApCache,
-) -> bool {
+fn asset_exists_in_ap_cache(assets_path: &Path, relative_asset: &str, ap_cache: &ApCache) -> bool {
     let parts: Vec<&str> = relative_asset.split('/').collect();
     if parts.len() < 3 {
         return false;

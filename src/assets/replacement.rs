@@ -341,9 +341,7 @@ pub(crate) fn replace_missing_asset(
     let replacement_xml = read_serz_xml(&replacement_path)
         .ok()
         .or_else(|| fs::read_to_string(&replacement_path).ok());
-    let root_tag = replacement_xml
-        .as_deref()
-        .and_then(first_blueprint_tag);
+    let root_tag = replacement_xml.as_deref().and_then(first_blueprint_tag);
 
     match asset_type {
         RouteAssetType::Scenery => {
@@ -357,9 +355,7 @@ pub(crate) fn replace_missing_asset(
                 ]
                 .contains(&tag.as_str())
             {
-                return Err(
-                    "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned(),
-                );
+                return Err("Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned());
             }
         }
         RouteAssetType::Loft => {
@@ -371,18 +367,14 @@ pub(crate) fn replace_missing_asset(
                 ]
                 .contains(&tag.as_str())
             {
-                return Err(
-                    "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned(),
-                );
+                return Err("Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned());
             }
         }
         RouteAssetType::Road => {
             if let Some(tag) = &root_tag
                 && tag != "cRoadSectionBlueprint"
             {
-                return Err(
-                    "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned(),
-                );
+                return Err("Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned());
             }
         }
         RouteAssetType::TrackRules => {

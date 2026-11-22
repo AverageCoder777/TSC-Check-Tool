@@ -479,8 +479,7 @@ impl AuditorController {
                         &outgoing,
                         &missing_refs,
                     ) {
-                        let template =
-                            crate::gettext!("Не удалось открыть граф зависимостей: {}");
+                        let template = crate::gettext!("Не удалось открыть граф зависимостей: {}");
                         let msg = template.replace("{}", &e.to_string());
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
@@ -702,13 +701,11 @@ fn is_existing_texture(path: &Path) -> bool {
 }
 
 fn is_editable_asset(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| {
-            e.eq_ignore_ascii_case("bin")
-                || e.eq_ignore_ascii_case("geopcdx")
-                || e.eq_ignore_ascii_case("xsec")
-        })
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        e.eq_ignore_ascii_case("bin")
+            || e.eq_ignore_ascii_case("geopcdx")
+            || e.eq_ignore_ascii_case("xsec")
+    })
 }
 
 fn format_refs_preview(set: Option<&HashSet<PathBuf>>, empty: &str) -> String {

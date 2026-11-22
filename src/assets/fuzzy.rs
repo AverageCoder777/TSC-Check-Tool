@@ -57,7 +57,9 @@ pub(crate) fn normalize_fuzzy_segment(value: &str) -> String {
     for ch in value.chars() {
         if ch.is_alphanumeric() || ch == '_' {
             let folded = match ch {
-                'ä' | 'Ä' | 'á' | 'Á' | 'à' | 'À' | 'â' | 'Â' | 'ã' | 'Ã' | 'å' | 'Å' => 'a',
+                'ä' | 'Ä' | 'á' | 'Á' | 'à' | 'À' | 'â' | 'Â' | 'ã' | 'Ã' | 'å' | 'Å' => {
+                    'a'
+                }
                 'ö' | 'Ö' | 'ó' | 'Ó' | 'ò' | 'Ò' | 'ô' | 'Ô' | 'õ' | 'Õ' => 'o',
                 'ü' | 'Ü' | 'ú' | 'Ú' | 'ù' | 'Ù' | 'û' | 'Û' => 'u',
                 'é' | 'É' | 'è' | 'È' | 'ê' | 'Ê' | 'ë' | 'Ë' => 'e',
@@ -212,7 +214,11 @@ impl<'a> PreparedFuzzyQuery<'a> {
     }
 }
 
-fn resolve_segment(parent: &Path, segment: &str, want_directory: bool) -> Option<(PathBuf, String)> {
+fn resolve_segment(
+    parent: &Path,
+    segment: &str,
+    want_directory: bool,
+) -> Option<(PathBuf, String)> {
     if !has_corrupted_or_nonascii(segment) {
         let direct = parent.join(segment);
         let matches_type = if want_directory {

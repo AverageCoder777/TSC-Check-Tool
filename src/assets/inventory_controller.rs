@@ -485,9 +485,11 @@ impl InventoryController {
                 };
                 if let Ok(mut app_guard) = app.lock() {
                     app_guard.inventory_replacement_pending_check = true;
-                    app_guard
-                        .asset_replacement_queue
-                        .push_back((missing, picked, replacement_relative));
+                    app_guard.asset_replacement_queue.push_back((
+                        missing,
+                        picked,
+                        replacement_relative,
+                    ));
                     app_guard.start_next_asset_replacement();
                 }
             });

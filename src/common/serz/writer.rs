@@ -188,33 +188,25 @@ impl<W: Write> SerzWriter<W> {
                 self.writer.write_all(&[b]).map_err(|e| e.to_string())?;
             }
             "sUInt32" => {
-                let v = value
-                    .parse::<u32>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let v = value.parse::<u32>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&v.to_le_bytes())
                     .map_err(|e| e.to_string())?;
             }
             "sInt32" => {
-                let v = value
-                    .parse::<i32>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let v = value.parse::<i32>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&v.to_le_bytes())
                     .map_err(|e| e.to_string())?;
             }
             "sUInt16" => {
-                let v = value
-                    .parse::<u16>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let v = value.parse::<u16>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&v.to_le_bytes())
                     .map_err(|e| e.to_string())?;
             }
             "sInt16" => {
-                let v = value
-                    .parse::<i16>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let v = value.parse::<i16>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&v.to_le_bytes())
                     .map_err(|e| e.to_string())?;
@@ -239,9 +231,7 @@ impl<W: Write> SerzWriter<W> {
                         .map_err(|e| e.to_string())?;
                     return Ok(());
                 }
-                let f = value
-                    .parse::<f32>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let f = value.parse::<f32>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&f.to_le_bytes())
                     .map_err(|e| e.to_string())?;
@@ -253,25 +243,19 @@ impl<W: Write> SerzWriter<W> {
                     self.writer.write_all(&bytes).map_err(|e| e.to_string())?;
                     return Ok(());
                 }
-                let d = value
-                    .parse::<f64>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let d = value.parse::<f64>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&d.to_le_bytes())
                     .map_err(|e| e.to_string())?;
             }
             "sUInt64" => {
-                let v = value
-                    .parse::<u64>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let v = value.parse::<u64>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&v.to_le_bytes())
                     .map_err(|e| e.to_string())?;
             }
             "sInt64" => {
-                let v = value
-                    .parse::<i64>()
-                    .map_err(|e| format!("{e}: {value}"))?;
+                let v = value.parse::<i64>().map_err(|e| format!("{e}: {value}"))?;
                 self.writer
                     .write_all(&v.to_le_bytes())
                     .map_err(|e| e.to_string())?;

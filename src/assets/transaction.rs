@@ -208,10 +208,7 @@ pub fn install_route_file(
                 )),
             };
         }
-        return Err(format!(
-            "Не удалось записать {}: {error}",
-            target.display()
-        ));
+        return Err(format!("Не удалось записать {}: {error}", target.display()));
     }
     Ok(backup)
 }

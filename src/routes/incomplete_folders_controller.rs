@@ -169,7 +169,9 @@ impl IncompleteFoldersController {
                     );
                 } else if removed > 0 {
                     app.log_event(
-                        format!("Удалено неполных папок: {removed} (не удалось удалить: {failed})."),
+                        format!(
+                            "Удалено неполных папок: {removed} (не удалось удалить: {failed})."
+                        ),
                         LogLevel::Warning,
                     );
                 } else {

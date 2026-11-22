@@ -130,9 +130,10 @@ fn matches_filters(
     }
     if !search.is_empty() {
         let matches = asset.path_search.contains(search)
-            || asset.uses.iter().any(|u| {
-                u.tile_search.contains(search) || u.source_file_search.contains(search)
-            });
+            || asset
+                .uses
+                .iter()
+                .any(|u| u.tile_search.contains(search) || u.source_file_search.contains(search));
         if !matches {
             return false;
         }

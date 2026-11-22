@@ -457,8 +457,8 @@ pub(crate) fn inspect_route_folder(
                         log_route_warning(log, child_path, "ошибка чтения элемента архива");
                     } else {
                         let contents = decode_xml_bytes(&bytes);
-                        archived_route_name = parse_route_name(&contents)
-                            .or_else(|| parse_route_name_tag(&contents));
+                        archived_route_name =
+                            parse_route_name(&contents).or_else(|| parse_route_name_tag(&contents));
                     }
                 }
             }
@@ -676,7 +676,10 @@ fn is_route_image(extension: Option<&std::ffi::OsStr>) -> bool {
 
 fn is_route_information_image(member_name: &str) -> bool {
     let mut prev_is_route_info = false;
-    for part in member_name.split(['/', '\\']).filter(|part| !part.is_empty()) {
+    for part in member_name
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+    {
         if prev_is_route_info && is_route_image(Path::new(part).extension()) {
             return true;
         }

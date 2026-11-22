@@ -40,7 +40,8 @@ impl MissingAssetsController {
         };
         let missing = &result.missing_assets;
         let trimmed = query.trim();
-        let query_lower = (!trimmed.is_empty() && !trimmed.is_ascii()).then(|| trimmed.to_lowercase());
+        let query_lower =
+            (!trimmed.is_empty() && !trimmed.is_ascii()).then(|| trimmed.to_lowercase());
 
         let sel_path = selected_asset_path(mw, mw.get_selected_asset());
 
@@ -67,7 +68,9 @@ impl MissingAssetsController {
             let cut = p.rfind(['/', '\\']).map_or(0, |i| i + 1);
             paths.push(SharedString::from(p));
             counts.push(m.uses.len() as i32);
-            repairs.push(SharedString::from(m.suggested_repair.as_deref().unwrap_or("")));
+            repairs.push(SharedString::from(
+                m.suggested_repair.as_deref().unwrap_or(""),
+            ));
             corrupted.push(m.is_corrupted_link);
             types.push(SharedString::from(RouteAssetType::label(m.asset_type)));
             safe.push(crate::assets::is_safe_for_global_replacement(
@@ -207,9 +210,7 @@ impl MissingAssetsController {
                 app.asset_replacement_queue = queue;
                 app.missing_assets_shown = false;
                 app.log_event(
-                    format!(
-                        "Массовая починка путей: исправлено {repairable_count} объектов."
-                    ),
+                    format!("Массовая починка путей: исправлено {repairable_count} объектов."),
                     LogLevel::Info,
                 );
                 app.start_next_asset_replacement();

@@ -721,7 +721,8 @@ impl CheckerApp {
             };
             match check_message {
                 Ok(CheckMessage::Progress(status)) => {
-                    if status.starts_with("Анализ файла:") || status.starts_with("Анализ файлов:") {
+                    if status.starts_with("Анализ файла:") || status.starts_with("Анализ файлов:")
+                    {
                         self.progress_pending = Some(status);
                     } else {
                         self.progress_pending = None;

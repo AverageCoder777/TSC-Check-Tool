@@ -139,10 +139,7 @@ impl<'a> SerzReader<'a> {
             return ("NaN".to_string(), alt);
         }
         if val.is_infinite() {
-            return (
-                if val > 0.0 { "INF" } else { "-INF" }.to_string(),
-                alt,
-            );
+            return (if val > 0.0 { "INF" } else { "-INF" }.to_string(), alt);
         }
 
         let exp = val.abs().log10().floor() as i32;
