@@ -35,7 +35,7 @@ pub fn resolve_asset_path(
 
     // Windows считает «ä» и «Ä» одним и тем же именем файла, поэтому одинаковые
     // файлы из разных вариантов отсекаются по каноническому пути.
-    let mut candidates: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut candidates: Vec<(PathBuf, PathBuf, bool)> = Vec::new();
     for tier in tiers {
         for variant in tier {
             let candidate = assets_path.join(variant.replace('/', "\\"));
@@ -43,15 +43,16 @@ pub fn resolve_asset_path(
                 continue;
             }
             let identity = fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
-            if !candidates.iter().any(|(_, existing)| *existing == identity) {
-                candidates.push((candidate, identity));
+            if !candidates
+                .iter()
+                .any(|(_, existing, _)| *existing == identity)
+            {
+                let is_ascii = variant.is_ascii();
+                candidates.push((candidate, identity, is_ascii));
             }
         }
     }
-    if let Some(position) = candidates
-        .iter()
-        .position(|(path, _)| path.to_string_lossy().is_ascii())
-    {
+    if let Some(position) = candidates.iter().position(|(_, _, is_ascii)| *is_ascii) {
         return Ok(Some(candidates.remove(position).0));
     }
     match candidates.len() {
@@ -61,7 +62,7 @@ pub fn resolve_asset_path(
             "Ссылка содержит испорченный символ и совпадает с несколькими файлами: {}",
             candidates
                 .iter()
-                .map(|(path, _)| path.display().to_string())
+                .map(|(path, _, _)| path.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
@@ -73,26 +74,21 @@ pub fn resolve_asset_path(
 /// Имена в игре иногда отличаются от ссылок одной буквой: кириллическая «Е»
 /// вместо латинской или испорченный символ. Тогда ищем ближайшее по сходству.
 pub fn find_similar_asset_path(assets_path: &Path, relative_asset: &str) -> Option<PathBuf> {
-    let relative = relative_asset.replace('/', "\\");
     let mut current = assets_path.to_path_buf();
-    let components: Vec<&str> = relative
-        .split('\\')
+    let components: Vec<&str> = relative_asset
+        .split(['\\', '/'])
         .filter(|part| !part.is_empty())
         .collect();
     for (index, component) in components.iter().enumerate() {
         if index + 1 == components.len() {
             // Сначала имя целиком, потом с расширениями: в ссылке расширение
             // может быть, а может и отсутствовать.
-            if let Some(path) = find_entry_in_directory(&current, component, false) {
-                return Some(path);
-            }
-            for extension in ["bin", "GeoPcDx", "TgPcDx", "xml"] {
-                let wanted = format!("{component}.{extension}");
-                if let Some(path) = find_entry_in_directory(&current, &wanted, false) {
-                    return Some(path);
-                }
-            }
-            return None;
+            return find_file_with_extensions(
+                &current,
+                component,
+                &["bin", "GeoPcDx", "TgPcDx", "xml"],
+                true,
+            );
         }
         current = find_entry_in_directory(&current, component, true)?;
     }
@@ -114,17 +110,12 @@ pub fn unresolved_reference_error(
         source.display(),
         reference.to_text()
     );
-    let mut folders = vec![
-        source.parent().map(Path::to_path_buf),
-        Some(product_root.to_path_buf()),
-        Some(assets_root.to_path_buf()),
-    ];
-    folders.retain(|folder| folder.is_some());
+    let folders = [source.parent(), Some(product_root), Some(assets_root)];
     for folder in folders.into_iter().flatten() {
         if !folder.is_dir() {
             continue;
         }
-        let names: Vec<String> = fs::read_dir(&folder)
+        let names: Vec<String> = fs::read_dir(folder)
             .into_iter()
             .flatten()
             .flatten()
@@ -165,32 +156,34 @@ pub fn resolve_product_reference(
             // Испорченный символ в ссылке может означать и умляут, и уже
             // переписанное имя, причём в разных частях пути по-разному, поэтому
             // проверяются все сочетания.
-            let mut replacements: Vec<&str> = TRANSLITERATED_CHARACTERS.to_vec();
+            let mut replacements: Vec<&str> =
+                Vec::with_capacity(TRANSLITERATED_CHARACTERS.len() + UMLAUT_CHARACTERS.len());
+            replacements.extend_from_slice(&TRANSLITERATED_CHARACTERS);
             replacements.extend_from_slice(&UMLAUT_CHARACTERS);
             names.extend(replace_broken_characters_combinations(&base, &replacements));
         }
     }
     let extensions = reference.disk_extensions();
     let bases = [
-        (assets_root.to_path_buf(), ReferenceBase::Assets),
-        (product_root.to_path_buf(), ReferenceBase::Product),
-        (source_file.parent()?.to_path_buf(), ReferenceBase::Folder),
+        (assets_root, ReferenceBase::Assets),
+        (product_root, ReferenceBase::Product),
+        (source_file.parent()?, ReferenceBase::Folder),
     ];
-    for (directory, kind) in &bases {
+    for &(directory, kind) in &bases {
         for name in &names {
             for extension in &extensions {
                 let candidate = directory.join(format!("{name}.{extension}"));
                 if candidate.is_file() {
-                    return Some((candidate, *kind));
+                    return Some((candidate, kind));
                 }
             }
         }
     }
     // Точного совпадения нет: ищем ближайшее по сходству. Имя папки может
     // отличаться регистром, кириллическими буквами или количеством букв.
-    for (directory, kind) in &bases {
+    for &(directory, kind) in &bases {
         if let Some(path) = resolve_reference_path(directory, &base, &extensions) {
-            return Some((path, *kind));
+            return Some((path, kind));
         }
     }
     None
@@ -207,7 +200,9 @@ pub fn find_entry_in_directory(
     want_directory: bool,
 ) -> Option<PathBuf> {
     let exact = directory.join(wanted);
-    if exact.is_dir() == want_directory && (exact.is_file() || exact.is_dir()) {
+    if let Ok(meta) = fs::metadata(&exact)
+        && ((want_directory && meta.is_dir()) || (!want_directory && meta.is_file()))
+    {
         return Some(exact);
     }
     let entries = fs::read_dir(directory).ok()?;
@@ -233,21 +228,56 @@ pub fn resolve_reference_path(
     extensions: &[String],
 ) -> Option<PathBuf> {
     let mut current = base.to_path_buf();
-    let components: Vec<_> = relative
+    let components: Vec<&str> = relative
         .split(['\\', '/'])
         .filter(|part| !part.is_empty())
         .collect();
     for (index, component) in components.iter().enumerate() {
         if index + 1 == components.len() {
-            for extension in extensions {
-                let wanted = format!("{component}.{extension}");
-                if let Some(path) = find_entry_in_directory(&current, &wanted, false) {
-                    return Some(path);
-                }
-            }
-            return None;
+            let ext_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+            return find_file_with_extensions(&current, component, &ext_refs, false);
         }
         current = find_entry_in_directory(&current, component, true)?;
+    }
+    None
+}
+
+/// Ищет файл по базовому имени и набору расширений за один проход `read_dir`.
+fn find_file_with_extensions(
+    directory: &Path,
+    stem: &str,
+    extensions: &[&str],
+    try_bare: bool,
+) -> Option<PathBuf> {
+    let mut wanted_names = Vec::with_capacity(extensions.len() + usize::from(try_bare));
+    if try_bare {
+        wanted_names.push(stem.to_owned());
+    }
+    for ext in extensions {
+        wanted_names.push(format!("{stem}.{ext}"));
+    }
+
+    // Быстрый путь: точное совпадение на диске без чтения всей папки.
+    for wanted in &wanted_names {
+        let exact = directory.join(wanted);
+        if exact.is_file() {
+            return Some(exact);
+        }
+    }
+
+    let entries = fs::read_dir(directory).ok()?;
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+        if wanted_names
+            .iter()
+            .any(|wanted| name_str.eq_ignore_ascii_case(wanted) || names_match(wanted, &name_str))
+        {
+            return Some(entry.path());
+        }
     }
     None
 }

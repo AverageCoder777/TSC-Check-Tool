@@ -2,7 +2,7 @@ use super::*;
 use crate::assets::reference::extract_asset_references_with_locations;
 use crate::common::{
     domain::{AssetReplacementReport, AssetUse, RouteFile, TileKind},
-    serz::{SerzReader, encode_to_vec},
+    serz::{SerzNode, SerzPreamble, SerzReader, encode_to_vec},
 };
 use std::collections::HashSet;
 use std::fs;
@@ -36,156 +36,21 @@ pub fn delete_scenery_asset(
         }
     }
 
-    let parts: Vec<&str> = asset_path.split(['/', '\\']).collect();
-    let provider = parts.first().copied().unwrap_or_default();
-    let product = parts.get(1).copied().unwrap_or_default();
-    let mut blueprint_path = PathBuf::new();
-    for part in parts.iter().skip(2) {
-        blueprint_path.push(part);
-    }
-    let blueprint = blueprint_path
-        .with_extension("xml")
-        .to_string_lossy()
-        .replace('/', "\\");
-
-    let canonical_route = route_path
-        .canonicalize()
-        .map_err(|error| format!("Не удалось проверить папку маршрута: {error}"))?;
-    let mut source_files = HashSet::new();
-    for usage in uses {
-        let source = usage.source_file.clone();
-        if source.route_name(route_path).is_none() {
-            return Err(format!(
-                "Файл для удаления находится вне маршрута: {}",
-                source.display()
-            ));
-        }
-        if let RouteFile::Path(path) = &source {
-            let canonical_source = path.canonicalize().map_err(|error| {
-                format!(
-                    "Не удалось проверить файл маршрута {}: {error}",
-                    source.display()
-                )
-            })?;
-            if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
-                return Err(format!(
-                    "Файл для удаления находится вне маршрута или недоступен: {}",
-                    source.display()
-                ));
-            }
-        }
-        source_files.insert(source);
-    }
-
-    let mut staged = Vec::new();
-    let mut removed_instances = 0usize;
-    let mut untouched = Vec::new();
-    for source_file in source_files {
-        let is_binary = source_file
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
-        if !is_binary {
-            return Err(format!(
-                "Удаление поддерживается только для BIN-тайлов Scenery: {}",
-                source_file.display()
-            ));
-        }
-        let source_parent = match &source_file {
-            RouteFile::Path(path) => path
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| route_path.to_path_buf()),
-            RouteFile::Archive { .. } => route_path.to_path_buf(),
-        };
-        let temp = create_temporary_work_directory(&source_parent)?;
-        let file_path = source_file.materialize(temp.path())?;
-        let bytes = std::fs::read(&file_path).map_err(|error| {
-            format!(
-                "Не удалось прочитать {} перед удалением: {error}",
-                source_file.display()
-            )
-        })?;
-        let mut reader = SerzReader::new(&bytes);
-        let mut root = reader.parse().map_err(|error| {
-            format!(
-                "Не удалось прочитать {} перед удалением: {error}",
-                source_file.display()
-            )
-        })?;
-        let dyn_count = root.remove_c_dynamic_entities(provider, product, &blueprint);
-        let loft_count = root.remove_loft_ribbons(provider, product, &blueprint);
-        let count = dyn_count + loft_count;
-        if count == 0 {
-            untouched.push(source_file.display().to_string());
-            continue;
-        }
-        let bytes = encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
-            format!(
-                "Не удалось подготовить изменённый BIN {}: {error}",
-                source_file.display()
-            )
-        })?;
-        if bytes.len() < 1024 {
-            return Err(format!(
-                "Ошибка генерации: размер файла аномально мал ({} байт). Удаление отменено.",
-                bytes.len()
-            ));
-        }
-        let mut validation_reader = SerzReader::new(&bytes);
-        if let Err(error) = validation_reader.parse() {
-            return Err(format!(
-                "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
-            ));
-        }
-        let converted_path = temp.path().join("deleted.bin");
-        std::fs::write(&converted_path, &bytes).map_err(|error| {
-            format!(
-                "Не удалось подготовить изменённый BIN {}: {error}",
-                source_file.display()
-            )
-        })?;
-        removed_instances += count;
-        staged.push((source_file, temp, converted_path));
-    }
-
-    if staged.is_empty() {
-        return Err(format!(
-            "В тайлах Scenery не найдено использований {}. Обновите проверку и повторите.",
-            asset_path
-        ));
-    }
-
-    let mut backups = Vec::new();
-    let mut transaction = FileTransaction::new();
-    let mut replaced_files = 0usize;
-    for (source_file, _temp, converted_path) in staged {
-        match install_route_file(route_path, &source_file, &converted_path) {
-            Ok(backup) => {
-                if let Some(backup_path) = &backup {
-                    transaction.record(source_file.install_target(route_path), backup_path.clone());
-                }
-                replaced_files += 1;
-                if let Some(backup) = backup {
-                    backups.push(backup);
-                }
-            }
-            Err(error) => {
-                transaction.rollback();
-                return Err(format!(
-                    "Удалено вхождений: {removed_instances}; успешно изменено файлов: {replaced_files}. Ошибка в {}: {error}.",
-                    source_file.display()
-                ));
-            }
-        }
-    }
-    transaction.commit();
-    let _ = backups;
-    Ok((replaced_files, removed_instances, untouched))
+    delete_asset_from_tiles(
+        route_path,
+        asset_path,
+        uses,
+        "Scenery",
+        |root, provider, product, blueprint| {
+            root.remove_c_dynamic_entities(provider, product, blueprint)
+                + root.remove_loft_ribbons(provider, product, blueprint)
+        },
+    )
 }
 
 /// Удаляет вхождения лофта/дороги из тайлов `Loft Tiles` / `Road Tiles`
 /// (декоративные ленты без привязки к Tracks.bin). Путевые тайлы и
-/// Tracks.bin remain protected: такой объект не попадёт в эту функцию.
+/// Tracks.bin остаются защищёнными: такой объект не попадёт в эту функцию.
 pub fn delete_loft_asset(
     route_path: &Path,
     asset_path: &str,
@@ -206,60 +71,46 @@ pub fn delete_loft_asset(
         }
     }
 
-    let (provider, product, blueprint) = asset_blueprint_ref(asset_path);
+    delete_asset_from_tiles(
+        route_path,
+        asset_path,
+        uses,
+        "Loft/Road",
+        |root, provider, product, blueprint| root.remove_loft_ribbons(provider, product, blueprint),
+    )
+}
 
-    let canonical_route = route_path
-        .canonicalize()
-        .map_err(|error| format!("Не удалось проверить папку маршрута: {error}"))?;
-    let mut source_files = HashSet::new();
-    for usage in uses {
-        let source = usage.source_file.clone();
-        if source.route_name(route_path).is_none() {
-            return Err(format!(
-                "Файл для удаления находится вне маршрута: {}",
-                source.display()
-            ));
-        }
-        if let RouteFile::Path(path) = &source {
-            let canonical_source = path.canonicalize().map_err(|error| {
-                format!(
-                    "Не удалось проверить файл маршрута {}: {error}",
-                    source.display()
-                )
-            })?;
-            if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
-                return Err(format!(
-                    "Файл для удаления находится вне маршрута или недоступен: {}",
-                    source.display()
-                ));
-            }
-        }
-        source_files.insert(source);
-    }
+fn delete_asset_from_tiles<F>(
+    route_path: &Path,
+    asset_path: &str,
+    uses: &[AssetUse],
+    tile_label: &str,
+    mut remove_fn: F,
+) -> Result<(usize, usize, Vec<String>), String>
+where
+    F: FnMut(&mut SerzNode, &str, &str, &str) -> usize,
+{
+    let (provider, product, blueprint) = asset_blueprint_ref(asset_path);
+    let source_files = collect_and_validate_source_files(route_path, uses, "удаления")?;
 
     let mut staged = Vec::new();
     let mut removed_instances = 0usize;
     let mut untouched = Vec::new();
+
     for source_file in source_files {
         let is_binary = source_file
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
         if !is_binary {
             return Err(format!(
-                "Удаление поддерживается только для BIN-тайлов Loft/Road: {}",
+                "Удаление поддерживается только для BIN-тайлов {tile_label}: {}",
                 source_file.display()
             ));
         }
-        let source_parent = match &source_file {
-            RouteFile::Path(path) => path
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| route_path.to_path_buf()),
-            RouteFile::Archive { .. } => route_path.to_path_buf(),
-        };
-        let temp = create_temporary_work_directory(&source_parent)?;
+
+        let temp = create_temporary_work_directory(&source_work_parent(&source_file, route_path))?;
         let file_path = source_file.materialize(temp.path())?;
-        let bytes = std::fs::read(&file_path).map_err(|error| {
+        let bytes = fs::read(&file_path).map_err(|error| {
             format!(
                 "Не удалось прочитать {} перед удалением: {error}",
                 source_file.display()
@@ -272,60 +123,40 @@ pub fn delete_loft_asset(
                 source_file.display()
             )
         })?;
-        let count = root.remove_loft_ribbons(&provider, &product, &blueprint);
+
+        let count = remove_fn(&mut root, &provider, &product, &blueprint);
         if count == 0 {
             untouched.push(source_file.display().to_string());
             continue;
         }
-        let bytes = encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
-            format!(
-                "Не удалось подготовить изменённый BIN {}: {error}",
-                source_file.display()
-            )
-        })?;
-        if bytes.len() < 1024 {
-            return Err(format!(
-                "Ошибка генерации: размер файла аномально мал ({} байт). Удаление отменено.",
-                bytes.len()
-            ));
-        }
-        let mut validation_reader = SerzReader::new(&bytes);
-        if let Err(error) = validation_reader.parse() {
-            return Err(format!(
-                "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
-            ));
-        }
-        let converted_path = temp.path().join("deleted.bin");
-        std::fs::write(&converted_path, &bytes).map_err(|error| {
-            format!(
-                "Не удалось подготовить изменённый BIN {}: {error}",
-                source_file.display()
-            )
-        })?;
+
+        let (converted_path, _) = stage_modified_bin(
+            &root,
+            reader.preamble.as_ref(),
+            &source_file,
+            temp.path(),
+            "deleted.bin",
+            "Удаление отменено.",
+        )?;
         removed_instances += count;
         staged.push((source_file, temp, converted_path));
     }
 
     if staged.is_empty() {
         return Err(format!(
-            "В тайлах Loft/Road не найдено использований {}. Обновите проверку и повторите.",
-            asset_path
+            "В тайлах {tile_label} не найдено использований {asset_path}. Обновите проверку и повторите."
         ));
     }
 
-    let mut backups = Vec::new();
     let mut transaction = FileTransaction::new();
     let mut replaced_files = 0usize;
     for (source_file, _temp, converted_path) in staged {
         match install_route_file(route_path, &source_file, &converted_path) {
             Ok(backup) => {
-                if let Some(backup_path) = &backup {
-                    transaction.record(source_file.install_target(route_path), backup_path.clone());
+                if let Some(backup_path) = backup {
+                    transaction.record(source_file.install_target(route_path), backup_path);
                 }
                 replaced_files += 1;
-                if let Some(backup) = backup {
-                    backups.push(backup);
-                }
             }
             Err(error) => {
                 transaction.rollback();
@@ -337,18 +168,101 @@ pub fn delete_loft_asset(
         }
     }
     transaction.commit();
-    let _ = backups;
     Ok((replaced_files, removed_instances, untouched))
+}
+
+fn collect_and_validate_source_files(
+    route_path: &Path,
+    uses: &[AssetUse],
+    action_genitive: &str,
+) -> Result<HashSet<RouteFile>, String> {
+    let canonical_route = route_path
+        .canonicalize()
+        .map_err(|error| format!("Не удалось проверить папку маршрута: {error}"))?;
+    let mut source_files = HashSet::with_capacity(uses.len());
+    for usage in uses {
+        // Файл из архива .ap нельзя править на месте: он лежит внутри архива.
+        // Поэтому готовим временную копию, а результат кладём рядом с архивом.
+        let source = usage.source_file.clone();
+        if source.route_name(route_path).is_none() {
+            return Err(format!(
+                "Файл для {action_genitive} находится вне маршрута: {}",
+                source.display()
+            ));
+        }
+        if let RouteFile::Path(path) = &source {
+            let canonical_source = path.canonicalize().map_err(|error| {
+                format!(
+                    "Не удалось проверить файл маршрута {}: {error}",
+                    source.display()
+                )
+            })?;
+            if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
+                return Err(format!(
+                    "Файл для {action_genitive} находится вне маршрута или недоступен: {}",
+                    source.display()
+                ));
+            }
+        }
+        source_files.insert(source);
+    }
+    Ok(source_files)
+}
+
+fn source_work_parent(source_file: &RouteFile, route_path: &Path) -> PathBuf {
+    match source_file {
+        RouteFile::Path(path) => path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| route_path.to_path_buf()),
+        RouteFile::Archive { .. } => route_path.to_path_buf(),
+    }
+}
+
+fn stage_modified_bin(
+    root: &SerzNode,
+    preamble: Option<&SerzPreamble>,
+    source_file: &RouteFile,
+    temp_dir: &Path,
+    output_name: &str,
+    abort_suffix: &str,
+) -> Result<(PathBuf, usize), String> {
+    let bytes = encode_to_vec(root, preamble).map_err(|error| {
+        format!(
+            "Не удалось подготовить изменённый BIN {}: {error}",
+            source_file.display()
+        )
+    })?;
+    if bytes.len() < 1024 {
+        return Err(format!(
+            "Ошибка генерации: размер файла аномально мал ({} байт). {abort_suffix}",
+            bytes.len()
+        ));
+    }
+    let mut validation_reader = SerzReader::new(&bytes);
+    if let Err(error) = validation_reader.parse() {
+        return Err(format!(
+            "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
+        ));
+    }
+    let converted_path = temp_dir.join(output_name);
+    fs::write(&converted_path, &bytes).map_err(|error| {
+        format!(
+            "Не удалось подготовить изменённый BIN {}: {error}",
+            source_file.display()
+        )
+    })?;
+    Ok((converted_path, bytes.len()))
 }
 
 /// Разбирает путь ассета `Provider/Product/....xml` на provider, product и
 /// нормализованный blueprint (с расширением .xml, обратными слешами).
 fn asset_blueprint_ref(asset_path: &str) -> (String, String, String) {
-    let parts: Vec<&str> = asset_path.split(['/', '\\']).collect();
-    let provider = parts.first().copied().unwrap_or_default().to_string();
-    let product = parts.get(1).copied().unwrap_or_default().to_string();
+    let mut parts = asset_path.split(['/', '\\']);
+    let provider = parts.next().unwrap_or_default().to_string();
+    let product = parts.next().unwrap_or_default().to_string();
     let mut blueprint_path = PathBuf::new();
-    for part in parts.iter().skip(2) {
+    for part in parts {
         blueprint_path.push(part);
     }
     let blueprint = blueprint_path
@@ -364,8 +278,15 @@ pub fn asset_key(path: &str) -> String {
     path.to_lowercase()
 }
 
-/// Собирает список сценариев маршрута: имя папки и число файлов в ней.
-///
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let n = needle.as_bytes();
+    haystack
+        .as_bytes()
+        .windows(n.len())
+        .any(|w| w.eq_ignore_ascii_case(n))
+}
+
+/// Заменяет все вхождения отсутствующего ассета в файлах маршрута на выбранный `.bin`.
 pub(crate) fn replace_missing_asset(
     route_path: &Path,
     assets_path: &Path,
@@ -419,18 +340,15 @@ pub(crate) fn replace_missing_asset(
     let asset_type = classify_route_asset_type(old_asset, uses);
     let replacement_xml = read_serz_xml(&replacement_path)
         .ok()
-        .or_else(|| std::fs::read_to_string(&replacement_path).ok());
+        .or_else(|| fs::read_to_string(&replacement_path).ok());
     let root_tag = replacement_xml
-        .as_ref()
-        .and_then(|xml| first_blueprint_tag(xml));
-    let extension_ok = replacement_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("bin") || ext.eq_ignore_ascii_case("xml"));
+        .as_deref()
+        .and_then(first_blueprint_tag);
+
     match asset_type {
         RouteAssetType::Scenery => {
-            if let Some(tag) = &root_tag {
-                if ![
+            if let Some(tag) = &root_tag
+                && ![
                     "cSceneryBlueprint",
                     "cAnimSceneryBlueprint",
                     "cTimeSceneryBlueprint",
@@ -438,114 +356,60 @@ pub(crate) fn replace_missing_asset(
                     "cPrecipitationBlueprint",
                 ]
                 .contains(&tag.as_str())
-                {
-                    return Err(
-                        "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned()
-                    );
-                }
-            } else if !extension_ok {
-                return Err("Для scenery-объекта выберите замену из папки Scenery.".to_owned());
+            {
+                return Err(
+                    "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned(),
+                );
             }
         }
         RouteAssetType::Loft => {
-            if let Some(tag) = &root_tag {
-                if ![
+            if let Some(tag) = &root_tag
+                && ![
                     "cLoftBlueprint",
                     "cTrackSectionBlueprint",
                     "cRoadSectionBlueprint",
                 ]
                 .contains(&tag.as_str())
-                {
-                    return Err(
-                        "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned()
-                    );
-                }
-            } else if !extension_ok {
-                return Err("Для loft-объекта выберите замену из папки Networks.".to_owned());
+            {
+                return Err(
+                    "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned(),
+                );
             }
         }
         RouteAssetType::Road => {
-            if let Some(tag) = &root_tag {
-                if tag != "cRoadSectionBlueprint" {
-                    return Err(
-                        "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned()
-                    );
-                }
-            } else if !extension_ok {
-                return Err("Для road-объекта выберите замену из папки Networks.".to_owned());
+            if let Some(tag) = &root_tag
+                && tag != "cRoadSectionBlueprint"
+            {
+                return Err(
+                    "Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned(),
+                );
             }
         }
         RouteAssetType::TrackRules => {
             return Err("Замена путевых объектов в Tracks.bin заблокирована для предотвращения повреждения маршрута.".to_owned());
         }
-        _ => {
-            if root_tag.is_none() && !extension_ok {
-                return Err("Тип выбранного ассета не совпадает с типом отсутствующего.".to_owned());
-            }
-        }
+        _ => {}
     }
 
-    if old_asset.to_lowercase().contains("trackrules")
-        || old_asset.to_lowercase().contains("junctions")
+    if contains_ignore_ascii_case(old_asset, "trackrules")
+        || contains_ignore_ascii_case(old_asset, "junctions")
         || uses.iter().any(|usage| {
-            let path = usage.source_file.display().to_lowercase();
-            path.contains("tracks.bin")
-                || path.contains("/networks/")
-                || path.contains("\\networks\\")
-                || path.contains("trackrules")
-                || path.contains("junctions")
+            let path = usage.source_file.display();
+            contains_ignore_ascii_case(&path, "tracks.bin")
+                || contains_ignore_ascii_case(&path, "/networks/")
+                || contains_ignore_ascii_case(&path, "\\networks\\")
+                || contains_ignore_ascii_case(&path, "trackrules")
+                || contains_ignore_ascii_case(&path, "junctions")
         })
     {
         return Err("Замена путевых объектов в Tracks.bin заблокирована для предотвращения повреждения маршрута.".into());
     }
 
-    let canonical_route = route_path
-        .canonicalize()
-        .map_err(|error| format!("Не удалось проверить папку маршрута: {error}"))?;
-    let mut source_files = HashSet::new();
-    for usage in uses {
-        // Файл из архива .ap нельзя править на месте: он лежит внутри архива.
-        // Поэтому готовим временную копию, а результат кладём рядом с архивом.
-        let source = usage.source_file.clone();
-        if source.route_name(route_path).is_none() {
-            return Err(format!(
-                "Файл для замены находится вне маршрута: {}",
-                source.display()
-            ));
-        }
-        if let RouteFile::Path(path) = &source {
-            let canonical_source = path.canonicalize().map_err(|error| {
-                format!(
-                    "Не удалось проверить файл маршрута {}: {error}",
-                    source.display()
-                )
-            })?;
-            if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
-                return Err(format!(
-                    "Файл для замены находится вне маршрута или недоступен: {}",
-                    source.display()
-                ));
-            }
-        }
-        source_files.insert(source);
-    }
+    let source_files = collect_and_validate_source_files(route_path, uses, "замены")?;
 
-    println!(
-        "[Replacement] Замена ассета: {} -> {}",
-        old_asset, new_asset
-    );
+    println!("[Replacement] Замена ассета: {old_asset} -> {new_asset}");
 
-    let old_parts: Vec<&str> = old_asset.split(['/', '\\']).collect();
-    let old_provider = old_parts.first().copied().unwrap_or_default();
-    let old_product = old_parts.get(1).copied().unwrap_or_default();
-    let mut old_blueprint_path = PathBuf::new();
-    for part in old_parts.iter().skip(2) {
-        old_blueprint_path.push(part);
-    }
-    let old_blueprint = old_blueprint_path
-        .with_extension("xml")
-        .to_string_lossy()
-        .replace('/', "\\");
+    let (old_provider, old_product, old_blueprint) = asset_blueprint_ref(old_asset);
 
     let mut staged = Vec::new();
     let mut replaced_instances = 0;
@@ -564,21 +428,12 @@ pub(crate) fn replace_missing_asset(
                 source_file.display()
             ));
         }
-        // Запись из архива лежит только внутри архива: папки с таким именем на
-        // диске нет, поэтому временные файлы кладём в папку маршрута.
-        let source_parent = match &source_file {
-            RouteFile::Path(path) => path
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| route_path.to_path_buf()),
-            RouteFile::Archive { .. } => route_path.to_path_buf(),
-        };
-        let temp = create_temporary_work_directory(&source_parent)?;
+
+        let temp = create_temporary_work_directory(&source_work_parent(&source_file, route_path))?;
         let file_path = source_file.materialize(temp.path())?;
-        let xml_path = temp.path().join("source.xml");
 
         if is_binary {
-            let bytes = std::fs::read(&file_path).map_err(|error| {
+            let bytes = fs::read(&file_path).map_err(|error| {
                 format!(
                     "Не удалось прочитать {} перед заменой: {error}",
                     source_file.display()
@@ -592,16 +447,14 @@ pub(crate) fn replace_missing_asset(
                 )
             })?;
             println!(
-                "[Replacement Debug] Ищем: Provider='{}', Product='{}', Blueprint='{}'",
-                old_provider, old_product, old_blueprint
+                "[Replacement Debug] Ищем: Provider='{old_provider}', Product='{old_product}', Blueprint='{old_blueprint}'"
             );
             println!(
-                "[Replacement Debug] Меняем на: Provider='{}', Product='{}', Blueprint='{}'",
-                replacement_provider, replacement_product, replacement_blueprint
+                "[Replacement Debug] Меняем на: Provider='{replacement_provider}', Product='{replacement_product}', Blueprint='{replacement_blueprint}'"
             );
             let count = root.replace_blueprint_references(
-                old_provider,
-                old_product,
+                &old_provider,
+                &old_product,
                 &old_blueprint,
                 &replacement_provider,
                 &replacement_product,
@@ -610,39 +463,22 @@ pub(crate) fn replace_missing_asset(
             if count == 0 {
                 continue;
             }
-            let bytes = encode_to_vec(&root, reader.preamble.as_ref()).map_err(|error| {
-                format!(
-                    "Не удалось подготовить изменённый BIN {}: {error}",
-                    source_file.display()
-                )
-            })?;
-            if bytes.len() < 1024 {
-                return Err(format!(
-                    "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена, оригинал не затронут.",
-                    bytes.len()
-                ));
-            }
-            let mut validation_reader = SerzReader::new(&bytes);
-            if let Err(error) = validation_reader.parse() {
-                return Err(format!(
-                    "Ошибка сериализации: сгенерированный бинарник поврежден и не может быть прочитан обратно: {error}"
-                ));
-            }
+            let (converted_path, serialized_len) = stage_modified_bin(
+                &root,
+                reader.preamble.as_ref(),
+                &source_file,
+                temp.path(),
+                "replacement.bin",
+                "Замена отменена, оригинал не затронут.",
+            )?;
             println!(
-                "[Replacement] Сериализовано {} байт для {}",
-                bytes.len(),
+                "[Replacement] Сериализовано {serialized_len} байт для {}",
                 source_file.display()
             );
-            let converted_path = temp.path().join("replacement.bin");
-            std::fs::write(&converted_path, &bytes).map_err(|error| {
-                format!(
-                    "Не удалось подготовить изменённый BIN {}: {error}",
-                    source_file.display()
-                )
-            })?;
             replaced_instances += count;
             staged.push((source_file, temp, converted_path));
         } else {
+            let xml_path = temp.path().join("source.xml");
             fs::copy(&file_path, &xml_path).map_err(|error| {
                 format!(
                     "Не удалось подготовить {} перед заменой: {error}",
@@ -657,7 +493,7 @@ pub(crate) fn replace_missing_asset(
                 )
             })?;
             let references = extract_asset_references_with_locations(&xml);
-            let edits: Vec<_> = references
+            let mut edits: Vec<_> = references
                 .into_iter()
                 .filter(|reference| reference.path.eq_ignore_ascii_case(old_asset))
                 .flat_map(|reference| {
@@ -681,7 +517,6 @@ pub(crate) fn replace_missing_asset(
             if instances == 0 {
                 continue;
             }
-            let mut edits = edits;
             edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
             for (range, value) in edits {
                 xml.replace_range(range, &value);
@@ -706,8 +541,7 @@ pub(crate) fn replace_missing_asset(
 
     if staged.is_empty() {
         return Err(format!(
-            "В исходниках маршрута не найдено использований {}. Обновите проверку и повторите.",
-            old_asset
+            "В исходниках маршрута не найдено использований {old_asset}. Обновите проверку и повторите."
         ));
     }
 
@@ -718,14 +552,12 @@ pub(crate) fn replace_missing_asset(
         println!("[Replacement] Установка файла: {}", source_file.display());
         match install_route_file(route_path, &source_file, &converted_path) {
             Ok(backup) => {
-                if let Some(backup_path) = &backup {
+                if let Some(backup_path) = backup {
                     println!("[Replacement] Создан бэкап: {}", backup_path.display());
                     transaction.record(source_file.install_target(route_path), backup_path.clone());
+                    backups.push(backup_path);
                 }
                 replaced_files += 1;
-                if let Some(backup) = backup {
-                    backups.push(backup);
-                }
             }
             Err(error) => {
                 transaction.rollback();
@@ -734,7 +566,7 @@ pub(crate) fn replace_missing_asset(
                     source_file.display(),
                     backups
                         .iter()
-                        .map(|path: &PathBuf| path.display().to_string())
+                        .map(|path| path.display().to_string())
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
