@@ -175,7 +175,7 @@ impl MissingAssetsController {
                         BTreeMap::new(),
                     );
                     app.log_event(
-                        format!("Починен путь {corrupted} -> {clean_repair}."),
+                        format!("Path corrected: {corrupted} -> {clean_repair}."),
                         LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
@@ -210,7 +210,7 @@ impl MissingAssetsController {
                 app.asset_replacement_queue = queue;
                 app.missing_assets_shown = false;
                 app.log_event(
-                    format!("Массовая починка путей: исправлено {repairable_count} объектов."),
+                    format!("Mass path correction: fixed {repairable_count} objects."),
                     LogLevel::Info,
                 );
                 app.start_next_asset_replacement();
@@ -288,7 +288,7 @@ impl MissingAssetsController {
             if !crate::assets::is_safe_for_global_replacement(&missing.path, &missing.uses) {
                 if let Ok(mut app) = app.lock() {
                     app.log_event(
-                        "Замена путевых объектов заблокирована для предотвращения повреждения маршрута.".to_owned(),
+                        "The replacement of track infrastructure is blocked to prevent damage to the route.".to_owned(),
                         LogLevel::Warning,
                     );
                     crate::schedule_ui_sync();
@@ -299,7 +299,7 @@ impl MissingAssetsController {
             let start_dir = existing_directory_upwards(&asset_directory(&assets_path, &missing.path))
                 .unwrap_or_else(|| assets_path.clone());
             let Some(replacement) = rfd::FileDialog::new()
-                .set_title("Выберите BIN/AP нового объекта")
+                .set_title("Select BIN of new object or open AP archive with it")
                 .add_filter("RW Assets (*.bin, *.ap)", &["bin", "ap"])
                 .add_filter("RW Blueprint (*.bin)", &["bin"])
                 .add_filter("AP Archive (*.ap)", &["ap"])
@@ -398,8 +398,8 @@ impl MissingAssetsController {
             }
 
             let confirmed = rfd::MessageDialog::new()
-                .set_title("Удаление объекта")
-                .set_description(format!("Удалить объект из маршрута:\n{selected_path}"))
+                .set_title("Object deletion")
+                .set_description(format!("Delete object from route:\n{selected_path}"))
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
             if confirmed != rfd::MessageDialogResult::Ok {
@@ -426,14 +426,14 @@ impl MissingAssetsController {
                         }
                         app.log_event(
                             format!(
-                                "Удален объект {selected_path} из {files} тайлов ({occurrences} вхождений)."
+                                "Object {selected_path} deleted from {files} tiles ({occurrences} uses)."
                             ),
                             LogLevel::Info,
                         );
                         if !untouched.is_empty() {
                             app.log_event(
                                 format!(
-                                    "Внимание: в следующих тайлах не удалось удалить вхождения объекта {selected_path}: {}",
+                                    "Warning: it was not possible to delete occurrences of the object {selected_path} in the following tiles: {}",
                                     untouched.join(", ")
                                 ),
                                 LogLevel::Warning,

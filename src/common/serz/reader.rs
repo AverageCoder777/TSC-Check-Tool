@@ -28,15 +28,11 @@ impl<'a> SerzReader<'a> {
         }
     }
 
-    pub(super) fn string_pool_len(&self) -> usize {
-        self.string_pool.len()
-    }
-
     pub(super) fn read_exact_buf(&mut self, buf: &mut [u8]) -> Result<(), String> {
         let pos = self.cursor.position();
         self.cursor.read_exact(buf).map_err(|e| {
             format!(
-                "Ошибка чтения на смещении 0x{pos:X} (байт {pos}): {e} (требовалось: {} байт, всего в файле: {})",
+                "Reading error on 0x{pos:X} offset (byte {pos}): {e} (expected: {} bytes, count in file: {})",
                 buf.len(),
                 self.data_len
             )
@@ -224,13 +220,13 @@ impl<'a> SerzReader<'a> {
             let id = marker as usize;
             if id >= 255 {
                 return Err(format!(
-                    "ID токена 0x{id:02X} вне диапазона на 0x{:X}",
+                    "Token ID 0x{id:02X} out of range on 0x{:X}",
                     self.cursor.position() - 1
                 ));
             }
             self.token_table[id].clone().ok_or_else(|| {
                 format!(
-                    "Токен в слоте 0x{id:02X} не инициализирован на 0x{:X}",
+                    "Token in slot 0x{id:02X} not initialized on 0x{:X}",
                     self.cursor.position() - 1
                 )
             })
@@ -241,7 +237,7 @@ impl<'a> SerzReader<'a> {
         let mut magic = [0u8; 4];
         self.read_exact_buf(&mut magic)?;
         if &magic != b"SERZ" {
-            return Err(format!("Неверная сигнатура: {magic:?}"));
+            return Err(format!("Incorrect signature: {magic:?}"));
         }
 
         let _version = self.read_u32()?;
@@ -256,7 +252,7 @@ impl<'a> SerzReader<'a> {
                     self.preamble = Some(SerzPreamble { flag, val });
                 }
                 other => {
-                    return Err(format!("Неожиданный опкод перед корнем: 0x{other:02X}"));
+                    return Err(format!("Unexpected opcode before root: 0x{other:02X}"));
                 }
             }
         };
@@ -321,7 +317,7 @@ impl<'a> SerzReader<'a> {
                 0x70 => break,
                 other => {
                     return Err(format!(
-                        "Неподдерживаемый опкод: 0x{other:02X} на 0x{:X}",
+                        "Unsupported opcode: 0x{other:02X} на 0x{:X}",
                         self.cursor.position()
                     ));
                 }

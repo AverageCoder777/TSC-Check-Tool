@@ -59,7 +59,7 @@ fn save_ui_settings(
         app.language = language.clone();
 
         apply_saved_language(&language);
-        app.log_event("Настройки сохранены.".to_owned(), LogLevel::Info);
+        app.log_event("Settings saved.".to_owned(), LogLevel::Info);
         if path_changed {
             app.start_route_scan();
         }
@@ -145,8 +145,8 @@ impl SettingsController {
             let Some(sw) = weak.upgrade() else { return };
             let current = sw.get_locoswap_path().to_string();
             let mut dialog = rfd::FileDialog::new()
-                .set_title("Выберите LocoSwap.exe")
-                .add_filter("Исполняемый файл (*.exe)", &["exe"]);
+                .set_title("Select LocoSwap.exe")
+                .add_filter("Executable (*.exe)", &["exe"]);
             if !current.is_empty()
                 && let Some(parent) = PathBuf::from(&current).parent()
             {
@@ -165,7 +165,7 @@ impl SettingsController {
         self.window.on_pick_game(move || {
             let Some(sw) = weak.upgrade() else { return };
             let current = sw.get_game_path().to_string();
-            let mut dialog = rfd::FileDialog::new().set_title("Выберите папку с игрой RailWorks");
+            let mut dialog = rfd::FileDialog::new().set_title("Select RailWorks folder");
             if !current.is_empty() {
                 let p = PathBuf::from(&current);
                 if p.is_dir() {

@@ -135,15 +135,15 @@ impl InventoryController {
                     if new_filter_state {
                         if suspicious_count == 0 {
                             app_guard.status =
-                                "Объектов с подозрительными символами не обнаружено".to_owned();
+                                "No objects with non-standard symbols were found.".to_owned();
                         } else {
                             app_guard.status = format!(
-                                "Найдено объектов с нестандартными символами: {} шт.",
+                                "Found objects with non-standard symbols: {}.",
                                 suspicious_count
                             );
                         }
                     } else {
-                        app_guard.status = "Фильтр по символам отключен.".to_owned();
+                        app_guard.status = "Symbol filter is disabled.".to_owned();
                     }
                     schedule_ui_sync();
                 }
@@ -221,7 +221,7 @@ impl InventoryController {
                         if let Ok(mut app_guard) = app_for_status.lock() {
                             let (msg, level) = match result {
                                 Ok(msg) => (msg, LogLevel::Info),
-                                Err(err) => (format!("✗ {err}"), LogLevel::Error),
+                                Err(err) => (format!("X {err}"), LogLevel::Error),
                             };
                             app_guard.log_event(msg, level);
                             schedule_ui_sync();
@@ -270,7 +270,7 @@ impl InventoryController {
                 {
                     if let Ok(mut app_guard) = app.lock() {
                         app_guard.log_event(
-                            "Удаление этого объекта запрещено (путевая инфраструктура).".to_owned(),
+                            "You can't change the track infrastructure parts through the program!".to_owned(),
                             LogLevel::Warning,
                         );
                         schedule_ui_sync();
@@ -304,18 +304,18 @@ impl InventoryController {
 
                 let description = match (!loft_road_uses.is_empty(), !scenery_uses.is_empty()) {
                     (true, false) => format!(
-                        "Удалить лофт {} из {} тайлов Loft ({} сегментов)? Это действие физически изменит файлы маршрута",
+                        "Delete loft {} from {} Loft tiles({} segments)? This action will physically change the route files.",
                         asset.path,
                         loft_tiles.len(),
                         loft_segments
                     ),
                     (false, true) => format!(
-                        "Удалить объект {} из всех Scenery-тайлов ({} шт.)? Это действие физически изменит файлы маршрута",
+                        "Delete object {} from all Scenery tiles ({} entries)? This action will physically change the route files.",
                         asset.path,
                         scenery_tiles.len()
                     ),
                     (true, true) => format!(
-                        "Удалить объект {} из {} тайлов Scenery ({} сегментов) и {} тайлов Loft ({} сегментов)? Это действие физически изменит файлы маршрута",
+                        "Delete object {} from {} Scenery tiles ({} segments) and {} Loft tiles ({} segments)? This action will physically change the route files.",
                         asset.path,
                         scenery_tiles.len(),
                         scenery_segments,
@@ -326,7 +326,7 @@ impl InventoryController {
                         if let Ok(mut app_guard) = app.lock() {
                             app_guard.log_event(
                                 format!(
-                                    "Для объекта {} не найдено подходящих тайлов для удаления.",
+                                    "No suitable tiles for object {} were found to delete.",
                                     asset.path
                                 ),
                                 LogLevel::Warning,
@@ -338,7 +338,7 @@ impl InventoryController {
                 };
 
                 let confirmed = rfd::MessageDialog::new()
-                    .set_title("Удаление объекта")
+                    .set_title("Object deletion")
                     .set_description(description)
                     .set_buttons(rfd::MessageButtons::OkCancel)
                     .show();
@@ -387,7 +387,7 @@ impl InventoryController {
                     if errors.is_empty() {
                         app_guard.log_event(
                             format!(
-                                "Удален объект {} из {} тайлов ({} вхождений)",
+                                "Object {} deleted from {} tiles ({} uses)",
                                 asset.path, total_tiles, total_occurrences
                             ),
                             LogLevel::Info,
@@ -395,7 +395,7 @@ impl InventoryController {
                         if !untouched_files.is_empty() {
                             app_guard.log_event(
                                 format!(
-                                    "Внимание: в следующих тайлах не удалось удалить вхождения объекта {} (вероятно, составной лофт, требуется ручное удаление): {}",
+                                    "Warning: it was not possible to delete uses of the object in the following tiles {} (probably a composite lot, manual removal is required): {}",
                                     asset.path,
                                     untouched_files.join(", ")
                                 ),
@@ -436,7 +436,7 @@ impl InventoryController {
                 if !is_safe_for_global_replacement(&asset.path, &asset.uses) {
                     if let Ok(mut app_guard) = app.lock() {
                         app_guard.log_event(
-                            "Замена этого ассета запрещена (путевая инфраструктура).".to_owned(),
+                            "You can't change the track infrastructure parts through the program!".to_owned(),
                             LogLevel::Warning,
                         );
                         schedule_ui_sync();

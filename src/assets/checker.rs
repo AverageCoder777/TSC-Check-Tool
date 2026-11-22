@@ -88,7 +88,7 @@ fn analyze_route_file_with_stamp(
                         stamp,
                         uses: Vec::new(),
                         error: Some(format!(
-                            "{}: не удалось прочитать файл: {error}",
+                            "{}: failed to read file: {error}",
                             file_path.display()
                         )),
                     };
@@ -410,13 +410,10 @@ pub(crate) fn check_route<F>(
 where
     F: Fn(&str) + Sync,
 {
-    report_progress("Сканирование файлов маршрута...");
+    report_progress("Scanning route files...");
     let collected_route_files = collect_route_files(route_path, ignore_scenarios)?;
-
     let mut structure_issues =
         validate_route_structure(route_path, assets_path, &collected_route_files);
-
-    // Основные файлы маршрута могут быть упакованы в .ap...
     let mut route_files: Vec<RouteFile> = collected_route_files
         .into_iter()
         .map(RouteFile::Path)
@@ -429,13 +426,10 @@ where
         if let Some(name) = member.route_name(route_path)
             && outside.contains(&name.to_lowercase())
         {
-            // Такой файл лежит рядом с архивом и перекрывает запись архива.
             continue;
         }
         route_files.push(member);
     }
-
-    // Тяжёлые файлы (Tracks.bin) ставим в начало, чтобы сразу загрузить пул потоков.
     let is_tracks_bin = |route_file: &RouteFile| {
         route_file
             .route_name(route_path)
@@ -458,14 +452,14 @@ where
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(worker_count)
         .build()
-        .map_err(|error| format!("Не удалось создать пул проверки файлов: {error}"))?;
+        .map_err(|error| format!("Failed to create file check pool: {error}"))?;
     let mut cache = AnalysisCache::load(route_path);
     let total_files = all_files.len();
     let processed = AtomicUsize::new(0);
 
     if total_files > 0 {
         report_progress(&format!(
-            "Анализ файлов: 1 из {total_files}; параллельных Serz-процессов: {worker_count}...",
+            "Analyzing files. 1 out of {total_files}; threads: {worker_count}",
         ));
     }
 
@@ -476,7 +470,7 @@ where
                 let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
                 if done.is_multiple_of(32) || done == total_files {
                     report_progress(&format!(
-                        "Анализ файлов: {done} из {total_files}; параллельных Serz-процессов: {worker_count}...",
+                        "Analyzing filed. {done} out of {total_files}; threads: {worker_count}",
                     ));
                 }
 
@@ -556,15 +550,13 @@ where
         .collect();
     cache.retain(&current_files);
     if let Err(error) = cache.save(route_path) {
-        structure_issues.push(format!("Кэш разбора не сохранён: {error}"));
+        structure_issues.push(format!("Failed to save check cache: {error}"));
     }
 
     report_progress(&format!(
-        "Уникальных ссылок: {}. Проверка файлов и архивов .ap...",
+        "Unique links: {}. Searching for .ap arcives...",
         asset_uses.len(),
     ));
-
-    // Уникальные папки продуктов, для которых нужно проверить .ap-архивы.
     let product_dirs: HashSet<PathBuf> = asset_uses
         .keys()
         .filter_map(|relative_asset| {
@@ -585,7 +577,7 @@ where
     let (ap_cache, archive_errors) = scan_product_ap_archives(&product_dirs, &pool)?;
     structure_issues.extend(archive_errors);
 
-    report_progress("Проверка имён и строк ассетов на умляуты...");
+    report_progress("Checking for umlauts...");
     let inventory_seed: Vec<_> = asset_uses
         .iter()
         .map(|(path, uses)| {
@@ -606,9 +598,6 @@ where
         scan_umlaut_assets(&inventory_seed, assets_path, max_concurrent_serz)?;
     conversion_errors.extend(umlaut_errors);
     conversion_errors.sort();
-
-    // Проверяем, что все провайдеры/продукты, используемые на маршруте,
-    // объявлены в RouteProperties.xml внутри блоков <RBlueprintSetPreLoad>.
     let mut route_properties_warnings: Vec<String> = Vec::new();
     if let Ok(route_properties_text) = read_route_properties_text(route_path) {
         let declared_pairs: HashSet<(String, String)> = parse_preload_pairs(&route_properties_text)
@@ -637,7 +626,7 @@ where
         missing.sort();
         for (provider, product) in missing {
             route_properties_warnings.push(format!(
-                "Провайдер/продукт «{provider} / {product}» используется на маршруте, но не подключён в RouteProperties.xml (<RBlueprintSetPreLoad>).",
+                "Provider/product «{provider} / {product}» used on route, but not declared in RouteProperties.xml.",
             ));
         }
     }
@@ -701,10 +690,10 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
         return Ok(crate::routes::decode_xml_bytes(&data));
     }
     let entries = fs::read_dir(route_path)
-        .map_err(|error| format!("Не удалось прочитать {}: {error}", route_path.display()))?;
+        .map_err(|error| format!("failed to read {}: {error}", route_path.display()))?;
     for entry in entries {
         let entry =
-            entry.map_err(|error| format!("Ошибка чтения {}: {error}", route_path.display()))?;
+            entry.map_err(|error| format!("Read failure {}: {error}", route_path.display()))?;
         let archive_path = entry.path();
         if !is_ap_archive(&archive_path) {
             continue;
@@ -737,7 +726,7 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
             }
         }
     }
-    Err("RouteProperties.xml не найден".to_owned())
+    Err("RouteProperties.xml not found".to_owned())
 }
 
 /// Извлекает пары (Provider, Product) из блоков
@@ -785,19 +774,19 @@ pub(crate) fn validate_route_structure(
 ) -> Vec<String> {
     let mut issues = Vec::new();
     if !route_properties_exists(route_path) {
-        issues.push("не найден RouteProperties.xml".to_owned());
+        issues.push("RouteProperties.xml not found".to_owned());
     }
     if !assets_path.is_dir() {
-        issues.push("не найдена папка Assets".to_owned());
+        issues.push("Assets folder not found".to_owned());
     }
     if files.is_empty() {
-        issues.push("не найдено файлов .bin или .xml для проверки".to_owned());
+        issues.push("no any .bin или .xml for check".to_owned());
     }
     if let Ok(directories) = unexpected_route_directories(route_path)
         && !directories.is_empty()
     {
         issues.push(format!(
-            "неизвестные папки маршрута не проверялись: {}",
+            "unexpected route folders: {}",
             directories.join(", ")
         ));
     }
@@ -805,7 +794,7 @@ pub(crate) fn validate_route_structure(
         && !leftover.is_empty()
     {
         issues.push(format!(
-            "в маршруте остались рабочие каталоги программы (можно удалить): {}",
+            "route folder stil have temp program folders (can be deleted): {}",
             leftover.join(", ")
         ));
     }
@@ -856,7 +845,7 @@ fn scan_single_product_dir(product_dir: &Path) -> Result<ProductApScan, String> 
         }
         Err(error) => {
             return Err(format!(
-                "Не удалось прочитать {}: {error}",
+                "Failed to read {}: {error}",
                 product_dir.display()
             ));
         }
@@ -887,13 +876,13 @@ fn is_ap_archive(path: &Path) -> bool {
 fn read_ap_archive_files(archive_path: &Path, files: &mut HashSet<String>) -> Result<(), String> {
     let archive_file = fs::File::open(archive_path).map_err(|error| {
         format!(
-            "Не удалось открыть архив {}: {error}",
+            "Failed to open archive {}: {error}",
             archive_path.display()
         )
     })?;
     let archive = ZipArchive::new(archive_file).map_err(|error| {
         format!(
-            "Не удалось прочитать архив {}: {error}",
+            "Failed to read archive {}: {error}",
             archive_path.display()
         )
     })?;
@@ -1028,13 +1017,13 @@ fn read_archive_member_bytes(
         std::collections::hash_map::Entry::Vacant(entry) => {
             let file = fs::File::open(archive_path).map_err(|error| {
                 format!(
-                    "Не удалось открыть архив {}: {error}",
+                    "Failed to open archive {}: {error}",
                     archive_path.display()
                 )
             })?;
             let archive = ZipArchive::new(file).map_err(|error| {
                 format!(
-                    "Не удалось прочитать архив {}: {error}",
+                    "Failed to read arcive {}: {error}",
                     archive_path.display()
                 )
             })?;
@@ -1045,7 +1034,7 @@ fn read_archive_member_bytes(
     // collect_archive_members сохраняет точное имя записи из архива, поэтому by_name работает за O(1).
     let mut member = zip.by_name(member_name).map_err(|error| {
         format!(
-            "Не удалось найти {member_name} в {}: {error}",
+            "Cannot find {member_name} в {}: {error}",
             archive_path.display()
         )
     })?;
@@ -1059,7 +1048,7 @@ fn read_archive_member_bytes(
     let mut bytes = Vec::with_capacity(member.size().min(64 * 1024 * 1024) as usize);
     member.read_to_end(&mut bytes).map_err(|error| {
         format!(
-            "Не удалось прочитать {member_name} из {}: {error}",
+            "Failed to read {member_name} from {}: {error}",
             archive_path.display()
         )
     })?;

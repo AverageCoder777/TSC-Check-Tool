@@ -27,13 +27,13 @@ pub enum AssetResourceKind {
 impl AssetResourceKind {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Geometry => "Геометрия",
-            Self::Texture => "Текстура",
-            Self::Animation => "Анимация",
-            Self::Script => "Скрипт",
-            Self::Sound => "Звуки",
-            Self::ChildBlueprint => "Дочерние объекты",
-            Self::Unused => "Мёртвый ресурс",
+            Self::Geometry => "Geometry",
+            Self::Texture => "Texture",
+            Self::Animation => "Animation",
+            Self::Script => "Script",
+            Self::Sound => "Sound",
+            Self::ChildBlueprint => "Child object",
+            Self::Unused => "Unused",
         }
     }
 }

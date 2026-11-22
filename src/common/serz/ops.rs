@@ -312,7 +312,7 @@ impl SerzNode {
                     }
                 }
                 count += 1;
-                println!("[Replacement Debug] Найдено и заменено совпадение в тайле!");
+                println!("[Replacement Debug] A match was found and replaced in the tile.");
             }
         }
 

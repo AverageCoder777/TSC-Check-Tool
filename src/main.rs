@@ -81,10 +81,7 @@ pub(crate) fn log_event(ui: &MainWindow, message: &str, level: app::LogLevel) {
 fn sync_ui(ui: &MainWindow) {
     if let Ok(mut app) = app_state().lock() {
         app.receive_background_results();
-
-        // === Асинхронная загрузка иконок: дренируем результаты из фонового потока ===
         let icons_updated = routes::drain_loaded_icons();
-
         if !app.is_checking()
             && app.result.is_some()
             && app.missing_assets_popup.is_some()
@@ -97,7 +94,6 @@ fn sync_ui(ui: &MainWindow) {
             });
         }
 
-        // Окно предупреждений RouteProperties.xml (провайдеры/продукты не подключены в <RBlueprintSetPreLoad>).
         if !app.is_checking()
             && app.result.is_some()
             && app
@@ -411,14 +407,7 @@ impl Default for AuditorState {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() >= 4 && args[1] == "--serz-diff" {
-        common::serz::run_test(&args[2], &args[3]);
-        return;
-    }
     handle_cli_args();
-
-    // Фоновый поток записи полного лога на диск (AppData\TSC Check Tool\app.log).
     let (log_tx, log_rx) = mpsc::channel::<app::LogEntry>();
     let log_path = app::settings::log_file();
     thread::spawn(move || {
@@ -429,7 +418,7 @@ fn main() {
             .create(true)
             .append(true)
             .open(&log_path)
-            .expect("Не удалось открыть файл лога");
+            .expect("Failed to open log file ");
         let mut writer = BufWriter::new(file);
         for entry in log_rx {
             let _ = writeln!(

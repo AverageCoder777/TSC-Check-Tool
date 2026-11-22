@@ -37,13 +37,13 @@ fn find_assets_root(path: &Path) -> Option<PathBuf> {
 pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
         return Err(
-            crate::gettext!("Указанный путь не существует или не является папкой!").to_string(),
+            crate::gettext!("Specified path does not exist or is not a folder!").to_string(),
         );
     }
     let normalized = normalize_path(path);
     let Some(assets_root) = find_assets_root(&normalized) else {
         return Err(
-            crate::gettext!("Папка должна находиться внутри каталога RailWorks/Assets!")
+            crate::gettext!("Folder must be inside RailWorks/Assets!")
                 .to_string(),
         );
     };
@@ -52,7 +52,7 @@ pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
             .file_name()
             .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
     {
-        return Err(crate::gettext!("Нельзя сканировать весь каталог Assets целиком! Выберите папку провайдера или продукта (например, Assets/Kuju).").to_string());
+        return Err(crate::gettext!("You can't scan the entire Assets catalog! Select the provider or product folder (for example, Assets/Kuju).").to_string());
     }
     Ok(path.to_path_buf())
 }
@@ -96,7 +96,7 @@ impl AuditorController {
             let Some(w) = handle.upgrade() else { return };
             let current = w.get_folder_path().to_string();
             let mut dialog = rfd::FileDialog::new()
-                .set_title(crate::gettext!("Выберите одну или несколько папок для аудита"));
+                .set_title(crate::gettext!("Select folder(s) to check."));
             if !current.is_empty() {
                 let first = current.split(';').next().unwrap_or("").trim();
                 let p = Path::new(first);
@@ -110,7 +110,7 @@ impl AuditorController {
                     .filter_map(|p| validate_audit_folder(&p).ok())
                     .collect();
                 if valid_folders.is_empty() {
-                    w.set_scan_status_text(crate::gettext!("Ошибка: выбранные папки должны находится внутри каталога Assets и не быть самим каталогом Assets!").into());
+                    w.set_scan_status_text(crate::gettext!("Error: selected folders must be located inside Assets directory and not be Assets directory itself!").into());
                     return;
                 }
                 let joined = valid_folders
@@ -161,7 +161,7 @@ impl AuditorController {
 
             if let Some(w) = handle.upgrade() {
                 w.set_scan_progress(0.0);
-                w.set_scan_status_text(crate::gettext!("Подготовка к аудиту...").into());
+                w.set_scan_status_text(crate::gettext!("Preparing to check...").into());
                 w.set_filtered_rows(slint::ModelRc::new(slint::VecModel::default()));
                 clear_selection(&w);
                 w.set_is_scanning(true);
@@ -221,7 +221,7 @@ impl AuditorController {
                                 };
                                 w.set_scan_progress(progress);
                                 let template =
-                                    crate::gettext!("Сканирование: {} / {} файлов...");
+                                    crate::gettext!("Scanning: {} / {} files...");
                                 w.set_scan_status_text(
                                     template
                                         .replacen("{}", &done.to_string(), 1)
@@ -302,9 +302,9 @@ impl AuditorController {
                         w.set_filtered_rows(map_broken_resources_to_ui(&display_items));
                         w.set_scan_progress(1.0);
                         let final_msg = if total_issues == 0 {
-                            crate::gettext!("Проверка завершена: повреждённых или отсутствующих файлов не обнаружено.").to_string()
+                            crate::gettext!("Check completed: no missing or corrupted files.").to_string()
                         } else {
-                            crate::gettext!("Проверка завершена. Найдено проблем: {}.")
+                            crate::gettext!("Check completed. Found problems: {}.")
                                 .replace("{}", &total_issues.to_string())
                         };
                         w.set_scan_status_text(final_msg.into());
@@ -388,7 +388,7 @@ impl AuditorController {
             }
 
             const NO_PARENTS_MSG: &str =
-                "Не используется ни одним чертежом (.bin) или мешем (.GeoPcDx) в продукте";
+                "Not used by any blueprint (.bin) or a mesh (.GeoPcDx) in the product";
 
             let (is_tex, has_missing, incoming, outgoing) = state
                 .lock()
@@ -479,7 +479,7 @@ impl AuditorController {
                         &outgoing,
                         &missing_refs,
                     ) {
-                        let template = crate::gettext!("Не удалось открыть граф зависимостей: {}");
+                        let template = crate::gettext!("Failed to open dependency graph: {}");
                         let msg = template.replace("{}", &e.to_string());
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
@@ -508,7 +508,7 @@ impl AuditorController {
                     };
                     if let Err(e) = generate_full_directory_graph(&full_graph, Path::new("")) {
                         let template =
-                            crate::gettext!("Не удалось построить полный граф каталога: {}");
+                            crate::gettext!("Failed to build full graph: {}");
                         let msg = template.replace("{}", &e.to_string());
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
@@ -537,7 +537,7 @@ impl AuditorController {
                 if let Some(path) = target_path {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
-                            format!("Открыта папка цели в Проводнике: {}.", path.display()),
+                            format!("Parent folder opened in explorer: {}.", path.display()),
                             LogLevel::Info,
                         );
                         crate::schedule_ui_sync();
@@ -567,7 +567,7 @@ impl AuditorController {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
                             format!(
-                                "Открыта родительская папка цели в Проводнике: {}.",
+                                "Parent folder opened in explorer: {}.",
                                 dir.display()
                             ),
                             LogLevel::Info,
@@ -604,7 +604,7 @@ impl AuditorController {
                 } else {
                     if let Some(win) = handle.upgrade() {
                         win.set_editor_status(
-                            "Выбранный элемент не является .bin/.GeoPcDx/.XSec".into(),
+                            "Select element is not .bin/.GeoPcDx/.XSec".into(),
                         );
                     }
                     return;
@@ -719,7 +719,7 @@ fn format_refs_preview(set: Option<&HashSet<PathBuf>>, empty: &str) -> String {
     };
     if s.len() > 3 {
         let names: Vec<String> = s.iter().take(3).map(display_name).collect();
-        format!("{} файлов: {}", s.len(), names.join(", "))
+        format!("{} files: {}", s.len(), names.join(", "))
     } else {
         s.iter().map(display_name).collect::<Vec<_>>().join("; ")
     }
@@ -739,7 +739,7 @@ pub(crate) fn map_broken_resources_to_ui(
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy();
-                format!("{first} (+{} источников)", r.all_parents.len() - 1)
+                format!("{first} +{} sources", r.all_parents.len() - 1)
             } else {
                 r.parent_file.to_string_lossy().into_owned()
             };

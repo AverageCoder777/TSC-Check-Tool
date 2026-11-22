@@ -174,7 +174,7 @@ impl ApPickerController {
                                 pw.set_extracting(false);
                             }
                         });
-                        show_native_error("Ошибка распаковки", &err);
+                        show_native_error("Unpack error", &err);
                     }
                 }
             });

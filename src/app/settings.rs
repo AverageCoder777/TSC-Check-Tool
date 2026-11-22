@@ -51,11 +51,11 @@ impl AppConfig {
         let path = config_file();
         let parent = path
             .parent()
-            .ok_or_else(|| "Некорректный путь к конфигурации.".to_owned())?;
+            .ok_or_else(|| "Incorrect config path.".to_owned())?;
         fs::create_dir_all(parent)
-            .map_err(|error| format!("Не удалось создать папку настроек: {error}"))?;
+            .map_err(|error| format!("Failed to create config folder: {error}"))?;
         let data = serde_json::to_string_pretty(self)
-            .map_err(|error| format!("Не удалось подготовить конфигурацию: {error}"))?;
+            .map_err(|error| format!("Failed to prepare config: {error}"))?;
         fs::write(&path, data).map_err(|error| {
             format!(
                 "Не удалось сохранить конфигурацию {}: {error}",
@@ -140,7 +140,7 @@ pub(crate) fn load_ignored_route_ids() -> Result<HashSet<String>, String> {
             .collect()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashSet::new()),
         Err(error) => Err(format!(
-            "Не удалось прочитать игнор-лист {}: {error}",
+            "Failed to read ignore-list {}: {error}",
             path.display()
         )),
     }
@@ -166,9 +166,9 @@ pub(crate) fn append_asset_replacement_log(
 ) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Некорректный путь к журналу замен.".to_owned())?;
+        .ok_or_else(|| "Incorrect path to replacement log.".to_owned())?;
     fs::create_dir_all(parent)
-        .map_err(|error| format!("Не удалось создать папку журнала замен: {error}"))?;
+        .map_err(|error| format!("Failed to create folder for replacement log: {error}"))?;
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -181,14 +181,14 @@ pub(crate) fn append_asset_replacement_log(
         })?;
     entry.timestamp_unix_seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("Не удалось определить время записи журнала: {error}"))?
+        .map_err(|error| format!("Failed to define log entry time: {error}"))?
         .as_secs();
     let mut line = serde_json::to_vec(entry)
-        .map_err(|error| format!("Не удалось подготовить запись журнала замен: {error}"))?;
+        .map_err(|error| format!("Failed to prepare replacement log entry: {error}"))?;
     line.push(b'\n');
     file.write_all(&line).map_err(|error| {
         format!(
-            "Не удалось записать журнал замен {}: {error}",
+            "Failed to write replacement log {}: {error}",
             path.display()
         )
     })
@@ -215,13 +215,13 @@ pub(crate) fn read_route_thumbnail_setting(path: &Path) -> Result<bool, String> 
             "true" => Ok(true),
             "false" => Ok(false),
             _ => Err(format!(
-                "Некорректное значение настройки миниатюр в {}.",
+                "Incorrect route icon setting in {}.",
                 path.display()
             )),
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(format!(
-            "Не удалось прочитать настройку миниатюр {}: {error}",
+            "Failed to read route icon setting {}: {error}",
             path.display()
         )),
     }
@@ -231,12 +231,12 @@ pub(crate) fn read_route_thumbnail_setting(path: &Path) -> Result<bool, String> 
 pub(crate) fn write_route_thumbnail_setting(path: &Path, enabled: bool) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Некорректный путь к настройкам миниатюр.".to_owned())?;
+        .ok_or_else(|| "Incorrect path to route icon setting.".to_owned())?;
     fs::create_dir_all(parent)
-        .map_err(|error| format!("Не удалось создать папку настроек: {error}"))?;
+        .map_err(|error| format!("Failed to create settings folder: {error}"))?;
     fs::write(path, enabled.to_string()).map_err(|error| {
         format!(
-            "Не удалось сохранить настройку миниатюр {}: {error}",
+            "Failed to save route icon setting {}: {error}",
             path.display()
         )
     })
@@ -247,21 +247,21 @@ pub(crate) fn read_serz_process_limit(path: &Path) -> Result<usize, String> {
     let value = match fs::read_to_string(path) {
         Ok(value) => value.trim().parse::<usize>().map_err(|_| {
             format!(
-                "Некорректное значение ограничения Serz-процессов в {}.",
+                "Incorrect max Serz threads count in {}.",
                 path.display()
             )
         })?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => maximum_serz_processes(),
         Err(error) => {
             return Err(format!(
-                "Не удалось прочитать настройку Serz {}: {error}",
+                "Failed to read Serz threads setting {}: {error}",
                 path.display()
             ));
         }
     };
     if value == 0 {
         return Err(format!(
-            "Количество параллельных Serz-процессов в {} должно быть не меньше 1.",
+            "Serz threads in {} must be at least 1.",
             path.display()
         ));
     }
@@ -272,18 +272,18 @@ pub(crate) fn read_serz_process_limit(path: &Path) -> Result<usize, String> {
 pub(crate) fn write_serz_process_limit(path: &Path, limit: usize) -> Result<(), String> {
     if limit == 0 || limit > maximum_serz_processes() {
         return Err(format!(
-            "Количество параллельных Serz-процессов должно быть от 1 до {}.",
+            "Serz threads must be from 1 to {}.",
             maximum_serz_processes()
         ));
     }
     let parent = path
         .parent()
-        .ok_or_else(|| "Некорректный путь к настройкам Serz.".to_owned())?;
+        .ok_or_else(|| "Incorrect path to Serz setting.".to_owned())?;
     fs::create_dir_all(parent)
-        .map_err(|error| format!("Не удалось создать папку настроек: {error}"))?;
+        .map_err(|error| format!("Failed to create settings folder: {error}"))?;
     fs::write(path, limit.to_string()).map_err(|error| {
         format!(
-            "Не удалось сохранить настройку Serz {}: {error}",
+            "Failed to save Serz setting {}: {error}",
             path.display()
         )
     })

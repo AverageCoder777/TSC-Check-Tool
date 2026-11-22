@@ -96,7 +96,7 @@ pub fn geometry_reference_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(r#"(?is)>([^<>]*\.(?:GeoPcDx|TgPcDx))\s*</[^>]+>"#)
-            .expect("Шаблон поиска ссылок на геометрию должен быть корректным")
+            .expect("Geometry reference search template must be correct.")
     })
 }
 
@@ -104,7 +104,7 @@ pub fn variant_reference_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
         Regex::new(r#"(?is)>([^<>]*\[[0-9]{2,3}\][^<>]*)\s*</[^>]+>"#)
-            .expect("Шаблон поиска ссылок с вариантом должен быть корректным")
+            .expect("Link search template with the option must be correct.")
     })
 }
 
@@ -153,7 +153,7 @@ pub fn escape_xml_text(text: &str) -> String {
 
 pub(crate) fn validate_xml_document(xml: &str) -> Result<(), String> {
     for event in xml::reader::EventReader::new(xml.as_bytes()) {
-        event.map_err(|error| format!("Некорректный XML: {error}"))?;
+        event.map_err(|error| format!("Incorrect XML: {error}"))?;
     }
     Ok(())
 }

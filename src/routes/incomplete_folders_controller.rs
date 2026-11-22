@@ -50,8 +50,8 @@ impl IncompleteFoldersController {
             }
 
             let confirmed = rfd::MessageDialog::new()
-                .set_title("Удаление папки")
-                .set_description("Удалить выбранную неполную папку навсегда?")
+                .set_title("Folder deletion")
+                .set_description("Delete selected incomplete folder?")
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
             if confirmed != rfd::MessageDialogResult::Ok {
@@ -67,7 +67,7 @@ impl IncompleteFoldersController {
                         Ok(()) => {
                             app.incomplete_folders.remove(idx);
                             app.log_event(
-                                format!("Удалена неполная папка: {}.", path.display()),
+                                format!("Deleted incomplete folder: {}.", path.display()),
                                 LogLevel::Info,
                             );
                             if let Some(w) = weak_del.upgrade() {
@@ -77,14 +77,14 @@ impl IncompleteFoldersController {
                         }
                         Err(error) => {
                             app.log_event(
-                                format!("Не удалось удалить {}: {error}.", path.display()),
+                                format!("Failed to delete {}: {error}.", path.display()),
                                 LogLevel::Error,
                             );
                         }
                     },
                     Err(e) => {
                         app.log_event(
-                            format!("Ошибка безопасности при удалении {}: {e}.", path.display()),
+                            format!("Security error during deletion {}: {e}.", path.display()),
                             LogLevel::Error,
                         );
                     }
@@ -104,8 +104,8 @@ impl IncompleteFoldersController {
             }
 
             let confirmed = rfd::MessageDialog::new()
-                .set_title("Удаление папок")
-                .set_description("Удалить все найденные неполные папки навсегда?")
+                .set_title("Folder deletion")
+                .set_description("Delete all detected incomplete folders?")
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
             if confirmed != rfd::MessageDialogResult::Ok {
@@ -120,7 +120,7 @@ impl IncompleteFoldersController {
                     Ok(dir) => dir,
                     Err(e) => {
                         app.log_event(
-                            format!("Ошибка безопасности при удалении папок: {e}."),
+                            format!("Security error during deletion folders: {e}."),
                             LogLevel::Error,
                         );
                         return;
@@ -137,7 +137,7 @@ impl IncompleteFoldersController {
                             if let Err(error) = fs::remove_dir_all(&folder.path) {
                                 app.log_event(
                                     format!(
-                                        "Не удалось удалить {}: {error}.",
+                                        "Failed to delete {}: {error}.",
                                         folder.path.display()
                                     ),
                                     LogLevel::Error,
@@ -148,7 +148,7 @@ impl IncompleteFoldersController {
                         Err(e) => {
                             app.log_event(
                                 format!(
-                                    "Ошибка безопасности при удалении {}: {e}.",
+                                    "Security error during deletion {}: {e}.",
                                     folder.path.display()
                                 ),
                                 LogLevel::Error,
@@ -164,19 +164,19 @@ impl IncompleteFoldersController {
 
                 if failed == 0 {
                     app.log_event(
-                        format!("Удалены все неполные папки ({removed} шт.)."),
+                        format!("Deleted all incomplete folders ({removed} entries)."),
                         LogLevel::Info,
                     );
                 } else if removed > 0 {
                     app.log_event(
                         format!(
-                            "Удалено неполных папок: {removed} (не удалось удалить: {failed})."
+                            "Deleted incomplete folders: {removed} (failed to delete: {failed})."
                         ),
                         LogLevel::Warning,
                     );
                 } else {
                     app.log_event(
-                        "Не удалось удалить ни одной неполной папки.",
+                        "Couldn't delete any incomplete folders.",
                         LogLevel::Error,
                     );
                 }
@@ -202,7 +202,7 @@ fn update_window(window: &IncompleteFoldersWindow, folders: &[IncompleteRouteFol
     let total_bytes: u64 = folders.iter().map(|f| f.total_size_bytes).sum();
     let count = folders.len();
     let summary = format!(
-        "Всего: {} {} • общий вес: {}",
+        "All: {} {} • total size: {}",
         count,
         folder_count_word(count),
         format_size_bytes(total_bytes)
@@ -216,7 +216,7 @@ fn canonical_routes_dir(app: &CheckerApp) -> Result<PathBuf, String> {
     let routes_dir = app.clean_rw_path().join("Content").join("Routes");
     routes_dir
         .canonicalize()
-        .map_err(|e| format!("Не удалось определить папку маршрутов: {e}"))
+        .map_err(|e| format!("Failed to determine routes folder: {e}"))
 }
 
 /// Проверяет, безопасно ли удалять директорию: путь должен находиться
@@ -228,16 +228,16 @@ fn validate_delete_path(path: &Path, app: &CheckerApp) -> Result<(), String> {
 
 fn validate_delete_path_against(path: &Path, canon_routes: &Path) -> Result<(), String> {
     if path.as_os_str().is_empty() {
-        return Err("Путь к удалению пустой.".to_owned());
+        return Err("Path to deletion is empty.".to_owned());
     }
     let canon_target = path
         .canonicalize()
-        .map_err(|e| format!("Не удалось определить целевой путь: {e}"))?;
+        .map_err(|e| format!("Failed to determine target path: {e}"))?;
     if canon_target == canon_routes {
-        return Err("Удаление корневой папки маршрутов запрещено.".to_owned());
+        return Err("Deleting root folder of routes is prohibited.".to_owned());
     }
     if !canon_target.starts_with(canon_routes) {
-        return Err("Целевой путь находится вне папки маршрутов. Удаление запрещено.".to_owned());
+        return Err("Target path is located outside routes folder. Deletion is prohibited.".to_owned());
     }
     Ok(())
 }

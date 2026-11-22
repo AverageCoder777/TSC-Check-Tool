@@ -157,7 +157,7 @@ impl RouteFile {
                 Component::ParentDir | Component::Prefix(_) | Component::RootDir
             )
         }) {
-            return Err(format!("Недопустимый путь внутри архива: {name}"));
+            return Err(format!("Incorrect path inside archive: {name}"));
         }
 
         let target = temp_dir.join(relative);

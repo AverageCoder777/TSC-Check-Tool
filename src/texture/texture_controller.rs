@@ -135,7 +135,7 @@ impl TextureController {
                 notify(
                     &editor_weak,
                     &editor_ui_weak,
-                    "Нет загруженной текстуры для открытия в редакторе",
+                    "There is no loaded texture to open in editor.",
                     LogLevel::Warning,
                 );
                 return;
@@ -165,22 +165,21 @@ impl TextureController {
                         }
                         Err(error) => {
                             let message =
-                                format!("Файл изменён, но превью не удалось обновить: {error}");
+                                format!("File was changed, but preview could not be updated: {error}");
                             notify(&callback_viewer, &callback_ui, &message, LogLevel::Error);
                         }
                     },
                     Err(error) => {
-                        let message = format!("Ошибка редактора: {error}");
+                        let message = format!("Editor error: {error}");
                         notify(&callback_viewer, &callback_ui, &message, LogLevel::Error);
                     }
                 })
             {
-                let message = format!("Не удалось открыть файл в редакторе: {error}");
+                let message = format!("Failed to open file in editor: {error}");
                 notify(&editor_weak, &editor_ui_weak, &message, LogLevel::Error);
             }
         });
 
-        // Переключение альфа-канала
         let viewer_weak_toggle = self.weak.clone();
         let tex_state_for_toggle = self.tex_state.clone();
         let tex_info_for_toggle = self.tex_info.clone();
@@ -217,7 +216,6 @@ impl TextureController {
             v.set_info_text(info_text.into());
         });
 
-        // Экспорт в DDS
         let tex_state_for_export = self.tex_state.clone();
         let viewer_weak_export = self.weak.clone();
         let ui_weak_export = crate::UI_WEAK.get().cloned();
@@ -226,7 +224,7 @@ impl TextureController {
                 notify(
                     &viewer_weak_export,
                     &ui_weak_export,
-                    "Нет загруженной текстуры для экспорта",
+                    "There is no loaded texture to export",
                     LogLevel::Warning,
                 );
                 return;
@@ -249,10 +247,10 @@ impl TextureController {
             thread::spawn(move || {
                 let (msg, level) = match export_tgpcdx_to_dds(&path, &out) {
                     Ok(()) => (
-                        format!("Экспортировано DDS: {}", out.display()),
+                        format!("DDS exported: {}", out.display()),
                         LogLevel::Success,
                     ),
-                    Err(e) => (format!("Ошибка экспорта DDS: {e}"), LogLevel::Error),
+                    Err(e) => (format!("DDS export failure: {e}"), LogLevel::Error),
                 };
                 notify(&viewer_weak, &ui_weak, &msg, level);
             });
@@ -268,7 +266,7 @@ impl TextureController {
                 notify(
                     &viewer_weak_replace,
                     &ui_weak_replace,
-                    "Нет загруженной текстуры для замены",
+                    "There is no loaded texture to replace",
                     LogLevel::Warning,
                 );
                 return;
@@ -276,7 +274,7 @@ impl TextureController {
 
             if is_readonly(&path) {
                 let msg = format!(
-                    "Файл доступен только для чтения (возможно, внутри .ap-архива): {}. Распакуйте перед заменой.",
+                    "File is read-only (possibly inside the .ap archive):: {}. Unpack before replacing.",
                     path.display()
                 );
                 notify(&viewer_weak_replace, &ui_weak_replace, &msg, LogLevel::Warning);
@@ -296,7 +294,7 @@ impl TextureController {
             let tex_info = tex_info_for_replace.clone();
             thread::spawn(move || {
                 if let Err(e) = external_editor::create_backup_file(&path) {
-                    let msg = format!("Не удалось создать резервную копию: {e}");
+                    let msg = format!("Failed to create backup: {e}");
                     notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
                     return;
                 }
@@ -304,13 +302,13 @@ impl TextureController {
                 match convert_dds_to_tgpcdx_report(&input, &path) {
                     Ok(report) => {
                         let msg = format!(
-                            "Импорт DDS выполнен: формат {}, мипмапов {}, всего {} байт",
+                            "DDS import completed: format {}, mipmaps {}, {} bytes",
                             report.dds_format, report.mip_count, report.total_bytes
                         );
                         notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
                     }
                     Err(e) => {
-                        let msg = format!("Ошибка замены из DDS: {e}");
+                        let msg = format!("Error replacing from DDS: {e}");
                         notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
                         return;
                     }
@@ -324,13 +322,13 @@ impl TextureController {
                             apply_texture_to_viewer(&v, &snapshot, true);
                         }
                     });
-                    let msg = format!("Текстура заменена из DDS: {}", path.display());
+                    let msg = format!("Texture replaced from DDS: {}", path.display());
                     notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
                 } else {
                     notify(
                         &viewer_weak,
                         &ui_weak,
-                        "Не удалось перезагрузить превью после замены",
+                        "Couldn't restart preview after replacement",
                         LogLevel::Warning,
                     );
                 }
@@ -363,11 +361,11 @@ impl TextureController {
                                 }
                             });
                         }
-                        let msg = format!("Внутреннее имя текстуры сохранено: {}", path.display());
+                        let msg = format!("Internal texture name is saved: {}", path.display());
                         notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
                     }
                     Err(e) => {
-                        let msg = format!("Ошибка сохранения имени: {e}");
+                        let msg = format!("Failed to save name: {e}");
                         notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
                     }
                 },

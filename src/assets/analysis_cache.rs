@@ -199,13 +199,13 @@ impl AnalysisCache {
         let temporary = path.with_extension("tmp");
         {
             let file = File::create(&temporary)
-                .map_err(|error| format!("Не удалось записать кэш разбора: {error}"))?;
+                .map_err(|error| format!("Failed to write analysis cache: {error}"))?;
             let mut writer = BufWriter::new(file);
             serde_json::to_writer(&mut writer, &stored)
-                .map_err(|error| format!("Не удалось подготовить кэш разбора: {error}"))?;
+                .map_err(|error| format!("Failed to prepare analysis cache: {error}"))?;
             writer
                 .flush()
-                .map_err(|error| format!("Не удалось записать кэш разбора: {error}"))?;
+                .map_err(|error| format!("Failed to write analysis cache: {error}"))?;
         }
 
         if let Err(error) = fs::rename(&temporary, &path) {
@@ -213,7 +213,7 @@ impl AnalysisCache {
                 let _ = fs::remove_file(&temporary);
             } else {
                 let _ = fs::remove_file(&temporary);
-                return Err(format!("Не удалось сохранить кэш разбора: {error}"));
+                return Err(format!("Failed to save analysis cache: {error}"));
             }
         }
         Ok(())

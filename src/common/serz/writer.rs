@@ -388,7 +388,7 @@ pub fn patch_tgpcdx_blobs(
                 let _flag = reader.read_u8()?;
                 let _val = reader.read_u32()?;
             }
-            other => return Err(format!("Неожиданный опкод перед корнем: 0x{other:02X}")),
+            other => return Err(format!("Unexpected opcode before root: 0x{other:02X}")),
         }
     }
 
@@ -424,9 +424,9 @@ pub fn patch_tgpcdx_blobs(
                     let data_end = len_pos
                         .checked_add(4)
                         .and_then(|v| v.checked_add(len))
-                        .ok_or("Переполнение смещения блоба")?;
+                        .ok_or("Blob offset overflow")?;
                     if data_end > reader.data_len {
-                        return Err("Блоб выходит за пределы файла".into());
+                        return Err("Blob exceeds file boundaries".into());
                     }
                     reader.cursor.set_position(data_end as u64);
                     spans.push((len_pos, data_end));
@@ -437,7 +437,7 @@ pub fn patch_tgpcdx_blobs(
                     let _ = reader.read_u32()?;
                 }
                 0x70 => break,
-                other => return Err(format!("Неподдерживаемый опкод: 0x{other:02X}")),
+                other => return Err(format!("Unsupported opcode: 0x{other:02X}")),
             }
         }
         Ok(())
@@ -447,7 +447,7 @@ pub fn patch_tgpcdx_blobs(
 
     if blob_spans.len() != new_mips.len() {
         return Err(format!(
-            "Количество мипмапов не совпадает: в оригинале {}, в DDS {}",
+            "Mipmap count do not match. Original: {}, in DDS: {}",
             blob_spans.len(),
             new_mips.len()
         ));

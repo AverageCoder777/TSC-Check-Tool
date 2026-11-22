@@ -217,28 +217,28 @@ impl ScenarioController {
                     .and_then(|cc| cc.vehicles.first())
                 {
                     format!(
-                        "Поставщик: {}\nДополнение: {}\nФайл: {}\nНомер: {}",
+                        "Provider: {}\nProduct: {}\nFile: {}\nnumber: {}",
                         v.provider,
                         v.product,
                         v.blueprint,
                         v.number.clone().unwrap_or_else(|| "—".to_owned())
                     )
                 } else {
-                    "Выберите единицу техники".to_owned()
+                    "Select rolling stock".to_owned()
                 };
 
                 let scenario_name = scenario.name.clone();
                 let scenario_title = format!(
-                    "Сценарий: {}",
+                    "Scenario: {}",
                     if scenario.name.trim().is_empty() {
-                        "Без названия"
+                        "No name"
                     } else {
                         scenario.name.as_str()
                     }
                 );
                 let fallback = |value: &str| -> String {
                     if value.trim().is_empty() {
-                        "Не указано".to_owned()
+                        "Not specified".to_owned()
                     } else {
                         value.to_owned()
                     }
@@ -351,7 +351,7 @@ impl ScenarioController {
                     };
                     app.log_event(
                         format!(
-                            "Открыта папка сценария в Проводнике: {}.",
+                            "Scenario folder is open in explorer: {}.",
                             scenario.path.display()
                         ),
                         LogLevel::Info,
@@ -399,7 +399,7 @@ impl ScenarioController {
                 let path = app.locoswap_path.clone();
                 if path.is_empty() {
                     app.log_event(
-                        "Locoswap не настроен: укажите путь к Locoswap в настройках.".to_owned(),
+                        "Locoswap isn't configurated: set path to Locoswap in settings.".to_owned(),
                         LogLevel::Warning,
                     );
                     crate::schedule_ui_sync();
@@ -407,7 +407,7 @@ impl ScenarioController {
                 }
                 if !Path::new(&path).is_file() {
                     app.log_event(
-                        format!("Locoswap не найден по пути: {}.", path),
+                        format!("Locoswap is not found: {}.", path),
                         LogLevel::Error,
                     );
                     crate::schedule_ui_sync();
@@ -423,7 +423,7 @@ impl ScenarioController {
                     cmd.arg(&scenario.path);
                     let scenario_name = scenario.name.clone();
                     app.log_event(
-                        format!("Запущен Locoswap для сценария: {}.", scenario_name),
+                        format!("Locoswap is launched for scenario: {}.", scenario_name),
                         LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
@@ -542,7 +542,7 @@ impl ScenarioController {
                     }
                     sw.set_selected_vehicle_image(image);
                     let details = format!(
-                        "Поставщик: {}\nДополнение: {}\nФайл: {}\nНомер: {}",
+                        "Provider: {}\nProduct: {}\nFile: {}\nNumber: {}",
                         provider,
                         product,
                         blueprint,
@@ -598,7 +598,7 @@ impl ScenarioController {
                 );
                 if let Some(path) = resolved {
                     app.log_event(
-                        format!("Открыт путь объекта в Проводнике: {}.", path.display()),
+                        format!("Asset path is open in explorer: {}.", path.display()),
                         LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
@@ -619,7 +619,7 @@ impl ScenarioController {
                 } else {
                     app.log_event(
                         format!(
-                            "Не удалось найти блюпринт объекта в маршруте: {}/{}.",
+                            "Failed to find asset blueprint in route: {}/{}.",
                             provider, product
                         ),
                         LogLevel::Error,
@@ -668,7 +668,7 @@ impl ScenarioController {
                 if let Some(path) = resolved {
                     app.log_event(
                         format!(
-                            "Открыт путь транспортного средства в Проводнике: {}.",
+                            "Stock path is open in explorer: {}.",
                             path.display()
                         ),
                         LogLevel::Info,
@@ -693,7 +693,7 @@ impl ScenarioController {
                     let product = vehicle.product.clone();
                     app.log_event(
                         format!(
-                            "Не удалось найти блюпринт транспортного средства: {}/{}.",
+                            "Failed to find stock blueprint: {}/{}.",
                             provider, product
                         ),
                         LogLevel::Error,

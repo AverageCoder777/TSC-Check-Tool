@@ -126,7 +126,7 @@ impl Default for CheckerApp {
         let (ignored_route_ids, status) = match load_ignored_route_ids() {
             Ok(ids) => (
                 ids,
-                "Укажите путь к RailWorks и просканируйте маршруты.".to_owned(),
+                "Set Ralworks path and scan routes.".to_owned(),
             ),
             Err(error) => (HashSet::new(), error),
         };
@@ -212,7 +212,7 @@ impl CheckerApp {
         };
         if let Some(error) = window_error {
             self.log_event(
-                format!("Не удалось открыть инвентарь ассетов: {error}"),
+                format!("Failed to open asset inventory: {error}"),
                 LogLevel::Error,
             );
         }
@@ -241,7 +241,7 @@ impl CheckerApp {
         self.asset_replacement = Some(rx);
         self.asset_replacement_feedback = None;
         self.log_event(
-            format!("Подготовка замены ассета {}...", missing.path),
+            format!("Preparing asset replacement {}...", missing.path),
             LogLevel::Info,
         );
         thread::spawn(move || {
@@ -259,7 +259,7 @@ impl CheckerApp {
                         let _ = tx.send((
                             missing_path,
                             Err(format!(
-                                "Не удалось переименовать новый ассет под английские имена: {error}"
+                                "Couldn't rename new asset to English names: {error}"
                             )),
                         ));
                         crate::schedule_ui_sync();
@@ -291,7 +291,7 @@ impl CheckerApp {
                     .unwrap_or(0);
                 let mut entry = AssetReplacementLogEntry {
                     timestamp_unix_seconds,
-                    operation: "Замена отсутствующего ассета".to_owned(),
+                    operation: "Replacing missing asset".to_owned(),
                     route_id: Some(route.id.clone()),
                     route_name: Some(route.name.clone()),
                     route_path: Some(route.path.clone()),
@@ -358,7 +358,7 @@ impl CheckerApp {
             self.selected_incomplete = None;
         }
         self.result = None;
-        self.log_event("Сканирование маршрутов...".to_owned(), LogLevel::Info);
+        self.log_event("Scanning routes".to_owned(), LogLevel::Info);
         crate::schedule_ui_sync();
         let ignored_route_ids = self.ignored_route_ids.clone();
         let max_threads = route_scan_max_threads(self.serz_process_limit, self.route_scan_on_hdd);
@@ -406,7 +406,7 @@ impl CheckerApp {
             state.scanning_umlauts = false;
         }
         self.log_event(
-            format!("Проверка маршрута «{}»...", route.name),
+            format!("Checking route «{}»", route.name),
             LogLevel::Info,
         );
         crate::schedule_ui_sync();
@@ -510,7 +510,7 @@ impl CheckerApp {
     fn poll_inventory_scan(&mut self) {
         let Some(result) = poll_receiver(
             &mut self.inventory_scan,
-            "Не удалось получить результат проверки умляутов.",
+            "Failed to obtain umlauts check result.",
         ) else {
             return;
         };
@@ -541,13 +541,13 @@ impl CheckerApp {
                 };
                 let (message, level) = if errors.is_empty() {
                     (
-                        format!("Проверка умляутов завершена. Найдено: {}.", assets.len()),
+                        format!("Umlauts check completed. Found: {}.", assets.len()),
                         LogLevel::Success,
                     )
                 } else {
                     (
                         format!(
-                            "Проверка завершена: найдено ассетов {}, ошибок анализа {}.",
+                            "Check completed. Found: {}, analysis errors: {}.",
                             assets.len(),
                             errors.len()
                         ),
@@ -557,7 +557,7 @@ impl CheckerApp {
                 self.log_event(message, level);
                 if let Some(error) = window_error {
                     self.status.push_str(&format!(
-                        " Не удалось обновить состояние окна инвентаря: {error}"
+                        "Failed to update inventory window status: {error}"
                     ));
                 }
             }
@@ -579,7 +579,7 @@ impl CheckerApp {
                 Ok(result) => Some(result),
                 Err(TryRecvError::Disconnected) => Some((
                     String::new(),
-                    Err("Не удалось получить результат замены ассетов.".to_owned()),
+                    Err("Failed to obtain asset replacement result.".to_owned()),
                 )),
                 Err(TryRecvError::Empty) => None,
             });
@@ -590,11 +590,11 @@ impl CheckerApp {
                     let log_message = report.log_file.as_ref().map_or_else(
                         || {
                             report.log_error.as_ref().map_or_else(
-                                || "Журнал замен недоступен.".to_owned(),
-                                |error| format!("ЖУРНАЛ НЕ ЗАПИСАН: {error}"),
+                                || "Replacement log is unavailable.".to_owned(),
+                                |error| format!("LOG IS NOT RECORDED: {error}"),
                             )
                         },
-                        |path| format!("Журнал: {}", path.display()),
+                        |path| format!("Log: {}", path.display()),
                     );
                     let remaining_assets = self.result.as_mut().map(|check_result| {
                         check_result
@@ -615,12 +615,12 @@ impl CheckerApp {
                     }
                     self.missing_assets_shown = false;
                     self.asset_replacement_feedback = Some(Ok(format!(
-                        "Заменено размещений: {}; изменено файлов тайлов: {}. {log_message}",
+                        "Replaced placements: {}; edited tiles: {}. {log_message}",
                         report.replaced_instances, report.replaced_files,
                     )));
                     self.log_event(
                         format!(
-                            "Замена объекта {} -> {} в маршруте ({} вхождений)",
+                            "Replacing object {} -> {} on route ({} in total)",
                             missing_path, report.replacement_asset, report.replaced_instances
                         ),
                         LogLevel::Info,
@@ -628,13 +628,13 @@ impl CheckerApp {
                     self.inventory_refresh_pending = true;
                     if !report.backups.is_empty() {
                         self.log_event(
-                            format!("Создано резервных копий: {}.", report.backups.len()),
+                            format!("Created {} backups.", report.backups.len()),
                             LogLevel::Info,
                         );
                     }
                     if remaining_assets == Some((0, 0)) {
                         self.log_event(
-                            "Все отсутствующие ассеты обработаны. Выполняется итоговая проверка маршрута...".to_owned(),
+                            "All missing assets have been processed. The final route check is being performed...".to_owned(),
                             LogLevel::Info,
                         );
                         self.inventory_replacement_pending_check = false;
@@ -642,7 +642,7 @@ impl CheckerApp {
                     } else if let Some((remaining, umlauts)) = remaining_assets {
                         self.log_event(
                             format!(
-                                "Замена завершена. Осталось отсутствующих ассетов: {remaining}; ассетов с умляутами: {umlauts}."
+                                "Replacement completed. Missing assets remaining: {remaining}; assets with umlauts: {umlauts}."
                             ),
                             LogLevel::Info,
                         );
@@ -669,7 +669,7 @@ impl CheckerApp {
     fn poll_route_scan(&mut self) {
         let Some(result) = poll_receiver(
             &mut self.route_scan,
-            "Не удалось получить результат сканирования маршрутов.",
+            "Failed to obtain scanning routes result",
         ) else {
             return;
         };
@@ -677,13 +677,13 @@ impl CheckerApp {
             Ok(outcome) => {
                 let routes = outcome.result;
                 let source = if outcome.from_cache {
-                    " (загружено из кэша)"
+                    " (loaded from cache)"
                 } else {
-                    " (полное сканирование)"
+                    " (full scan)"
                 };
                 self.log_event(
                     format!(
-                        "Найдено маршрутов: {}; неполных папок: {}.",
+                        "Routes found: {}; incomplete routes: {}.",
                         routes.routes.len(),
                         routes.incomplete_folders.len()
                     ),
@@ -712,13 +712,13 @@ impl CheckerApp {
             let check_message = match rx.try_recv() {
                 Ok(message) => Ok(message),
                 Err(TryRecvError::Disconnected) => {
-                    Err("Не удалось получить результат проверки маршрута.".to_owned())
+                    Err("Failed to obtain route checking result.".to_owned())
                 }
                 Err(TryRecvError::Empty) => break,
             };
             match check_message {
                 Ok(CheckMessage::Progress(status)) => {
-                    if status.starts_with("Анализ файла:") || status.starts_with("Анализ файлов:")
+                    if status.starts_with("File analysis:") || status.starts_with("Files analysis:")
                     {
                         self.progress_pending = Some(status);
                     } else {
@@ -739,7 +739,7 @@ impl CheckerApp {
                             let mut summary = Vec::new();
                             if !result.missing_assets.is_empty() {
                                 summary.push(format!(
-                                    "отсутствует ассетов: {}",
+                                    "missing assets count: {}",
                                     result.missing_assets.len()
                                 ));
                                 let paths: Vec<String> = result
@@ -751,34 +751,34 @@ impl CheckerApp {
                             }
                             if !result.conversion_errors.is_empty() {
                                 summary.push(format!(
-                                    "ошибок Serz/XML: {}",
+                                    "Serz/XML errors count: {}",
                                     result.conversion_errors.len()
                                 ));
                             }
                             if !result.structure_issues.is_empty() {
                                 summary.push(format!(
-                                    "проблем структуры: {}",
+                                    "structural problems: {}",
                                     result.structure_issues.len()
                                 ));
                             }
                             self.log_event(
                                 if summary.is_empty() {
-                                    "Проверка завершена: ошибки не найдены.".to_owned()
+                                    "Check completed: no errors.".to_owned()
                                 } else {
-                                    format!("Проверка завершена: {}.", summary.join(", "))
+                                    format!("Check completed: {}.", summary.join(", "))
                                 },
                                 LogLevel::Info,
                             );
                             let timestamp = current_timestamp();
                             for issue in &result.structure_issues {
                                 self.push_log_entry(LogEntry {
-                                    text: format!("[{timestamp}] Проблема структуры: {issue}"),
+                                    text: format!("[{timestamp}] Structure error: {issue}"),
                                     level: LogLevel::Warning,
                                 });
                             }
                             for error in &result.conversion_errors {
                                 self.push_log_entry(LogEntry {
-                                    text: format!("[{timestamp}] Ошибка Serz/XML: {error}"),
+                                    text: format!("[{timestamp}] Serz/XML error: {error}"),
                                     level: LogLevel::Error,
                                 });
                             }

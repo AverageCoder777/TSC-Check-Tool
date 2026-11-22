@@ -45,7 +45,7 @@ fn compile_xml_for_target(target_bin: &Path, xml: &str) -> Result<Vec<u8>, Strin
             let mut reader = SerzReader::new(&bytes);
             let root = reader
                 .parse()
-                .map_err(|error| format!("Не удалось проверить сериализованный TgPcDx: {error}"))?;
+                .map_err(|error| format!("Failed to check deserialized TgPcDx: {error}"))?;
             encode_tgpcdx_to_vec(&root, reader.preamble.as_ref())
         } else {
             Ok(bytes)
@@ -75,7 +75,7 @@ pub fn open_and_sync_with_vscode(
 pub fn run_headless(target: &Path) -> Result<(), String> {
     let temp_xml_path = generate_temp_xml_path(target);
     let initial_xml =
-        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error("Ошибка", e))?;
+        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error("Error", e))?;
     run_sync_loop(target, &temp_xml_path, &initial_xml, "Headless").map(|_| ())
 }
 
@@ -92,14 +92,14 @@ fn run_sync_loop(
                 let _ = child.wait();
             }
             Err(e) => {
-                let err = format!("Не удалось запустить редактор: {e}");
-                show_native_error("Ошибка запуска", &err);
+                let err = format!("Failed to open editor: {e}");
+                show_native_error("Launch error", &err);
                 return Err(err);
             }
         }
 
         if !xml_path.exists() {
-            let msg = "Файл был удалён. Синхронизация отменена.".to_string();
+            let msg = "File has been deleted. Sync cancelled.".to_string();
             println!("[{log_tag}] {msg}");
             return Ok(msg);
         }
@@ -107,15 +107,15 @@ fn run_sync_loop(
         let final_xml = match fs::read_to_string(xml_path) {
             Ok(s) => s,
             Err(e) => {
-                let err = format!("Не удалось прочитать {}: {e}", xml_path.display());
-                show_native_error("Ошибка чтения", &err);
+                let err = format!("Failed to read {}: {e}", xml_path.display());
+                show_native_error("Read error", &err);
                 return Err(err);
             }
         };
 
         if final_xml == initial_xml || final_xml.trim().is_empty() {
             let _ = fs::remove_file(xml_path);
-            let msg = "Файл закрыт без изменений".to_string();
+            let msg = "Closed without saving".to_string();
             println!("[{log_tag}] {msg}");
             return Ok(msg);
         }
@@ -124,17 +124,17 @@ fn run_sync_loop(
             Ok(bytes) => {
                 if bytes.len() < 10 {
                     let err = format!(
-                        "Ошибка записи: бинарный файл слишком короткий ({} байт).",
+                        "Write error: binary file too short ({} bytes).",
                         bytes.len()
                     );
-                    show_native_error("Ошибка записи", &err);
+                    show_native_error("Write error", &err);
                     return Err(err);
                 }
                 let mut validation_reader = SerzReader::new(&bytes);
                 if let Err(e) = validation_reader.parse() {
                     let err =
-                        format!("Ошибка сериализации: сгенерированный бинарник поврежден: {e}");
-                    show_native_error("Ошибка записи", &err);
+                        format!("Serialization error: generated binary is corrupted: {e}");
+                    show_native_error("Write error", &err);
                     return Err(err);
                 }
                 let backup = create_backup_file(binary_path).ok().flatten();
@@ -144,12 +144,12 @@ fn run_sync_loop(
                     {
                         let _ = fs::rename(&backup_path, binary_path);
                     }
-                    let err = format!("Ошибка записи в бинарник: {e}");
-                    show_native_error("Ошибка записи", &err);
+                    let err = format!("Error writing to binary: {e}");
+                    show_native_error("Write error", &err);
                     return Err(err);
                 }
                 let _ = fs::remove_file(xml_path);
-                let msg = "✓ Изменения успешно скомпилированы в BIN".to_string();
+                let msg = "Successfully imported to binary".to_string();
                 println!("[{log_tag}] {msg}");
                 return Ok(msg);
             }
@@ -158,7 +158,7 @@ fn run_sync_loop(
                     continue;
                 }
                 return Err(format!(
-                    "Файл сохранён как XML ({}), бинарник не изменён.",
+                    "File saved as XML ({}), binary without changes.",
                     xml_path.display()
                 ));
             }
@@ -168,10 +168,10 @@ fn run_sync_loop(
 
 fn ask_retry_on_xml_error(err: &str) -> bool {
     let prompt = format!(
-        "Обнаружена ошибка синтаксиса XML:\n{err}\n\nОткрыть редактор снова для исправления ошибки?\n(При нажатии 'Нет' файл останется сохранённым как XML рядом с оригиналом, а бинарник затронут не будет)"
+        "An XML syntax error has been detected:\n{err}\n\nOpen the editor again to fix the error?\n(If you click 'No', the file will remain saved as XML next to the original, and the binary will not be affected)"
     );
     rfd::MessageDialog::new()
-        .set_title("Ошибка синтаксиса XML")
+        .set_title("XML syntax error")
         .set_description(&prompt)
         .set_buttons(rfd::MessageButtons::YesNo)
         .set_level(rfd::MessageLevel::Warning)
@@ -193,18 +193,18 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
     if regenerate {
         let xml = if uses_structured_serz_xml(binary_asset_path) {
             let raw = fs::read(binary_asset_path).map_err(|e| {
-                format!("Не удалось прочитать {}: {e}", binary_asset_path.display())
+                format!("Failed to read {}: {e}", binary_asset_path.display())
             })?;
             tracks_bin_to_xml(&raw)?
         } else {
             read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?
         };
         fs::write(temp_xml_path, &xml)
-            .map_err(|e| format!("Не удалось записать {}: {e}", temp_xml_path.display()))?;
+            .map_err(|e| format!("Failed to write {}: {e}", temp_xml_path.display()))?;
         Ok(xml)
     } else {
         fs::read_to_string(temp_xml_path)
-            .map_err(|e| format!("Не удалось прочитать {}: {e}", temp_xml_path.display()))
+            .map_err(|e| format!("Failed to read {}: {e}", temp_xml_path.display()))
     }
 }
 
@@ -295,7 +295,7 @@ pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<Child, String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
         return cmd
             .spawn()
-            .map_err(|e| format!("Не удалось запустить VS Code: {e}"));
+            .map_err(|e| format!("Failed to launch VS Code: {e}"));
     }
 
     let mut c = Command::new("notepad.exe");
@@ -303,23 +303,23 @@ pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<Child, String> {
     #[cfg(windows)]
     c.creation_flags(CREATE_NO_WINDOW);
     c.spawn()
-        .map_err(|e| format!("Не удалось запустить Блокнот: {e}"))
+        .map_err(|e| format!("Failed to launch Notepad: {e}"))
 }
 
 pub fn write_binary_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
     if target.parent().is_none() {
-        return Err(format!("Некорректный путь к файлу: {}", target.display()));
+        return Err(format!("Incorrect file path: {}", target.display()));
     }
     let temp_path = append_suffix(target, ".tmp");
     fs::write(&temp_path, bytes).map_err(|error| {
         format!(
-            "Не удалось записать временный файл {}: {error}",
+            "Failed to write temp file {}: {error}",
             temp_path.display()
         )
     })?;
     fs::rename(&temp_path, target).map_err(|error| {
         let _ = fs::remove_file(&temp_path);
-        format!("Не удалось установить {}: {error}", target.display())
+        format!("Failed to install {}: {error}", target.display())
     })?;
     Ok(())
 }
@@ -341,11 +341,11 @@ pub fn create_backup_file(target_bin: &Path) -> Result<Option<PathBuf>, String> 
     }
     fs::copy(target_bin, &backup_path).map_err(|e| {
         format!(
-            "Не удалось создать резервную копию {}: {e}",
+            "Failed to create backup {}: {e}",
             backup_path.display()
         )
     })?;
-    println!("[Backup] Создана резервная копия: {backup_path:?}");
+    println!("[Backup] Backup created: {backup_path:?}");
     Ok(Some(backup_path))
 }
 

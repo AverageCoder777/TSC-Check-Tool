@@ -59,7 +59,7 @@ pub fn resolve_asset_path(
         0 => Ok(find_similar_asset_path(assets_path, relative_asset)),
         1 => Ok(Some(candidates.remove(0).0)),
         _ => Err(format!(
-            "Ссылка содержит испорченный символ и совпадает с несколькими файлами: {}",
+            "Link contains broken symbol and matches several files: {}",
             candidates
                 .iter()
                 .map(|(path, _, _)| path.display().to_string())
@@ -106,7 +106,7 @@ pub fn unresolved_reference_error(
     product_root: &Path,
 ) -> String {
     let mut message = format!(
-        "Ссылка с умляутом не разрешается в файл: {} → {}",
+        "Link with umlaut is not resolving to the file: {} → {}",
         source.display(),
         reference.to_text()
     );

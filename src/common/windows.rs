@@ -41,7 +41,7 @@ pub(crate) fn open_in_explorer(target_path: &Path) {
 
         if let Err(error) = spawn_result {
             eprintln!(
-                "Не удалось открыть {} в Проводнике: {error}",
+                "Failed to open {} in explorer: {error}",
                 display_path.display()
             );
         }

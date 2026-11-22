@@ -26,14 +26,14 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     let width = dds.get_width();
     let height = dds.get_height();
     if width == 0 || height == 0 {
-        return Err("некорректные размеры DDS".into());
+        return Err("incorrect DDS size".into());
     }
     if width > u32::from(u16::MAX) || height > u32::from(u16::MAX) {
-        return Err("Размеры DDS превышают диапазон TgPcDx sUInt16".into());
+        return Err("DDS sizes exceeding boundaries of TgPcDx sUInt16".into());
     }
     if !width.is_power_of_two() || !height.is_power_of_two() {
         return Err(format!(
-            "Размеры DDS не являются степенью двойки: {width}×{height}"
+            "DDS sizes is not powers of two: {width}×{height}"
         ));
     }
 

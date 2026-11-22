@@ -142,14 +142,14 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
             levels,
             mw,
             mh,
-            "Единый упакованный блоб (1× cHcImageDx)".to_string(),
+            "Blob (1× cHcImageDx)".to_string(),
         )
     } else {
         (
             blocks.len() as u32,
             min_width,
             min_height,
-            format!("Раздельные узлы ({}× cHcImageDx)", blocks.len()),
+            format!("Separate nodes ({}× cHcImageDx)", blocks.len()),
         )
     };
 
@@ -199,11 +199,11 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
 pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err("Внутреннее имя текстуры не может быть пустым".into());
+        return Err("Internal texture name cannot be empty".into());
     }
 
     if !trimmed.is_ascii() {
-        return Err("Внутреннее имя должно содержать только ASCII символы (без кириллицы)".into());
+        return Err("Internal name must contain only ASCII symbols (withour Cyrillic)".into());
     }
 
     const FORBIDDEN_EXTS: [&str; 4] = [".tgpcdx", ".dds", ".ace", ".tgpc"];
@@ -211,7 +211,7 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
         trimmed.len() >= ext.len() && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
     }) {
         return Err(format!(
-            "Внутреннее имя не должно содержать расширение файла (.tgpcdx, .dds, .ace): {trimmed}"
+            "Internal name must not contain file extention (.tgpcdx, .dds, .ace): {trimmed}"
         ));
     }
 
@@ -219,7 +219,7 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
         .bytes()
         .any(|b| b.is_ascii_control() || matches!(b, b'"' | b'<' | b'>'))
     {
-        return Err("Внутреннее имя содержит недопустимые символы".into());
+        return Err("Internal name contains invalid characters.".into());
     }
     Ok(trimmed.replace('/', "\\"))
 }
@@ -235,7 +235,7 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     let meta = fs::metadata(tgpcdx_path).map_err(|e| e.to_string())?;
     if meta.permissions().readonly() {
         return Err(format!(
-            "Файл доступен только для чтения (возможно, внутри .ap-архива): {}. Распакуйте файл перед редактированием.",
+            "File is read-only (possibly inside the .ap archive): {}. Unpack it before editing.",
             tgpcdx_path.display()
         ));
     }
@@ -254,24 +254,24 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     let out_bytes =
         encode_tgpcdx_to_vec(&root, preamble.as_ref()).map_err(|e| format!("serz encode: {e}"))?;
     if out_bytes.is_empty() {
-        return Err("Пустой результат сериализации".into());
+        return Err("Serialization result is empty".into());
     }
 
     let bak_path = append_path_suffix(tgpcdx_path, ".bak");
     if !bak_path.exists() {
         fs::copy(tgpcdx_path, &bak_path).map_err(|e| {
             format!(
-                "Не удалось создать резервную копию {}: {e}",
+                "Failed to create backup {}: {e}",
                 bak_path.display()
             )
         })?;
-        append_tgpcdx_log(&format!("Создана резервная копия: {}", bak_path.display()));
+        append_tgpcdx_log(&format!("Backup created: {}", bak_path.display()));
     }
 
     write_output_bytes(tgpcdx_path, &out_bytes)?;
 
     append_tgpcdx_log(&format!(
-        "Обновлено внутреннее имя текстуры {}: {normalized}",
+        "Internal texture name updated {}: {normalized}",
         tgpcdx_path.display()
     ));
     Ok(())
@@ -285,7 +285,7 @@ pub fn update_tgpcdx_internal_names(root: &mut SerzNode, new_name: &str) -> Resu
     collect_c_hc_texture_names(root, &mut current_names);
 
     if current_names.is_empty() {
-        return Err("В файле не найден узел cHcTexture с дочерним Name (cDeltaString)".into());
+        return Err("cHcTexture node with a child Name (cDeltaString) was not found in file.".into());
     }
 
     if current_names.len() == 1 {
@@ -487,13 +487,13 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
         let mark = if info.name_matches_filename {
             "✓"
         } else {
-            "⚠ имя файла отличается"
+            "⚠ file name is different"
         };
-        let _ = writeln!(s, "Внутреннее имя (Name): {} {mark}", info.name);
+        let _ = writeln!(s, "Internal name (Name): {} {mark}", info.name);
     }
     let _ = writeln!(
         s,
-        "Разрешение: {}×{} px | Текстур в группе: {} | Мипмапов: {} ({}×{} → {}×{}) [{}]",
+        "Resolution: {}×{} px | Textures in group: {} | Mipmaps: {} ({}×{} → {}×{}) [{}]",
         info.width,
         info.height,
         info.texture_count,
@@ -506,7 +506,7 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
     );
     let _ = writeln!(
         s,
-        "Формат: {} [{}] | DDS: {dds_name} | IsSwizzled: {} | Flags(u16): {}",
+        "Format: {} [{}] | DDS: {dds_name} | IsSwizzled: {} | Flags(u16): {}",
         info.format_label,
         info.raw_format,
         u8::from(info.is_swizzled),
@@ -515,7 +515,7 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
     let bak = if info.has_bak { "есть" } else { "нет" };
     let _ = writeln!(
         s,
-        "Размер файла: {} ({} Б) | Пиксели (blob): {} Б | Заголовок: {} Б | Бэкап (.bak): {bak}",
+        "File size: {} ({} B) | Pixels (blob): {} Б | Header: {} Б | Backup (.bak): {bak}",
         format_size_bytes(info.file_size_bytes),
         format_bytes_spaces(info.file_size_bytes),
         format_bytes_spaces(info.total_blob_bytes),
@@ -523,10 +523,10 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
     );
     let _ = writeln!(
         s,
-        "Для импорта требуется: DDS в формате {dds_name}, размеры степень двойки, с мипмапами"
+        "Import requires: DDS in format {dds_name}, sizes are a power of two, with mipmaps."
     );
     if show_alpha {
-        s.push_str("Режим просмотра: альфа-канал\n");
+        s.push_str("View mode: alpha channel\n");
     }
     let _ = write!(s, "TGPCDX  {}", path.display());
     s
@@ -534,9 +534,9 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
 
 fn format_size_bytes(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
-        format!("{:.1} МБ", bytes as f64 / (1024.0 * 1024.0))
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
     } else {
-        format!("{:.1} КБ", bytes as f64 / 1024.0)
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
     }
 }
 

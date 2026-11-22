@@ -45,14 +45,14 @@ fn is_serz_asset_extension(path: &Path) -> bool {
 fn product_root_of(assets_root: &Path, asset_path: &Path) -> Result<PathBuf, String> {
     let relative = asset_path
         .strip_prefix(assets_root)
-        .map_err(|_| format!("Ассет находится вне Assets: {}", asset_path.display()))?;
+        .map_err(|_| format!("Object is located outside Assets: {}", asset_path.display()))?;
     let mut components = relative.components();
     let provider = components
         .next()
-        .ok_or_else(|| "Некорректный путь ассета.".to_owned())?;
+        .ok_or_else(|| "Incorrect asset path.".to_owned())?;
     let product = components
         .next()
-        .ok_or_else(|| "Некорректный путь ассета.".to_owned())?;
+        .ok_or_else(|| "Incorrect asset path.".to_owned())?;
     Ok(assets_root.join(provider).join(product))
 }
 
@@ -115,7 +115,7 @@ pub fn asset_chain_umlaut_evidence(
         }
         Err(error) => {
             return Err(format!(
-                "Не удалось проверить {}: {error}",
+                "Failed to check {}: {error}",
                 root_asset.display()
             ));
         }
@@ -149,7 +149,7 @@ pub fn asset_chain_umlaut_evidence(
         }
         let xml = read_serz_xml(&canonical).map_err(|e| e.to_string())?;
         if has_umlauts_in_xml(&xml) {
-            evidence.push(format!("Внутри файла: {}", canonical.display()));
+            evidence.push(format!("Inside file: {}", canonical.display()));
         }
         for (reference, _) in referenced_geometry_paths(&xml) {
             let reference_text = reference.to_text();
@@ -189,7 +189,7 @@ pub(crate) fn inspect_umlaut_asset(
     let mut evidence = Vec::new();
     let mut unsupported = unsupported_characters(relative_asset);
     if has_umlauts(relative_asset) {
-        evidence.push(format!("Умляут в пути ассета: {relative_asset}"));
+        evidence.push(format!("Umlaut in asset path: {relative_asset}"));
     }
     let mut scan_error = None;
     let full_asset_path = match resolve_asset_path(assets_path, relative_asset) {
@@ -205,7 +205,7 @@ pub(crate) fn inspect_umlaut_asset(
         let actual_name = asset_path.file_name();
         if expected_name != actual_name {
             evidence.push(format!(
-                "Файл на диске называется иначе: {}",
+                "File on the disk has a different name: {}",
                 asset_path.display()
             ));
         }
@@ -220,7 +220,7 @@ pub(crate) fn inspect_umlaut_asset(
                 }
                 Err(error) => {
                     evidence.push(format!(
-                        "Цепочка зависимостей не проверена полностью: {error}"
+                        "Dependency chain has not been fully tested: {error}"
                     ));
                     scan_error = Some(error);
                 }
@@ -250,7 +250,7 @@ pub(crate) fn scan_umlaut_assets(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(worker_count)
         .build()
-        .map_err(|error| format!("Не удалось создать пул проверки умляутов: {error}"))?;
+        .map_err(|error| format!("Failed to create umlaut check pool: {error}"))?;
     let scan: Vec<_> = pool.install(|| {
         inventory
             .par_iter()
@@ -279,21 +279,21 @@ pub fn transliterated_asset_path(
 ) -> Result<PathBuf, String> {
     let relative = source
         .strip_prefix(assets_path)
-        .map_err(|_| format!("Ассет находится вне папки Assets: {}", source.display()))?;
+        .map_err(|_| format!("Object is located outside Asset: {}", source.display()))?;
     let mut components = relative.components();
     let provider = components
         .next()
-        .ok_or_else(|| "Некорректный путь ассета.".to_owned())?
+        .ok_or_else(|| "Incorrect asset path.".to_owned())?
         .as_os_str()
         .to_string_lossy();
     let product = components
         .next()
-        .ok_or_else(|| "Некорректный путь ассета.".to_owned())?
+        .ok_or_else(|| "Incorrect asset path.".to_owned())?
         .as_os_str()
         .to_string_lossy();
     if has_umlauts(&provider) || has_umlauts(&product) {
         return Err(format!(
-            "Умляут найден в имени Provider/Product для {}. Автоматическая транслитерация папок Provider/Product остановлена, чтобы не затронуть другие ассеты.",
+            "Umlaut found in name of Provider/Product for {}. Automatic transliteration of Provider/Product folders has been stopped so as not to affect other assets.",
             source.display()
         ));
     }
@@ -308,7 +308,7 @@ pub fn transliterated_asset_path(
 pub fn folders_with_umlauts(assets_path: &Path, asset: &Path) -> Result<Vec<PathBuf>, String> {
     let relative = asset
         .strip_prefix(assets_path)
-        .map_err(|_| format!("Ассет находится вне папки Assets: {}", asset.display()))?;
+        .map_err(|_| format!("Object is located outside Asset: {}", asset.display()))?;
     let components: Vec<_> = relative.components().collect();
     if components.len() < 3 {
         return Ok(Vec::new());
@@ -342,14 +342,14 @@ pub fn translated_reference(
         ReferenceBase::Product => product_root,
         ReferenceBase::Folder => target_source.parent().ok_or_else(|| {
             format!(
-                "Некорректный путь к исходному ассету: {}",
+                "Incorrect path to original asset: {}",
                 target_source.display()
             )
         })?,
     };
     let relative = target_file.strip_prefix(base_path).map_err(|_| {
         format!(
-            "Путь {} вышел за пределы {}",
+            "Path {}  exceeded boundaries of {}",
             target_file.display(),
             base_path.display()
         )
@@ -395,7 +395,7 @@ fn process_serz_asset_queue(
     while let Some(source) = queue.pop() {
         let canonical = source.canonicalize().map_err(|error| {
             format!(
-                "Не удалось открыть зависимость {}: {error}",
+                "Failed to open dependency {}: {error}",
                 source.display()
             )
         })?;
@@ -430,13 +430,13 @@ fn process_serz_asset_queue(
             };
             let canonical_dependency = dependency.canonicalize().map_err(|error| {
                 format!(
-                    "Не удалось проверить зависимость {}: {error}",
+                    "Failed to check dependency {}: {error}",
                     dependency.display()
                 )
             })?;
             if !canonical_dependency.starts_with(ctx.product_root) {
                 return Err(format!(
-                    "Ссылка выходит за пределы продукта {}: {}",
+                    "Link goes beyond the product {}: {}",
                     ctx.product_root.display(),
                     dependency.display()
                 ));
@@ -482,7 +482,7 @@ fn process_serz_asset_queue(
         if rewritten != xml || target_file != canonical {
             validate_xml_document(&rewritten).map_err(|error| {
                 format!(
-                    "Некорректный XML после обработки {}: {error}",
+                    "Incorrect XML after processing после обработки {}: {error}",
                     canonical.display()
                 )
             })?;
@@ -531,7 +531,7 @@ fn stage_route_file_reference_update(
         SerzReader::to_xml(&node, 0, true)
     } else {
         fs::read_to_string(&file_path)
-            .map_err(|error| format!("Не удалось прочитать {}: {error}", source.display()))?
+            .map_err(|error| format!("Failed to read {}: {error}", source.display()))?
     };
 
     let references = extract_asset_references_with_locations(&xml);
@@ -548,7 +548,7 @@ fn stage_route_file_reference_update(
     }
     if edits.is_empty() {
         return Err(format!(
-            "Ссылка {} не найдена в файле маршрута {}.",
+            "Link {} was not found in the route file {}.",
             asset_relative_path,
             source.display()
         ));
@@ -558,7 +558,7 @@ fn stage_route_file_reference_update(
         xml.replace_range(range, &escape_xml_text(value));
     }
     validate_xml_document(&xml)
-        .map_err(|error| format!("Некорректный XML маршрута {}: {error}", source.display()))?;
+        .map_err(|error| format!("Incorrect XML of route {}: {error}", source.display()))?;
 
     let staged_path = if is_binary {
         let mut staged = temp.path().join("route-new");
@@ -567,14 +567,14 @@ fn stage_route_file_reference_update(
         let bytes = encode_to_vec(&node, preamble.as_ref()).map_err(|e| e.to_string())?;
         if bytes.len() < 1024 {
             return Err(format!(
-                "Ошибка генерации: размер файла аномально мал ({} байт). Замена отменена.",
+                "Generation error: file size abnormally small ({} bytes). Replacement aborted.",
                 bytes.len()
             ));
         }
         let mut validation_reader = SerzReader::new(&bytes);
         if let Err(error) = validation_reader.parse() {
             return Err(format!(
-                "Ошибка сериализации: сгенерированный бинарник поврежден: {error}"
+                "Serialization error: generated binary is corrupted {error}"
             ));
         }
         fs::write(&staged, &bytes).map_err(|e| e.to_string())?;
@@ -582,7 +582,7 @@ fn stage_route_file_reference_update(
     } else {
         let xml_path = temp.path().join("route.xml");
         fs::write(&xml_path, xml)
-            .map_err(|error| format!("Не удалось записать подготовленный маршрут: {error}"))?;
+            .map_err(|error| format!("Failed to write prepared route: {error}"))?;
         xml_path
     };
 
@@ -603,41 +603,41 @@ pub(crate) fn repair_umlaut_asset_chain(
 ) -> Result<UmlautRepairReport, String> {
     let assets_root = assets_path
         .canonicalize()
-        .map_err(|error| format!("Не удалось проверить папку Assets: {error}"))?;
+        .map_err(|error| format!("Failed to check Assets folder: {error}"))?;
     let route_root = route_path
         .canonicalize()
-        .map_err(|error| format!("Не удалось проверить папку маршрута: {error}"))?;
+        .map_err(|error| format!("Failed to check route folder: {error}"))?;
     let source_asset = resolve_asset_path(&assets_root, asset_relative_path)?.ok_or_else(|| {
         format!(
-            "Не удалось найти BIN для ссылки {}. Проверены исходный путь и варианты с ß/ss.",
+            "Failed to find BIN for link {}.",
             asset_relative_path
         )
     })?;
     let canonical_asset = source_asset.canonicalize().map_err(|error| {
         format!(
-            "Не удалось открыть ассет {}: {error}",
+            "Failed to open asset {}: {error}",
             source_asset.display()
         )
     })?;
     if !canonical_asset.starts_with(&assets_root) || !canonical_asset.is_file() {
         return Err(format!(
-            "Ассет находится вне Assets или недоступен: {}",
+            "File is located outside Assets or unavailable: {}",
             source_asset.display()
         ));
     }
     let new_asset_path = transliterated_asset_path(&assets_root, &canonical_asset, fixes)?;
     let new_relative_asset = new_asset_path
         .strip_prefix(&assets_root)
-        .map_err(|_| "Новый путь ассета выходит за пределы Assets.".to_owned())?
+        .map_err(|_| "New asset path exceeding Assets folder.".to_owned())?
         .to_string_lossy()
         .replace('\\', "/");
     if new_relative_asset.split('/').count() < 3 {
-        return Err("Путь ассета должен иметь структуру Provider/Product/файл.".to_owned());
+        return Err("The asset path must follow a structure Provider/Product/file.".to_owned());
     }
     if new_relative_asset == asset_relative_path {
         let found = asset_chain_umlaut_evidence(&assets_root, &canonical_asset)?;
         if found.evidence.is_empty() && found.unsupported.is_empty() {
-            return Err("В файлах ассета не обнаружены поддерживаемые умляуты.".to_owned());
+            return Err("Supported umlauts are not found in the asset files.".to_owned());
         }
     }
 
@@ -660,7 +660,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         for entry in WalkDir::new(root_umlaut_folder).follow_links(false) {
             let entry = entry.map_err(|error| {
                 format!(
-                    "Ошибка обхода папки {}: {error}",
+                    "Folder check error {}: {error}",
                     root_umlaut_folder.display()
                 )
             })?;
@@ -673,7 +673,7 @@ pub(crate) fn repair_umlaut_asset_chain(
             }
             let source = entry.into_path();
             let canonical = source.canonicalize().map_err(|error| {
-                format!("Не удалось открыть файл {}: {error}", source.display())
+                format!("Failed to open file {}: {error}", source.display())
             })?;
             if is_serz_asset_extension(&canonical) {
                 // Такие файлы могут ссылаться на другие объекты: их ссылки
@@ -709,7 +709,7 @@ pub(crate) fn repair_umlaut_asset_chain(
     if scan_all_geometry {
         for entry in WalkDir::new(&scope_root).follow_links(false) {
             let entry = entry.map_err(|error| {
-                format!("Ошибка обхода папки {}: {error}", scope_root.display())
+                format!("Folder check error {}: {error}", scope_root.display())
             })?;
             if entry.file_type().is_file()
                 && entry
@@ -751,13 +751,13 @@ pub(crate) fn repair_umlaut_asset_chain(
             if let RouteFile::Path(path) = &source {
                 let canonical = path.canonicalize().map_err(|error| {
                     format!(
-                        "Не удалось открыть файл маршрута {}: {error}",
+                        "Failed to open route file {}: {error}",
                         usage.source_file.display()
                     )
                 })?;
                 if !canonical.starts_with(&route_root) {
                     return Err(format!(
-                        "Файл использования находится вне маршрута: {}",
+                        "Usage file is located outside the route: {}",
                         source.display()
                     ));
                 }
@@ -778,13 +778,13 @@ pub(crate) fn repair_umlaut_asset_chain(
     }
 
     if staged_by_source.is_empty() {
-        return Err("Не найдено файлов для транслитерации.".to_owned());
+        return Err("Failed to find files for transliteration.".to_owned());
     }
     let mut targets = HashSet::with_capacity(staged_by_source.len());
     for staged in staged_by_source.values() {
         if !targets.insert(staged.target.clone()) {
             return Err(format!(
-                "Несколько файлов претендуют на путь {}.",
+                "Multiple files claim the path {}.",
                 staged.target.display()
             ));
         }
@@ -794,7 +794,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         };
         if staged.target.exists() && original_path != Some(staged.target.as_path()) {
             return Err(format!(
-                "После транслитерации возникнет конфликт имён: {} уже существует.",
+                "There will be a name conflict after transliteration: {} already exists.",
                 staged.target.display()
             ));
         }
@@ -805,7 +805,7 @@ pub(crate) fn repair_umlaut_asset_chain(
     for staged in &prepared {
         if let Some(parent) = staged.target.parent() {
             fs::create_dir_all(parent).map_err(|error| {
-                format!("Не удалось создать папку {}: {error}", parent.display())
+                format!("Failed to create folder {}: {error}", parent.display())
             })?;
         }
     }
@@ -823,7 +823,7 @@ pub(crate) fn repair_umlaut_asset_chain(
             if let Err(error) = fs::rename(original, &backup) {
                 transaction.rollback();
                 return Err(format!(
-                    "Не удалось создать резервную копию {}: {error}.",
+                    "Failed to create backup {}: {error}.",
                     original.display()
                 ));
             }
@@ -832,7 +832,7 @@ pub(crate) fn repair_umlaut_asset_chain(
         if let Err(error) = install_staged_file(staged) {
             transaction.rollback();
             return Err(format!(
-                "Не удалось установить {}: {error}.",
+                "Failed to install {}: {error}.",
                 staged.target.display()
             ));
         }

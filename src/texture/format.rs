@@ -124,14 +124,14 @@ pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
 /// (человекочитаемая метка, эквивалент в DDS) для тега `Format` из .TgPcDx.
 pub fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
     match tgpcdx_dds_compression(fmt) {
-        DdsCompression::Dxt5 => ("DXT5 (BC3, плавная альфа)".into(), Some("DXT5")),
-        DdsCompression::Dxt3 => ("DXT3 (BC2, явная альфа)".into(), Some("DXT3")),
-        DdsCompression::Dxt1 => ("DXT1 (BC1, без альфы / 1-bit альфа)".into(), Some("DXT1")),
+        DdsCompression::Dxt5 => ("DXT5 (BC3, interpolated alpha)".into(), Some("DXT5")),
+        DdsCompression::Dxt3 => ("DXT3 (BC2, explicit alpha)".into(), Some("DXT3")),
+        DdsCompression::Dxt1 => ("DXT1 (BC1, no / 1-bit alpha)".into(), Some("DXT1")),
         DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => {
-            ("RGBA8888 (без сжатия)".into(), Some("RGBA8888"))
+            ("RGBA8888 (uncompressed)".into(), Some("RGBA8888"))
         }
-        DdsCompression::L8 => ("L8 / A8 (8-bit градации серого)".into(), Some("L8")),
-        DdsCompression::A8 => ("L8 / A8 (8-bit градации серого)".into(), Some("A8")),
+        DdsCompression::L8 => ("L8 / A8 (8-bit grayscales)".into(), Some("L8")),
+        DdsCompression::A8 => ("L8 / A8 (8-bit grayscales)".into(), Some("A8")),
         DdsCompression::Unknown => (fmt.to_owned(), None),
     }
 }
@@ -231,24 +231,24 @@ pub fn validate_dds_mip_chain(
     expected_levels: Option<u32>,
 ) -> Result<MipChainInfo, String> {
     if fmt == DdsCompression::Unknown {
-        return Err("неизвестный формат сжатия DDS".into());
+        return Err("unknown compression format of DDS".into());
     }
     if width == 0 || height == 0 {
-        return Err("некорректные размеры DDS".into());
+        return Err("incorrect DDS sizes".into());
     }
     if declared_levels == 0 {
-        return Err("в DDS-файле не объявлено ни одного уровня мипмапов".into());
+        return Err("No mipmap levels in DDS".into());
     }
     if let Some(expected) = expected_levels
         && declared_levels < expected
     {
         let level_word = match declared_levels % 10 {
-            1 if declared_levels % 100 != 11 => "уровень",
-            2..=4 if !(12..=14).contains(&(declared_levels % 100)) => "уровня",
-            _ => "уровней",
+            1 if declared_levels % 100 != 11 => "level",
+            2..=4 if !(12..=14).contains(&(declared_levels % 100)) => "levels",
+            _ => "levels",
         };
         return Err(format!(
-            "В DDS-файле {declared_levels} {level_word} мипмапов, ожидается {expected}. Включите генерацию MipMaps при сохранении DDS"
+            "In DDS file there are {declared_levels} {level_word} mipmaps, expected {expected}. Enable mipmap generation while saving DDS."
         ));
     }
 
@@ -257,17 +257,17 @@ pub fn validate_dds_mip_chain(
     let mut mh = height;
     for _ in 0..declared_levels {
         let size =
-            mip_level_bytes(mw, mh, fmt).ok_or("невозможно вычислить размер уровня мипмапа")?;
+            mip_level_bytes(mw, mh, fmt).ok_or("failed to compute mipmap level size")?;
         total = total
             .checked_add(size)
-            .ok_or("переполнение при суммировании уровней мипмапов")?;
+            .ok_or("overflow when summing mipmap levels")?;
         mw = (mw / 2).max(1);
         mh = (mh / 2).max(1);
     }
 
     if total != data_len {
         return Err(format!(
-            "DDS-файл обрезан или содержит лишние данные: ожидается {total} байт мипмапов, найдено {data_len}"
+            "DDS file cutted or have extra data: expected {total} bytes of mipmaps, found {data_len}"
         ));
     }
     Ok(MipChainInfo {

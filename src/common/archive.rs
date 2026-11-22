@@ -134,7 +134,6 @@ impl ApArchiveCache {
                     .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
                     .map_or(0, |d| d.as_secs());
 
-                // Проверяем кэш за один захват мьютекса.
                 let hit_cache = self.archive_meta.lock().ok().is_some_and(|meta_guard| {
                     if let Some(cached) = meta_guard.get(&archive_path)
                         && cached.size == size
@@ -152,7 +151,6 @@ impl ApArchiveCache {
                     continue;
                 }
 
-                // Индексируем архив заново.
                 let Ok(file) = File::open(&archive_path) else {
                     continue;
                 };
@@ -261,12 +259,12 @@ pub fn extract_archive_member(
 ) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
-            .map_err(|e| format!("Не удалось создать папку {}: {e}", parent.display()))?;
+            .map_err(|e| format!("Failed to create folder {}: {e}", parent.display()))?;
     }
     let file = File::open(archive_path)
-        .map_err(|e| format!("Не удалось открыть архив {}: {e}", archive_path.display()))?;
+        .map_err(|e| format!("Failed to open archive {}: {e}", archive_path.display()))?;
     let mut zip = ZipArchive::new(file)
-        .map_err(|e| format!("Не удалось прочитать архив {}: {e}", archive_path.display()))?;
+        .map_err(|e| format!("Failed to read archive {}: {e}", archive_path.display()))?;
 
     let target = normalize_member(member);
     let mut idx = None;
@@ -287,23 +285,23 @@ pub fn extract_archive_member(
     }
     let idx = idx.ok_or_else(|| {
         format!(
-            "Не удалось найти {member} в архиве {}",
+            "Can't find {member} in archive {}",
             archive_path.display()
         )
     })?;
 
     let mut entry = zip
         .by_index(idx)
-        .map_err(|e| format!("Не удалось прочитать {member} из архива: {e}"))?;
+        .map_err(|e| format!("Failed to read {member} from archive: {e}"))?;
     let mut output = BufWriter::new(
         File::create(dest)
-            .map_err(|e| format!("Не удалось создать файл {}: {e}", dest.display()))?,
+            .map_err(|e| format!("Failed to create file {}: {e}", dest.display()))?,
     );
     std::io::copy(&mut entry, &mut output)
-        .map_err(|e| format!("Не удалось распаковать {member}: {e}"))?;
+        .map_err(|e| format!("Failed to unpack file {member}: {e}"))?;
     output
         .flush()
-        .map_err(|e| format!("Не удалось записать {}: {e}", dest.display()))?;
+        .map_err(|e| format!("Failed to write {}: {e}", dest.display()))?;
     Ok(())
 }
 

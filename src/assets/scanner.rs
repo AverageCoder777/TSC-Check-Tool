@@ -94,7 +94,7 @@ pub(crate) fn collect_route_files(
 
     for entry in walker {
         let entry = entry
-            .map_err(|error| format!("Ошибка при обходе {}: {error}", route_path.display()))?;
+            .map_err(|error| format!("Error during check {}: {error}", route_path.display()))?;
         if !entry.file_type().is_file() || !is_route_data_extension(entry.path()) {
             continue;
         }
@@ -119,7 +119,7 @@ pub(crate) fn collect_archive_members(
 ) -> Result<Vec<RouteFile>, String> {
     let mut members = Vec::new();
     let entries = fs::read_dir(route_path)
-        .map_err(|error| format!("Не удалось прочитать папку маршрута: {error}"))?;
+        .map_err(|error| format!("Failed to read route folder: {error}"))?;
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file()
@@ -130,9 +130,9 @@ pub(crate) fn collect_archive_members(
             continue;
         }
         let file = fs::File::open(&path)
-            .map_err(|error| format!("Не удалось открыть архив {}: {error}", path.display()))?;
+            .map_err(|error| format!("Failed to open archive {}: {error}", path.display()))?;
         let zip = zip::ZipArchive::new(file)
-            .map_err(|error| format!("Не удалось прочитать архив {}: {error}", path.display()))?;
+            .map_err(|error| format!("Failed to read archive {}: {error}", path.display()))?;
         let archive_stamp = crate::assets::FileStamp::of(&path);
         // Индекс имён записей архива строится один раз в памяти: поиск и
         // дедупликация имён идут через HashSet, а не через линейный обход zip.
@@ -179,14 +179,14 @@ pub(crate) fn collect_archive_members(
 
 pub(crate) fn unexpected_route_directories(route_path: &Path) -> Result<Vec<String>, String> {
     let entries = fs::read_dir(route_path)
-        .map_err(|error| format!("Не удалось прочитать {}: {error}", route_path.display()))?;
+        .map_err(|error| format!("Failed to read {}: {error}", route_path.display()))?;
     let mut unexpected = Vec::new();
     for entry in entries {
         let entry =
-            entry.map_err(|error| format!("Ошибка чтения {}: {error}", route_path.display()))?;
+            entry.map_err(|error| format!("Read error {}: {error}", route_path.display()))?;
         if entry
             .file_type()
-            .map_err(|error| format!("Не удалось прочитать {}: {error}", entry.path().display()))?
+            .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?
             .is_dir()
         {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -209,7 +209,7 @@ pub(crate) fn leftover_temporary_work_directories(
     let mut leftovers = Vec::new();
     for entry in WalkDir::new(route_path).min_depth(1).max_depth(3) {
         let entry = entry
-            .map_err(|error| format!("Ошибка при обходе {}: {error}", route_path.display()))?;
+            .map_err(|error| format!("Error during check {}: {error}", route_path.display()))?;
         if entry.file_type().is_dir()
             && is_temporary_work_directory(&entry.file_name().to_string_lossy())
         {

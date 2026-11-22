@@ -88,17 +88,17 @@ pub(crate) fn route_scan_cache_file() -> PathBuf {
 
 pub(crate) fn read_route_folder_ids(routes_path: &Path) -> Result<Vec<String>, String> {
     let entries = fs::read_dir(routes_path)
-        .map_err(|error| format!("Не удалось прочитать {}: {error}", routes_path.display()))?;
+        .map_err(|error| format!("Failed to read {}: {error}", routes_path.display()))?;
     let mut ids = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| {
             format!(
-                "Ошибка при чтении списка маршрутов в {}: {error}",
+                "Error during reading routes list in {}: {error}",
                 routes_path.display()
             )
         })?;
         let metadata = fs::symlink_metadata(entry.path())
-            .map_err(|error| format!("Не удалось прочитать {}: {error}", entry.path().display()))?;
+            .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?;
         if metadata.file_type().is_dir() {
             ids.push(entry.file_name().to_string_lossy().into_owned());
         }
@@ -116,7 +116,7 @@ pub(crate) fn sorted_ids(ids: &HashSet<String>) -> Vec<String> {
 fn clean_canonical_path(path: &Path) -> Result<PathBuf, String> {
     let canonical = path.canonicalize().map_err(|error| {
         format!(
-            "Не удалось проверить папку игры {}: {error}",
+            "Failed to check game folder {}: {error}",
             path.display()
         )
     })?;
@@ -163,14 +163,14 @@ pub(crate) fn scan_routes_with_cache(
                 Ok(_) => {}
                 Err(error) => {
                     notice = Some(format!(
-                        "Кэш маршрутов повреждён и будет обновлён: {error}."
+                        "Routes cache is broken and will be updated: {error}."
                     ));
                 }
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
                 notice = Some(format!(
-                    "Не удалось прочитать кэш {}: {error}.",
+                    "Failed to read cache {}: {error}.",
                     cache_file.display()
                 ));
             }
@@ -189,21 +189,21 @@ pub(crate) fn scan_routes_with_cache(
     let save_result = (|| {
         let parent = cache_file.parent().ok_or_else(|| {
             format!(
-                "Некорректный путь к кэшу маршрутов: {}",
+                "Incorrect path to routes cache: {}",
                 cache_file.display()
             )
         })?;
         fs::create_dir_all(parent).map_err(|error| {
             format!(
-                "Не удалось создать папку кэша {}: {error}",
+                "Failed to create cache folder {}: {error}",
                 parent.display()
             )
         })?;
         let contents = serde_json::to_vec(&cache)
-            .map_err(|error| format!("Не удалось сериализовать кэш маршрутов: {error}"))?;
+            .map_err(|error| format!("Failed to serialize routes cache: {error}"))?;
         fs::write(&cache_file, contents).map_err(|error| {
             format!(
-                "Не удалось сохранить кэш маршрутов {}: {error}",
+                "Failed to save routes cache {}: {error}",
                 cache_file.display()
             )
         })
@@ -235,18 +235,18 @@ pub(crate) fn scan_routes_with_ignored(
 ) -> Result<RouteScanResult, String> {
     let routes_path = rw_path.join("Content").join("Routes");
     let entries = fs::read_dir(&routes_path)
-        .map_err(|error| format!("Не удалось прочитать {}: {error}", routes_path.display()))?;
+        .map_err(|error| format!("Failed to read {}: {error}", routes_path.display()))?;
     let mut route_folders = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| {
             format!(
-                "Ошибка при чтении списка маршрутов в {}: {error}",
+                "Error during reading routes list in {}: {error}",
                 routes_path.display()
             )
         })?;
         let path = entry.path();
         let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("Не удалось прочитать {}: {error}", path.display()))?;
+            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
         if metadata.file_type().is_dir() {
             route_folders.push((entry.file_name().to_string_lossy().into_owned(), path));
         }
@@ -256,7 +256,7 @@ pub(crate) fn scan_routes_with_ignored(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(thread_count)
         .build()
-        .map_err(|error| format!("Не удалось запустить параллельное сканирование: {error}"))?;
+        .map_err(|error| format!("Failed to start scan: {error}"))?;
     let scan_items = pool.install(|| {
         route_folders
             .par_iter()
@@ -316,15 +316,15 @@ pub(crate) fn inspect_route_folder(
     log: Option<&RouteScanLog>,
 ) -> Result<Option<IncompleteRouteFolder>, String> {
     let children: Vec<(PathBuf, String, bool)> = fs::read_dir(path)
-        .map_err(|error| format!("Не удалось прочитать {}: {error}", path.display()))?
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?
         .map(|entry| {
             let entry = entry.map_err(|error| {
-                format!("Ошибка чтения содержимого {}: {error}", path.display())
+                format!("Error reading content {}: {error}", path.display())
             })?;
             let is_directory = entry
                 .file_type()
                 .map_err(|error| {
-                    format!("Не удалось прочитать {}: {error}", entry.path().display())
+                    format!("Failed to read {}: {error}", entry.path().display())
                 })?
                 .is_dir();
             Ok((
@@ -355,11 +355,11 @@ pub(crate) fn inspect_route_folder(
                 continue;
             }
             let archive_file = fs::File::open(child_path).map_err(|error| {
-                format!("Не удалось открыть архив {}: {error}", child_path.display())
+                format!("Failed to open archive {}: {error}", child_path.display())
             })?;
             let archive = ZipArchive::new(archive_file).map_err(|error| {
                 format!(
-                    "Не удалось прочитать архив {}: {error}",
+                    "Failed to read archive {}: {error}",
                     child_path.display()
                 )
             })?;
@@ -414,18 +414,18 @@ pub(crate) fn inspect_route_folder(
             continue;
         }
         let archive_file = fs::File::open(child_path).map_err(|error| {
-            format!("Не удалось открыть архив {}: {error}", child_path.display())
+            format!("Failed to open archive {}: {error}", child_path.display())
         })?;
         let mut archive = ZipArchive::new(archive_file).map_err(|error| {
             format!(
-                "Не удалось прочитать архив {}: {error}",
+                "Failed to read archive {}: {error}",
                 child_path.display()
             )
         })?;
         for index in 0..archive.len() {
             let mut member = archive
                 .by_index(index)
-                .map_err(|error| format!("Ошибка в архиве {}: {error}", child_path.display()))?;
+                .map_err(|error| format!("Error in archive {}: {error}", child_path.display()))?;
             let raw_name = match member.name() {
                 Ok(name) => name,
                 Err(_) => continue,
@@ -439,7 +439,7 @@ pub(crate) fn inspect_route_folder(
                     let mut bytes = Vec::new();
                     member.read_to_end(&mut bytes).map_err(|error| {
                         format!(
-                            "Не удалось прочитать {} из {}: {error}",
+                            "Failed to read {} из {}: {error}",
                             member_name,
                             child_path.display()
                         )
@@ -454,7 +454,7 @@ pub(crate) fn inspect_route_folder(
                 {
                     let mut bytes = Vec::new();
                     if member.read_to_end(&mut bytes).is_err() {
-                        log_route_warning(log, child_path, "ошибка чтения элемента архива");
+                        log_route_warning(log, child_path, "error reading archive element");
                     } else {
                         let contents = decode_xml_bytes(&bytes);
                         archived_route_name =
@@ -473,7 +473,7 @@ pub(crate) fn inspect_route_folder(
     let mut total_size_bytes = 0u64;
     for entry in WalkDir::new(path).follow_links(false) {
         let entry =
-            entry.map_err(|error| format!("Ошибка при обходе {}: {error}", path.display()))?;
+            entry.map_err(|error| format!("Error during check {}: {error}", path.display()))?;
         if entry.file_type().is_file()
             && entry
                 .file_name()
@@ -481,7 +481,7 @@ pub(crate) fn inspect_route_folder(
                 .eq_ignore_ascii_case("ScenarioProperties.xml")
         {
             let bytes = fs::read(entry.path()).map_err(|error| {
-                format!("Не удалось прочитать {}: {error}", entry.path().display())
+                format!("Failed to read {}: {error}", entry.path().display())
             })?;
             let contents = decode_xml_bytes(&bytes);
             let relative = entry
@@ -497,19 +497,19 @@ pub(crate) fn inspect_route_folder(
         }
         let relative = entry.path().strip_prefix(path).unwrap_or(entry.path());
         if entry.file_type().is_dir() {
-            inventory.push(format!("[папка] {}", relative.display()));
+            inventory.push(format!("[folder] {}", relative.display()));
         } else if entry.file_type().is_file() {
             file_count += 1;
             let size = entry
                 .metadata()
                 .map_err(|error| {
-                    format!("Не удалось прочитать {}: {error}", entry.path().display())
+                    format!("Failed to read {}: {error}", entry.path().display())
                 })?
                 .len();
             total_size_bytes += size;
-            inventory.push(format!("[файл, {size} байт] {}", relative.display()));
+            inventory.push(format!("[file, {size} bytes] {}", relative.display()));
         } else if entry.file_type().is_symlink() {
-            inventory.push(format!("[ссылка, не обходилась] {}", relative.display()));
+            inventory.push(format!("[link, unchecked] {}", relative.display()));
         }
     }
 
@@ -577,11 +577,11 @@ pub(crate) fn find_route_icon_with_cache(
     let mut route_information = None;
     let mut ap_archives = Vec::new();
     for entry in fs::read_dir(route_path)
-        .map_err(|error| format!("Не удалось прочитать {}: {error}", route_path.display()))?
+        .map_err(|error| format!("Failed to read {}: {error}", route_path.display()))?
     {
         let entry = entry.map_err(|error| {
             format!(
-                "Ошибка чтения содержимого {}: {error}",
+                "Error reading content {}: {error}",
                 route_path.display()
             )
         })?;
@@ -602,20 +602,20 @@ pub(crate) fn find_route_icon_with_cache(
     if let Some(route_information) = route_information.filter(|path| path.is_dir()) {
         for entry in fs::read_dir(&route_information).map_err(|error| {
             format!(
-                "Не удалось прочитать папку {}: {error}",
+                "Failed to read folder {}: {error}",
                 route_information.display()
             )
         })? {
             let entry = entry.map_err(|error| {
                 format!(
-                    "Ошибка чтения содержимого {}: {error}",
+                    "Error reading content {}: {error}",
                     route_information.display()
                 )
             })?;
             if !entry
                 .file_type()
                 .map_err(|error| {
-                    format!("Не удалось прочитать {}: {error}", entry.path().display())
+                    format!("Failed to read {}: {error}", entry.path().display())
                 })?
                 .is_file()
             {
@@ -636,9 +636,9 @@ pub(crate) fn find_route_icon_with_cache(
     let mut archived_images = Vec::new();
     for archive_path in ap_archives {
         let archive_file = fs::File::open(&archive_path)
-            .map_err(|error| format!("Не удалось открыть {}: {error}", archive_path.display()))?;
+            .map_err(|error| format!("Failed to open {}: {error}", archive_path.display()))?;
         let archive = ZipArchive::new(archive_file)
-            .map_err(|error| format!("Не удалось прочитать {}: {error}", archive_path.display()))?;
+            .map_err(|error| format!("Failed to read {}: {error}", archive_path.display()))?;
         for name_res in archive.file_names() {
             let Ok(raw_name) = name_res else {
                 continue;
@@ -705,12 +705,12 @@ fn extract_archived_route_icon(
     cache_directory: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let file = fs::File::open(archive_path)
-        .map_err(|error| format!("Не удалось открыть {}: {error}", archive_path.display()))?;
+        .map_err(|error| format!("Failed to open {}: {error}", archive_path.display()))?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|error| format!("Не удалось прочитать {}: {error}", archive_path.display()))?;
+        .map_err(|error| format!("Failed to read {}: {error}", archive_path.display()))?;
     let member = archive.by_name(member_name).map_err(|error| {
         format!(
-            "Не удалось найти {member_name} в {}: {error}",
+            "Failed to find {member_name} in {}: {error}",
             archive_path.display()
         )
     })?;
@@ -722,7 +722,7 @@ fn extract_archived_route_icon(
 
     fs::create_dir_all(cache_directory).map_err(|error| {
         format!(
-            "Не удалось создать кэш миниатюр {}: {error}",
+            "Failed to create icon cache {}: {error}",
             cache_directory.display()
         )
     })?;
@@ -734,13 +734,13 @@ fn extract_archived_route_icon(
     let output_path = cache_directory.join(format!("{cache_key}.{extension}"));
     let mut output = fs::File::create(&output_path).map_err(|error| {
         format!(
-            "Не удалось создать файл миниатюры {}: {error}",
+            "Failed to create icon file {}: {error}",
             output_path.display()
         )
     })?;
     io::copy(&mut member.take(MAX_ICON_MEMBER_BYTES), &mut output).map_err(|error| {
         format!(
-            "Не удалось извлечь {member_name} из {}: {error}",
+            "Failed to extract {member_name} from {}: {error}",
             archive_path.display()
         )
     })?;
@@ -837,7 +837,7 @@ impl ScenarioClueCollection {
         let mut clues: Vec<String> = self.other_clues.into_iter().collect();
         for (value, count) in self.start_locations.into_values() {
             let suffix = if count > 1 {
-                format!(" (упоминается в {count} сценариях)")
+                format!(" (mentioned in {count} scenarios)")
             } else {
                 String::new()
             };
@@ -869,22 +869,22 @@ pub(crate) fn parse_route_name_tag(xml: &str) -> Option<String> {
 pub(crate) fn directory_contains_files(path: &Path) -> Result<bool, String> {
     for entry in WalkDir::new(path).follow_links(false).min_depth(1) {
         let entry =
-            entry.map_err(|error| format!("Ошибка при обходе {}: {error}", path.display()))?;
+            entry.map_err(|error| format!("Error during check {}: {error}", path.display()))?;
         if entry.file_type().is_file() {
             let file_path = entry.path();
             if is_ap_archive(file_path) {
                 let file = fs::File::open(file_path).map_err(|error| {
-                    format!("Не удалось открыть {}: {error}", file_path.display())
+                    format!("Failed to open {}: {error}", file_path.display())
                 })?;
                 let archive = ZipArchive::new(file).map_err(|error| {
                     format!(
-                        "Не удалось прочитать архив {}: {error}",
+                        "Failed to read archive {}: {error}",
                         file_path.display()
                     )
                 })?;
                 for name_res in archive.file_names() {
                     let name = name_res.map_err(|error| {
-                        format!("Ошибка в архиве {}: {error}", file_path.display())
+                        format!("Error in archive {}: {error}", file_path.display())
                     })?;
                     if !name.ends_with(['/', '\\']) {
                         return Ok(true);
@@ -938,7 +938,7 @@ fn log_route_warning(log: Option<&RouteScanLog>, archive_path: &Path, reason: &s
     if let Some(tx) = log {
         let _ = tx.send(LogEntry {
             text: format!(
-                "Не удалось прочитать RouteProperties.xml из {}: {reason}",
+                "Failed to read RouteProperties.xml from {}: {reason}",
                 archive_path.display()
             ),
             level: LogLevel::Warning,
@@ -956,11 +956,11 @@ pub(crate) fn read_route_name(
         Ok(data) => data,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let entries = fs::read_dir(route_path).map_err(|error| {
-                format!("Не удалось прочитать {}: {error}", route_path.display())
+                format!("Failed to read {}: {error}", route_path.display())
             })?;
             for entry in entries {
                 let entry = entry
-                    .map_err(|error| format!("Ошибка чтения {}: {error}", route_path.display()))?;
+                    .map_err(|error| format!("Read error{}: {error}", route_path.display()))?;
                 let archive_path = entry.path();
                 if !is_ap_archive(&archive_path) {
                     continue;
@@ -971,7 +971,7 @@ pub(crate) fn read_route_name(
                         log_route_warning(
                             log,
                             &archive_path,
-                            &format!("не удалось открыть архив: {error}"),
+                            &format!("failed to open archive: {error}"),
                         );
                         continue;
                     }
@@ -982,7 +982,7 @@ pub(crate) fn read_route_name(
                         log_route_warning(
                             log,
                             &archive_path,
-                            &format!("не удалось прочитать архив: {error}"),
+                            &format!("failed to read archive: {error}"),
                         );
                         continue;
                     }
@@ -1005,7 +1005,7 @@ pub(crate) fn read_route_name(
                     }
                     let mut bytes = Vec::new();
                     if member.read_to_end(&mut bytes).is_err() {
-                        log_route_warning(log, &archive_path, "ошибка чтения элемента архива");
+                        log_route_warning(log, &archive_path, "error while reading archive element");
                         continue;
                     }
                     let contents = decode_xml_bytes(&bytes);
@@ -1017,15 +1017,15 @@ pub(crate) fn read_route_name(
                     log_route_warning(
                         log,
                         &archive_path,
-                        "в RouteProperties.xml не найден тег RouteName",
+                        "Tag RouteName not found in RouteProperties.xml",
                     );
                 }
             }
-            return Ok(format!("Без названия — {fallback}"));
+            return Ok(format!("Untitled — {fallback}"));
         }
         Err(error) => {
             return Err(format!(
-                "Не удалось прочитать {}: {error}",
+                "Failed to read {}: {error}",
                 properties_path.display()
             ));
         }
@@ -1033,7 +1033,7 @@ pub(crate) fn read_route_name(
 
     let text = decode_xml_bytes(&data);
     let Some(name) = parse_route_name(&text).or_else(|| parse_route_name_tag(&text)) else {
-        return Ok(format!("Без названия — {fallback}"));
+        return Ok(format!("Untitled — {fallback}"));
     };
     Ok(name)
 }
