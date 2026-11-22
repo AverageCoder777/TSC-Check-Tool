@@ -578,7 +578,7 @@ fn main() {
             if let Some(ui) = ui_weak_open.upgrade() {
                 log_event(
                     &ui,
-                    &format!("Открыта папка в проводнике: {}.", path.display()),
+                    &format!("Folder is open in explorer: {}.", path.display()),
                     app::LogLevel::Info,
                 );
             }
@@ -620,7 +620,7 @@ fn main() {
         if let Some(ui) = ui_handle_copy_guid.upgrade() {
             log_event(
                 &ui,
-                &format!("GUID скопирован в буфер обмена: {guid}"),
+                &format!("GUID copied into clipboard: {guid}"),
                 app::LogLevel::Info,
             );
         }

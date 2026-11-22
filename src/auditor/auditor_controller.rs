@@ -316,7 +316,6 @@ impl AuditorController {
                         w.set_count_sounds(counts.sounds);
                         w.set_count_children(counts.children);
                         w.set_count_dead(counts.dead);
-                        w.set_is_consolidating(false);
                         w.set_is_scanning(false);
                         w.set_is_scan_completed(true);
                     }
