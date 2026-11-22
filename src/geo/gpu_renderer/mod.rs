@@ -9,12 +9,18 @@ use wgpu::util::DeviceExt;
 
 use crate::geo::{GeoRenderMode, GeoSubmesh, GeoVertex};
 use pipelines::{
-    CameraUniform, GpuVertex, MaterialUniform, PipelineKey, Pipelines, create_uniform_layout,
+    CameraUniform, GpuVertex, MSAA_SAMPLE_COUNT, MaterialUniform, PipelineKey, Pipelines,
+    create_uniform_layout,
 };
 use textures::create_texture_bind_groups;
 
 #[cfg(test)]
 use textures::downscale_rgba;
+
+struct MaterialBindGroups {
+    normal: wgpu::BindGroup,
+    highlighted: wgpu::BindGroup,
+}
 
 struct SubmeshDraw {
     submesh: GeoSubmesh,
@@ -28,6 +34,8 @@ struct SubmeshDraw {
 
 struct RenderTargets {
     size: (u32, u32),
+    _msaa_color_texture: wgpu::Texture,
+    msaa_color_view: wgpu::TextureView,
     color_texture: wgpu::Texture,
     color_view: wgpu::TextureView,
     _depth_texture: wgpu::Texture,
@@ -43,6 +51,19 @@ impl RenderTargets {
             height,
             depth_or_array_layers: 1,
         };
+        let msaa_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("GeoPcDx MSAA color target"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLE_COUNT,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let msaa_color_view =
+            msaa_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let color_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("GeoPcDx offscreen color target"),
             size: extent,
@@ -59,7 +80,7 @@ impl RenderTargets {
             label: Some("GeoPcDx depth target"),
             size: extent,
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: MSAA_SAMPLE_COUNT,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth24Plus,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -77,6 +98,8 @@ impl RenderTargets {
 
         Self {
             size: (width, height),
+            _msaa_color_texture: msaa_color_texture,
+            msaa_color_view,
             color_texture,
             color_view,
             _depth_texture: depth_texture,
@@ -95,7 +118,8 @@ pub(crate) struct GpuRenderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     texture_bind_groups: Vec<wgpu::BindGroup>,
-    material_bind_groups: Vec<wgpu::BindGroup>,
+    material_bind_groups: Vec<MaterialBindGroups>,
+    highlighted_batch: Option<usize>,
     vertex_buffer: wgpu::Buffer,
     triangle_indices: wgpu::Buffer,
     wire_indices: wgpu::Buffer,
@@ -143,14 +167,12 @@ impl GpuRenderer {
             .await
             .map_err(|error| format!("No compatible GPU adapter is available: {error}"))?;
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("GeoPcDx offscreen renderer"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: adapter.limits(),
-                    ..Default::default()
-                },
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("GeoPcDx offscreen renderer"),
+                required_features: wgpu::Features::empty(),
+                required_limits: adapter.limits(),
+                ..Default::default()
+            })
             .await
             .map_err(|error| format!("Failed to create GPU device: {error}"))?;
 
@@ -231,26 +253,31 @@ impl GpuRenderer {
             let material_idx = *material_cache
                 .entry(submesh.alpha_cutoff.to_bits())
                 .or_insert_with(|| {
-                    let uniform = MaterialUniform {
-                        alpha_cutoff: submesh.alpha_cutoff,
-                        _pad: [0.0; 3],
-                    };
-                    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("GeoPcDx material uniform"),
-                        contents: bytemuck::cast_slice(&[uniform]),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
-                    let idx = material_bind_groups.len();
-                    material_bind_groups.push(device.create_bind_group(
-                        &wgpu::BindGroupDescriptor {
+                    let make_bg = |highlight: f32| {
+                        let uniform = MaterialUniform {
+                            alpha_cutoff: submesh.alpha_cutoff,
+                            highlight,
+                            _pad: [0.0; 2],
+                        };
+                        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("GeoPcDx material uniform"),
+                            contents: bytemuck::cast_slice(&[uniform]),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        });
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("GeoPcDx material bindings"),
                             layout: &material_bind_group_layout,
                             entries: &[wgpu::BindGroupEntry {
                                 binding: 0,
                                 resource: buffer.as_entire_binding(),
                             }],
-                        },
-                    ));
+                        })
+                    };
+                    let idx = material_bind_groups.len();
+                    material_bind_groups.push(MaterialBindGroups {
+                        normal: make_bg(0.0),
+                        highlighted: make_bg(1.0),
+                    });
                     idx
                 });
 
@@ -333,6 +360,7 @@ impl GpuRenderer {
             opaque_order,
             blended_order,
             targets: None,
+            highlighted_batch: None,
         })
     }
 
@@ -346,6 +374,9 @@ impl GpuRenderer {
         for draw in &mut self.draws {
             draw.visible = draw.submesh.preset_visible(preset);
         }
+    }
+    pub(crate) fn set_highlighted_batch(&mut self, batch_idx: Option<usize>) {
+        self.highlighted_batch = batch_idx;
     }
 
     fn ensure_render_targets(&mut self, width: u32, height: u32) {
@@ -401,9 +432,9 @@ impl GpuRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("GeoPcDx offscreen pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &targets.color_view,
+                    view: &targets.msaa_color_view,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: Some(&targets.color_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.0116,
@@ -411,7 +442,7 @@ impl GpuRenderer {
                             b: 0.0212,
                             a: 1.0,
                         }),
-                        store: wgpu::StoreOp::Store,
+                        store: wgpu::StoreOp::Discard,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -440,7 +471,7 @@ impl GpuRenderer {
 
             let mut last_pipeline: Option<PipelineKey> = None;
             let mut last_texture: Option<usize> = None;
-            let mut last_material: Option<usize> = None;
+            let mut last_material: Option<(usize, bool)> = None;
 
             for &index in self.opaque_order.iter().chain(&self.blended_order) {
                 let draw = &self.draws[index];
@@ -469,9 +500,16 @@ impl GpuRenderer {
                     pass.set_bind_group(1, &self.texture_bind_groups[draw.texture_idx], &[]);
                     last_texture = Some(draw.texture_idx);
                 }
-                if last_material != Some(draw.material_idx) {
-                    pass.set_bind_group(2, &self.material_bind_groups[draw.material_idx], &[]);
-                    last_material = Some(draw.material_idx);
+                let is_highlighted = self.highlighted_batch == Some(index);
+                if last_material != Some((draw.material_idx, is_highlighted)) {
+                    let mat = &self.material_bind_groups[draw.material_idx];
+                    let bg = if is_highlighted {
+                        &mat.highlighted
+                    } else {
+                        &mat.normal
+                    };
+                    pass.set_bind_group(2, bg, &[]);
+                    last_material = Some((draw.material_idx, is_highlighted));
                 }
                 pass.draw_indexed(start..start + count, 0, 0..1);
             }

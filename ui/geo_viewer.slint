@@ -32,12 +32,14 @@ export component GeoViewerWindow inherits Window {
     in-out property <float> initial-distance: 4.0;
     in-out property <float> pan-x: 0.0;
     in-out property <float> pan-y: 0.0;
+    in-out property <int> selected-batch: -1;
 
     callback camera-changed(float, float, float, float, float, float, float, bool);
     callback open-in-editor();
     callback toggle-batch(int, bool);
     callback apply-batch-preset(string);
     callback filter-batches(string);
+    callback select-batch(int);
 
     function emit-camera() {
         root.camera-changed(
@@ -274,6 +276,12 @@ export component GeoViewerWindow inherits Window {
                     ListView {
                         for item[idx] in root.batch-items : Rectangle {
                             height: 50px;
+                            background: root.selected-batch == item.index
+                                ? #2b384e
+                                : (row-touch.has-hover ? #252b35 : transparent);
+                            border-width: root.selected-batch == item.index ? 1px : 0px;
+                            border-color: #ff941f;
+                            border-radius: 3px;
                             HorizontalBox {
                                 spacing: 6px;
                                 padding: 2px;
@@ -281,21 +289,34 @@ export component GeoViewerWindow inherits Window {
                                     checked: item.visible;
                                     toggled => { root.toggle-batch(item.index, self.checked); }
                                 }
-                                VerticalBox {
-                                    spacing: 2px;
-                                    Text {
-                                        text: "[#\{item.index}] \{item.node-name} (LOD\{item.lod-level})";
-                                        color: #e5e5e5;
-                                        font-size: 12px;
-                                        overflow: elide;
-                                        vertical-alignment: center;
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    row-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.selected-batch = root.selected-batch == item.index
+                                                ? -1
+                                                : item.index;
+                                            root.select-batch(root.selected-batch);
+                                        }
                                     }
-                                    Text {
-                                        text: "\{item.material-name} • \{item.triangle-count} tris";
-                                        color: #8993a2;
-                                        font-size: 11px;
-                                        overflow: elide;
-                                        vertical-alignment: center;
+                                    VerticalBox {
+                                        padding: 0px;
+                                        spacing: 2px;
+                                        Text {
+                                            text: "[#\{item.index}] \{item.node-name} (LOD\{item.lod-level})";
+                                            color: root.selected-batch == item.index ? #ffd180 : #e5e5e5;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: "\{item.material-name} • \{item.triangle-count} tris";
+                                            color: #8993a2;
+                                            font-size: 11px;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                        }
                                     }
                                 }
                             }

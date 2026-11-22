@@ -5,6 +5,8 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::geo::GeoRenderMode;
 
+pub(super) const MSAA_SAMPLE_COUNT: u32 = 4;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(super) struct GpuVertex {
@@ -23,7 +25,8 @@ pub(super) struct CameraUniform {
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(super) struct MaterialUniform {
     pub(super) alpha_cutoff: f32,
-    pub(super) _pad: [f32; 3],
+    pub(super) highlight: f32,
+    pub(super) _pad: [f32; 2],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -127,7 +130,11 @@ impl Pipelines {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: Default::default(),
+                multisample: wgpu::MultisampleState {
+                    count: MSAA_SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
                 multiview_mask: None,
                 cache: None,
             })

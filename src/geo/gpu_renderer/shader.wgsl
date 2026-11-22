@@ -4,6 +4,7 @@ struct Camera {
 
 struct Material {
     alpha_cutoff: f32,
+    highlight: f32,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -16,6 +17,7 @@ const UP_DIR: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
 const KEY_DIR: vec3<f32> = vec3<f32>(-0.4526992, 0.7243187, 0.5231191);
 const FILL_DIR: vec3<f32> = vec3<f32>(0.6285714, 0.2285714, -0.7428571);
 const RIM_DIR: vec3<f32> = vec3<f32>(0.3504383, 0.4505636, -0.8210269);
+const HIGHLIGHT_COLOR: vec3<f32> = vec3<f32>(1.0, 0.58, 0.12);
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -56,7 +58,11 @@ fn shade_sample(input: VertexOutput, color: vec4<f32>, face_normal: vec3<f32>) -
     let rim_t = 1.0 - max(dot(normal, RIM_DIR), 0.0);
     let rim = rim_t * rim_t * 0.10;
     let light = clamp(hemisphere + key + fill + rim, 0.25, 1.25);
-    return vec4<f32>(color.rgb * light, color.a);
+    var lit = color.rgb * light;
+    if material.highlight > 0.5 {
+        lit = mix(lit, HIGHLIGHT_COLOR, 0.45) + HIGHLIGHT_COLOR * 0.12;
+    }
+    return vec4<f32>(lit, color.a);
 }
 
 @fragment

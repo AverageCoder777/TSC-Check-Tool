@@ -128,6 +128,7 @@ impl Texture {
 enum ViewCommand {
     Camera(Camera),
     ToggleBatch { index: usize, visible: bool },
+    SelectBatch(Option<usize>),
     Preset(String),
     Filter(String),
 }
@@ -213,8 +214,13 @@ fn bind_batch_panel(window: &GeoViewerWindow, sender: Sender<ViewCommand>) {
     window.on_apply_batch_preset(move |preset| {
         let _ = preset_sender.send(ViewCommand::Preset(preset.to_string()));
     });
+    let filter_sender = sender.clone();
     window.on_filter_batches(move |text| {
-        let _ = sender.send(ViewCommand::Filter(text.to_string()));
+        let _ = filter_sender.send(ViewCommand::Filter(text.to_string()));
+    });
+    window.on_select_batch(move |index| {
+        let selected = (index >= 0).then_some(index as usize);
+        let _ = sender.send(ViewCommand::SelectBatch(selected));
     });
 }
 
@@ -320,6 +326,12 @@ fn render_worker(
                 ViewCommand::Filter(text) => {
                     filter = text;
                     list_dirty = true;
+                }
+                ViewCommand::SelectBatch(selected) => {
+                    if let Some(gpu) = gpu.as_mut() {
+                        gpu.set_highlighted_batch(selected);
+                    }
+                    need_render = true;
                 }
             }
             pending = receiver.try_recv().ok();
