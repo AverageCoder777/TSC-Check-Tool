@@ -33,7 +33,7 @@ impl From<AssetError> for String {
 }
 
 pub(crate) fn read_serz_xml(asset_path: &Path) -> Result<String, SerzError> {
-    let bytes = fs::read(asset_path).map_err(SerzError::Io)?;
+    let bytes = fs::read(asset_path)?;
     if !bytes.starts_with(b"SERZ") {
         return Ok(decode_xml_bytes(&bytes));
     }
@@ -43,9 +43,11 @@ pub(crate) fn read_serz_xml(asset_path: &Path) -> Result<String, SerzError> {
 }
 
 pub(crate) fn decode_xml_bytes(bytes: &[u8]) -> String {
-    if let Ok(text) = std::str::from_utf8(bytes)
-        && !text.contains('\u{FFFD}')
-    {
+    if let Some((encoding, bom_len)) = encoding_rs::Encoding::for_bom(bytes) {
+        let (decoded, _) = encoding.decode_without_bom_handling(&bytes[bom_len..]);
+        return decoded.into_owned();
+    }
+    if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_owned();
     }
     let (decoded, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);

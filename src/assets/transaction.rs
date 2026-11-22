@@ -97,11 +97,7 @@ pub fn stage_serz_xml(source: &Path, target: &Path, xml: &str) -> Result<StagedU
     let parent = source
         .parent()
         .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
-    let temp = create_temporary_work_directory(parent)?;
-    let xml_path = temp.path().join("transliterated.xml");
-    fs::write(&xml_path, xml)
-        .map_err(|error| format!("Не удалось записать временный XML: {error}"))?;
-    // Нативная сериализация XML -> BIN в памяти.
+    // Нативная сериализация XML -> BIN в памяти до создания временного каталога.
     let (node, preamble) = SerzNode::from_xml_str(xml)?;
     let bytes = encode_to_vec(&node, preamble.as_ref()).map_err(|error| {
         format!(
@@ -109,6 +105,7 @@ pub fn stage_serz_xml(source: &Path, target: &Path, xml: &str) -> Result<StagedU
             source.display()
         )
     })?;
+    let temp = create_temporary_work_directory(parent)?;
     let staged = temp.path().join("transliterated.bin");
     fs::write(&staged, bytes).map_err(|error| {
         format!(
@@ -128,12 +125,11 @@ pub fn stage_renamed_file(source: &Path, target: &Path) -> Result<StagedUmlautFi
     let parent = source
         .parent()
         .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
+    let file_name = source
+        .file_name()
+        .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?;
     let temp = create_temporary_work_directory(parent)?;
-    let staged = temp.path().join(
-        source
-            .file_name()
-            .ok_or_else(|| format!("Некорректный путь к ассету: {}", source.display()))?,
-    );
+    let staged = temp.path().join(file_name);
     fs::copy(source, &staged).map_err(|error| {
         format!(
             "Не удалось подготовить переименование {}: {error}",
@@ -173,14 +169,10 @@ pub fn install_route_file(
     converted_path: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let target = source_file.install_target(route_path);
-    let original = match source_file {
-        RouteFile::Path(path) => Some(path.clone()),
-        RouteFile::Archive { .. } => None,
-    };
-    if let Some(original) = original
-        && target == original
+    if let RouteFile::Path(original) = source_file
+        && target == *original
     {
-        return install_converted_asset(&original, converted_path).map(Some);
+        return install_converted_asset(original, converted_path).map(Some);
     }
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
@@ -202,7 +194,24 @@ pub fn install_route_file(
     } else {
         None
     };
-    fs::copy(converted_path, &target)
-        .map_err(|error| format!("Не удалось записать {}: {error}", target.display()))?;
+    if let Err(error) = fs::copy(converted_path, &target) {
+        if let Some(backup_path) = &backup {
+            return match fs::copy(backup_path, &target) {
+                Ok(_) => Err(format!(
+                    "Не удалось записать {}: {error}. Исходник восстановлен.",
+                    target.display()
+                )),
+                Err(restore_error) => Err(format!(
+                    "Не удалось записать {}: {error}. Не удалось восстановить исходник из {}: {restore_error}",
+                    target.display(),
+                    backup_path.display()
+                )),
+            };
+        }
+        return Err(format!(
+            "Не удалось записать {}: {error}",
+            target.display()
+        ));
+    }
     Ok(backup)
 }

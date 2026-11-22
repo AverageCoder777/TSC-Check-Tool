@@ -34,6 +34,8 @@ impl RouteAssetType {
 }
 
 pub fn classify_route_asset_type(asset: &str, uses: &[AssetUse]) -> RouteAssetType {
+    let asset_lower = asset.to_lowercase();
+
     let mut track = false;
     let mut trackrules = false;
     let mut road = false;
@@ -43,7 +45,7 @@ pub fn classify_route_asset_type(asset: &str, uses: &[AssetUse]) -> RouteAssetTy
     let mut scenery = false;
 
     for usage in uses {
-        let source = usage.source_file.display().to_lowercase();
+        let source = usage.source_file_search.as_str();
         if source.contains("trackrules") {
             trackrules = true;
         } else if source.contains("track tiles") || source.contains("tracks.bin") {
@@ -53,7 +55,6 @@ pub fn classify_route_asset_type(asset: &str, uses: &[AssetUse]) -> RouteAssetTy
         } else if source.contains("loft tiles") || source.contains("lofts.bin") {
             loft = true;
         } else if source.contains("routeproperties.xml") {
-            let asset_lower = asset.to_lowercase();
             if asset_lower.contains("sky")
                 || asset_lower.contains("weather")
                 || source.contains("weather")
@@ -65,12 +66,12 @@ pub fn classify_route_asset_type(asset: &str, uses: &[AssetUse]) -> RouteAssetTy
         } else if source.contains("scenery") {
             scenery = true;
         }
+
         if source.contains("sounds") || source.contains("audio") {
             audio = true;
         }
     }
 
-    let asset_lower = asset.to_lowercase();
     if asset_lower.ends_with(".wav")
         || asset_lower.ends_with(".ogg")
         || asset_lower.ends_with(".mp3")
@@ -102,31 +103,16 @@ pub fn classify_route_asset_type(asset: &str, uses: &[AssetUse]) -> RouteAssetTy
         RouteAssetType::Other
     }
 }
+
 pub fn is_protected_network_asset(asset: &RouteAssetItem) -> bool {
-    if asset.uses.iter().any(|usage| {
-        let path = &usage.source_file_search;
-        (path.contains("/networks/tracks.bin") || path.contains("\\networks\\tracks.bin"))
-            || (path.contains("/networks/track tiles/")
-                || path.contains("\\networks\\track tiles\\"))
-    }) {
-        return true;
-    }
-
-    let path_lower = asset.path.to_lowercase();
-    if path_lower.contains("trackrules") || path_lower.contains("junctions") {
-        return true;
-    }
-
-    if path_lower.contains("signal")
-        && asset.uses.iter().any(|usage| {
-            let path = &usage.source_file_search;
-            (path.contains("/networks/tracks.bin") || path.contains("\\networks\\tracks.bin"))
-                || (path.contains("/networks/track tiles/")
-                    || path.contains("\\networks\\track tiles\\"))
-        })
+    if asset
+        .uses
+        .iter()
+        .any(|usage| usage.source_file.is_protected_pathway())
     {
         return true;
     }
 
-    false
+    let path_lower = asset.path.to_lowercase();
+    path_lower.contains("trackrules") || path_lower.contains("junctions")
 }

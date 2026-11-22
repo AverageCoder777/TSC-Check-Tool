@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::common::domain::RouteFile;
@@ -20,6 +20,37 @@ pub fn is_allowed_route_directory(name: &str, ignore_scenarios: bool) -> bool {
     .iter()
     .any(|allowed| name.eq_ignore_ascii_case(allowed))
         && !is_skipped_route_scan_directory(name, ignore_scenarios)
+}
+
+fn is_non_asset_directory(name: &str) -> bool {
+    ["Terrain", "MixMap", "RouteInfo", "RouteInformation"]
+        .iter()
+        .any(|dir| name.eq_ignore_ascii_case(dir))
+}
+
+fn is_route_data_extension(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("bin") || extension.eq_ignore_ascii_case("xml")
+    })
+}
+
+fn has_route_data_extension_str(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    (bytes.len() >= 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".bin"))
+        || (bytes.len() >= 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".xml"))
+}
+
+fn is_scannable_relative_path(relative: &Path, ignore_scenarios: bool) -> bool {
+    let mut components = relative.components();
+    let Some(first) = components.next() else {
+        return false;
+    };
+    let in_route_root = components.next().is_none();
+    let first_str = first.as_os_str().to_string_lossy();
+    let in_allowed_directory = is_allowed_route_directory(&first_str, ignore_scenarios);
+    let in_non_asset_directory = is_non_asset_directory(&first_str);
+
+    (in_route_root || in_allowed_directory) && !in_non_asset_directory
 }
 
 /// Префикс рабочих каталогов программы, которые создаются рядом с файлами маршрута
@@ -49,60 +80,33 @@ pub(crate) fn collect_route_files(
     route_path: &Path,
     ignore_scenarios: bool,
 ) -> Result<Vec<PathBuf>, String> {
-    WalkDir::new(route_path)
-        .into_iter()
-        .filter_entry(|entry| {
-            if is_temporary_work_directory(&entry.file_name().to_string_lossy()) {
-                return false;
-            }
-            entry.depth() == 0
-                || entry.depth() != 1
-                || !entry.file_type().is_dir()
-                || is_allowed_route_directory(
-                    &entry.file_name().to_string_lossy(),
-                    ignore_scenarios,
-                )
-        })
-        .map(|entry| {
-            entry.map_err(|error| format!("Ошибка при обходе {}: {error}", route_path.display()))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(|entries| {
-            entries
-                .into_iter()
-                .filter(|entry| {
-                    if !entry.file_type().is_file() {
-                        return false;
-                    }
-                    let Some(relative) = entry.path().strip_prefix(route_path).ok() else {
-                        return false;
-                    };
-                    let mut components = relative.components();
-                    let Some(first) = components.next() else {
-                        return false;
-                    };
-                    let in_route_root = components.next().is_none();
-                    let in_allowed_directory =
-                        first.as_os_str().to_str().is_some_and(|directory| {
-                            is_allowed_route_directory(directory, ignore_scenarios)
-                        });
-                    let in_non_asset_directory =
-                        first.as_os_str().to_str().is_some_and(|directory| {
-                            matches!(
-                                directory.to_ascii_lowercase().as_str(),
-                                "terrain" | "mixmap" | "routeinfo" | "routeinformation"
-                            )
-                        });
-                    (in_route_root || in_allowed_directory)
-                        && !in_non_asset_directory
-                        && entry.path().extension().is_some_and(|extension| {
-                            extension.eq_ignore_ascii_case("bin")
-                                || extension.eq_ignore_ascii_case("xml")
-                        })
-                })
-                .map(|entry| entry.into_path())
-                .collect()
-        })
+    let mut files = Vec::new();
+    let walker = WalkDir::new(route_path).into_iter().filter_entry(|entry| {
+        let name = entry.file_name().to_string_lossy();
+        if is_temporary_work_directory(&name) {
+            return false;
+        }
+        entry.depth() != 1
+            || !entry.file_type().is_dir()
+            || (is_allowed_route_directory(&name, ignore_scenarios)
+                && !is_non_asset_directory(&name))
+    });
+
+    for entry in walker {
+        let entry = entry
+            .map_err(|error| format!("Ошибка при обходе {}: {error}", route_path.display()))?;
+        if !entry.file_type().is_file() || !is_route_data_extension(entry.path()) {
+            continue;
+        }
+        let Ok(relative) = entry.path().strip_prefix(route_path) else {
+            continue;
+        };
+        if is_scannable_relative_path(relative, ignore_scenarios) {
+            files.push(entry.into_path());
+        }
+    }
+
+    Ok(files)
 }
 
 /// Читает записи архивов .ap маршрута.
@@ -134,47 +138,38 @@ pub(crate) fn collect_archive_members(
         // дедупликация имён идут через HashSet, а не через линейный обход zip.
         let mut seen_names: HashSet<String> = HashSet::new();
         for name_result in zip.file_names() {
-            let Ok(name) = name_result else {
+            let Ok(raw_name) = name_result else {
                 continue;
             };
-            let name = name.into_owned();
-            let normalized_name = name.replace('\\', "/");
-            if !seen_names.insert(normalized_name.to_lowercase()) {
-                continue;
-            }
-            let relative = Path::new(&normalized_name);
-            if relative.is_absolute()
-                || relative
-                    .components()
-                    .any(|component| matches!(component, std::path::Component::ParentDir))
-            {
-                continue;
-            }
-            if !relative.extension().is_some_and(|extension| {
-                extension.eq_ignore_ascii_case("bin") || extension.eq_ignore_ascii_case("xml")
-            }) {
+            let name_str: &str = raw_name.as_ref();
+            if name_str.ends_with(['/', '\\']) || !has_route_data_extension_str(name_str) {
                 continue;
             }
 
-            // Фильтрация по директориям верхнего уровня внутри архива
-            let mut components = relative.components();
-            let Some(first) = components.next() else {
-                continue;
+            let normalized_name = if name_str.contains('\\') {
+                std::borrow::Cow::Owned(name_str.replace('\\', "/"))
+            } else {
+                std::borrow::Cow::Borrowed(name_str)
             };
-            let in_route_root = components.next().is_none();
-            let first_str = first.as_os_str().to_string_lossy();
-            let in_allowed_directory = is_allowed_route_directory(&first_str, ignore_scenarios);
-            let in_non_asset_directory = matches!(
-                first_str.to_ascii_lowercase().as_str(),
-                "terrain" | "mixmap" | "routeinfo" | "routeinformation"
-            );
-            if !(in_route_root || in_allowed_directory) || in_non_asset_directory {
+
+            let relative = Path::new(normalized_name.as_ref());
+            if relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+            {
+                continue;
+            }
+            if !is_scannable_relative_path(relative, ignore_scenarios) {
+                continue;
+            }
+            if !seen_names.insert(normalized_name.to_lowercase()) {
                 continue;
             }
 
             members.push(RouteFile::Archive {
                 archive: path.clone(),
-                name: name.to_owned(),
+                name: raw_name.into_owned(),
                 stamp: archive_stamp,
             });
         }
@@ -195,9 +190,9 @@ pub(crate) fn unexpected_route_directories(route_path: &Path) -> Result<Vec<Stri
             .is_dir()
         {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let known = is_allowed_route_directory(&name, false)
-                || name.eq_ignore_ascii_case("Terrain")
-                || name.eq_ignore_ascii_case("MixMap");
+            let known = is_temporary_work_directory(&name)
+                || is_allowed_route_directory(&name, false)
+                || is_non_asset_directory(&name);
             if !known {
                 unexpected.push(name);
             }
