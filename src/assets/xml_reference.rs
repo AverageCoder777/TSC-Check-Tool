@@ -1,6 +1,8 @@
-use regex::Regex;
-use std::path::Path;
+use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::OnceLock;
+
+use regex::Regex;
 
 use crate::assets::reference::capture_value_range;
 use crate::common::translit::decode_xml_text;
@@ -25,7 +27,7 @@ impl GeometryReference {
         let (variant, name) = match name.find(']') {
             Some(index) if name.starts_with('[') && index > 1 => {
                 let digits = &name[1..index];
-                if !digits.is_empty() && digits.chars().all(|digit| digit.is_ascii_digit()) {
+                if digits.bytes().all(|byte| byte.is_ascii_digit()) {
                     (&name[..=index], &name[index + 1..])
                 } else {
                     ("", name)
@@ -33,18 +35,15 @@ impl GeometryReference {
             }
             _ => ("", name),
         };
-        let (name, extension) = match Path::new(name).extension() {
-            Some(extension) => {
-                let extension = extension.to_string_lossy().into_owned();
-                if extension.eq_ignore_ascii_case("GeoPcDx")
-                    || extension.eq_ignore_ascii_case("TgPcDx")
-                {
-                    (&name[..name.len() - extension.len() - 1], Some(extension))
-                } else {
-                    (name, None)
-                }
+        let (name, extension) = match name.rsplit_once('.') {
+            Some((stem, ext))
+                if !stem.is_empty()
+                    && (ext.eq_ignore_ascii_case("GeoPcDx")
+                        || ext.eq_ignore_ascii_case("TgPcDx")) =>
+            {
+                (stem, Some(ext.to_owned()))
             }
-            None => (name, None),
+            _ => (name, None),
         };
         Some(Self {
             path: if folder.is_empty() {
@@ -69,7 +68,8 @@ impl GeometryReference {
     }
 
     pub fn to_text(&self) -> String {
-        let mut text = String::new();
+        let ext_len = self.extension.as_ref().map_or(0, |ext| ext.len() + 1);
+        let mut text = String::with_capacity(self.path.len() + self.variant.len() + ext_len);
         let (folder, name) = match self.path.rfind(['\\', '/']) {
             Some(index) => (&self.path[..=index], &self.path[index + 1..]),
             None => ("", self.path.as_str()),
@@ -108,8 +108,10 @@ pub fn variant_reference_regex() -> &'static Regex {
     })
 }
 
-pub fn referenced_geometry_paths(xml: &str) -> Vec<(GeometryReference, std::ops::Range<usize>)> {
-    let mut found: Vec<(GeometryReference, std::ops::Range<usize>)> = Vec::new();
+pub fn referenced_geometry_paths(xml: &str) -> Vec<(GeometryReference, Range<usize>)> {
+    let mut found: Vec<(GeometryReference, Range<usize>)> = Vec::new();
+    let mut seen_ranges: HashSet<Range<usize>> = HashSet::new();
+
     for regex in [geometry_reference_regex(), variant_reference_regex()] {
         for captures in regex.captures_iter(xml) {
             let Some(matched) = captures.get(1) else {
@@ -123,23 +125,30 @@ pub fn referenced_geometry_paths(xml: &str) -> Vec<(GeometryReference, std::ops:
                 continue;
             }
             let range = capture_value_range(&matched);
-            if found
-                .iter()
-                .any(|(_, existing_range)| existing_range == &range)
-            {
-                continue;
+            if seen_ranges.insert(range.clone()) {
+                found.push((reference, range));
             }
-            found.push((reference, range));
         }
     }
+
     found.sort_by_key(|(_, range)| range.start);
     found
 }
 
 pub fn escape_xml_text(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    if !text.contains(['&', '<', '>']) {
+        return text.to_owned();
+    }
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 pub(crate) fn validate_xml_document(xml: &str) -> Result<(), String> {
