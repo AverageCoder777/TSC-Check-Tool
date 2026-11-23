@@ -1,7 +1,8 @@
 mod pipelines;
 mod textures;
 
-use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 
 use glam::{Mat4, Vec3};
@@ -9,7 +10,7 @@ use wgpu::util::DeviceExt;
 
 use crate::geo::{GeoRenderMode, GeoSubmesh, GeoVertex};
 use pipelines::{
-    CameraUniform, GpuVertex, MSAA_SAMPLE_COUNT, MaterialUniform, PipelineKey, Pipelines,
+    CameraUniform, GpuVertex, MSAA_SAMPLE_COUNT, MaterialImmediate, PipelineKey, Pipelines,
     create_uniform_layout,
 };
 use textures::create_texture_bind_groups;
@@ -17,18 +18,12 @@ use textures::create_texture_bind_groups;
 #[cfg(test)]
 use textures::downscale_rgba;
 
-struct MaterialBindGroups {
-    normal: wgpu::BindGroup,
-    highlighted: wgpu::BindGroup,
-}
-
 struct SubmeshDraw {
     submesh: GeoSubmesh,
     triangle_range: (u32, u32),
     wire_range: (u32, u32),
     center: Vec3,
     texture_idx: usize,
-    material_idx: usize,
     visible: bool,
 }
 
@@ -118,14 +113,13 @@ pub(crate) struct GpuRenderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     texture_bind_groups: Vec<wgpu::BindGroup>,
-    material_bind_groups: Vec<MaterialBindGroups>,
-    highlighted_batch: Option<usize>,
     vertex_buffer: wgpu::Buffer,
     triangle_indices: wgpu::Buffer,
     wire_indices: wgpu::Buffer,
     draws: Vec<SubmeshDraw>,
     opaque_order: Vec<usize>,
     blended_order: Vec<usize>,
+    highlighted_batch: Option<usize>,
     targets: Option<RenderTargets>,
 }
 
@@ -166,11 +160,19 @@ impl GpuRenderer {
             })
             .await
             .map_err(|error| format!("No compatible GPU adapter is available: {error}"))?;
+
+        let adapter_features = adapter.features();
+        let supports_pipeline_cache = adapter_features.contains(wgpu::Features::PIPELINE_CACHE);
+        let mut required_features = wgpu::Features::IMMEDIATES;
+        if supports_pipeline_cache {
+            required_features |= wgpu::Features::PIPELINE_CACHE;
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("GeoPcDx offscreen renderer"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits: adapter.limits(),
+                memory_hints: wgpu::MemoryHints::MemoryUsage,
                 ..Default::default()
             })
             .await
@@ -204,14 +206,6 @@ impl GpuRenderer {
         let (texture_bind_group_layout, texture_bind_groups) =
             create_texture_bind_groups(&device, &queue, textures, max_texture_dimension)?;
         let max_texture_idx = texture_bind_groups.len().saturating_sub(1);
-
-        let material_bind_group_layout = create_uniform_layout(
-            &device,
-            "GeoPcDx material bindings",
-            wgpu::ShaderStages::FRAGMENT,
-        );
-        let mut material_bind_groups = Vec::new();
-        let mut material_cache: HashMap<u32, usize> = HashMap::new();
 
         let mut wire_lines = Vec::with_capacity(indices.len() * 2);
         let mut draws = Vec::with_capacity(submeshes.len());
@@ -250,37 +244,6 @@ impl GpuRenderer {
                 Vec3::ZERO
             };
 
-            let material_idx = *material_cache
-                .entry(submesh.alpha_cutoff.to_bits())
-                .or_insert_with(|| {
-                    let make_bg = |highlight: f32| {
-                        let uniform = MaterialUniform {
-                            alpha_cutoff: submesh.alpha_cutoff,
-                            highlight,
-                            _pad: [0.0; 2],
-                        };
-                        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("GeoPcDx material uniform"),
-                            contents: bytemuck::cast_slice(&[uniform]),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("GeoPcDx material bindings"),
-                            layout: &material_bind_group_layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: buffer.as_entire_binding(),
-                            }],
-                        })
-                    };
-                    let idx = material_bind_groups.len();
-                    material_bind_groups.push(MaterialBindGroups {
-                        normal: make_bg(0.0),
-                        highlighted: make_bg(1.0),
-                    });
-                    idx
-                });
-
             if submesh.render_mode == GeoRenderMode::Blended {
                 blended_order.push(index);
             } else {
@@ -290,7 +253,6 @@ impl GpuRenderer {
             draws.push(SubmeshDraw {
                 visible: submesh.visible,
                 texture_idx: (submesh.texture_index as usize).min(max_texture_idx),
-                material_idx,
                 triangle_range,
                 wire_range,
                 center: submesh_center,
@@ -298,7 +260,6 @@ impl GpuRenderer {
             });
         }
 
-        // Pre-sort opaque/cutout batches to minimize GPU pipeline and bind-group switches.
         opaque_order.sort_unstable_by_key(|&i| {
             let d = &draws[i];
             let mode_key = match d.submesh.render_mode {
@@ -306,7 +267,7 @@ impl GpuRenderer {
                 GeoRenderMode::Cutout => 1u8,
                 GeoRenderMode::Blended => 2u8,
             };
-            (mode_key, d.submesh.mirrored, d.texture_idx, d.material_idx)
+            (mode_key, d.submesh.mirrored, d.texture_idx)
         });
 
         let wire_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -337,12 +298,16 @@ impl GpuRenderer {
             }],
         });
 
+        let pipeline_cache = supports_pipeline_cache.then(|| load_pipeline_cache(&device));
         let pipelines = Pipelines::new(
             &device,
             &camera_bind_group_layout,
             &texture_bind_group_layout,
-            &material_bind_group_layout,
+            pipeline_cache.as_ref(),
         );
+        if let Some(cache) = pipeline_cache {
+            save_pipeline_cache(&cache);
+        }
 
         Ok(Self {
             device,
@@ -352,15 +317,14 @@ impl GpuRenderer {
             camera_buffer,
             camera_bind_group,
             texture_bind_groups,
-            material_bind_groups,
             vertex_buffer,
             triangle_indices,
             wire_indices,
             draws,
             opaque_order,
             blended_order,
-            targets: None,
             highlighted_batch: None,
+            targets: None,
         })
     }
 
@@ -471,7 +435,7 @@ impl GpuRenderer {
 
             let mut last_pipeline: Option<PipelineKey> = None;
             let mut last_texture: Option<usize> = None;
-            let mut last_material: Option<(usize, bool)> = None;
+            let mut last_material: Option<(u32, bool)> = None;
 
             for &index in self.opaque_order.iter().chain(&self.blended_order) {
                 let draw = &self.draws[index];
@@ -501,15 +465,14 @@ impl GpuRenderer {
                     last_texture = Some(draw.texture_idx);
                 }
                 let is_highlighted = self.highlighted_batch == Some(index);
-                if last_material != Some((draw.material_idx, is_highlighted)) {
-                    let mat = &self.material_bind_groups[draw.material_idx];
-                    let bg = if is_highlighted {
-                        &mat.highlighted
-                    } else {
-                        &mat.normal
+                let material_key = (draw.submesh.alpha_cutoff.to_bits(), is_highlighted);
+                if last_material != Some(material_key) {
+                    let immediate = MaterialImmediate {
+                        alpha_cutoff: draw.submesh.alpha_cutoff,
+                        highlight: if is_highlighted { 1.0 } else { 0.0 },
                     };
-                    pass.set_bind_group(2, bg, &[]);
-                    last_material = Some((draw.material_idx, is_highlighted));
+                    pass.set_immediates(0, bytemuck::bytes_of(&immediate));
+                    last_material = Some(material_key);
                 }
                 pass.draw_indexed(start..start + count, 0, 0..1);
             }
@@ -573,6 +536,36 @@ impl GpuRenderer {
 
         Ok((width, height, pixels))
     }
+}
+
+fn pipeline_cache_path() -> Option<PathBuf> {
+    let log_path = crate::app::settings::log_file();
+    Some(log_path.parent()?.join("geo_pipeline_cache.bin"))
+}
+
+fn load_pipeline_cache(device: &wgpu::Device) -> wgpu::PipelineCache {
+    let data = pipeline_cache_path().and_then(|path| fs::read(path).ok());
+    // SAFETY: `fallback: true` lets wgpu safely ignore stale or incompatible cache binaries.
+    unsafe {
+        device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+            label: Some("GeoPcDx pipeline cache"),
+            data: data.as_deref(),
+            fallback: true,
+        })
+    }
+}
+
+fn save_pipeline_cache(cache: &wgpu::PipelineCache) {
+    let Some(data) = cache.get_data() else {
+        return;
+    };
+    let Some(path) = pipeline_cache_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, data);
 }
 
 #[cfg(test)]

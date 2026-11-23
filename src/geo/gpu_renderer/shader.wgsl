@@ -5,12 +5,17 @@ struct Camera {
 struct Material {
     alpha_cutoff: f32,
     highlight: f32,
+    debug_mode: u32,
+    mirrored: u32,
 };
+
+// 0 = Opaque, 1 = Cutout, 2 = Blended
+override ALPHA_MODE: u32 = 0u;
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var albedo: texture_2d<f32>;
 @group(1) @binding(1) var albedo_sampler: sampler;
-@group(2) @binding(0) var<uniform> material: Material;
+var<immediate> material: Material;
 
 const UP_DIR: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
 // Pre-normalized light directions: (-0.45, 0.72, 0.52), (0.55, 0.2, -0.65), (0.35, 0.45, -0.82)
@@ -58,6 +63,7 @@ fn shade_sample(input: VertexOutput, color: vec4<f32>, face_normal: vec3<f32>) -
     let rim_t = 1.0 - max(dot(normal, RIM_DIR), 0.0);
     let rim = rim_t * rim_t * 0.10;
     let light = clamp(hemisphere + key + fill + rim, 0.25, 1.25);
+
     var lit = color.rgb * light;
     if material.highlight > 0.5 {
         lit = mix(lit, HIGHLIGHT_COLOR, 0.45) + HIGHLIGHT_COLOR * 0.12;
@@ -66,30 +72,20 @@ fn shade_sample(input: VertexOutput, color: vec4<f32>, face_normal: vec3<f32>) -
 }
 
 @fragment
-fn fs_opaque(input: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let sample = textureSample(albedo, albedo_sampler, input.uv);
-    let face_normal = cross(dpdy(input.world_position), dpdx(input.world_position));
-    let color = shade_sample(input, sample, face_normal);
-    return vec4<f32>(color.rgb, 1.0);
-}
+    let face_normal = cross(dpdyFine(input.world_position), dpdxFine(input.world_position));
 
-@fragment
-fn fs_cutout(input: VertexOutput) -> @location(0) vec4<f32> {
-    let sample = textureSample(albedo, albedo_sampler, input.uv);
-    let face_normal = cross(dpdy(input.world_position), dpdx(input.world_position));
-    if sample.a < material.alpha_cutoff {
+    if ALPHA_MODE == 1u && sample.a < material.alpha_cutoff {
         discard;
     }
-    let color = shade_sample(input, sample, face_normal);
-    return vec4<f32>(color.rgb, 1.0);
-}
-
-@fragment
-fn fs_blended(input: VertexOutput) -> @location(0) vec4<f32> {
-    let sample = textureSample(albedo, albedo_sampler, input.uv);
-    let face_normal = cross(dpdy(input.world_position), dpdx(input.world_position));
-    if sample.a < 0.02 {
+    if ALPHA_MODE == 2u && sample.a < 0.02 {
         discard;
     }
-    return shade_sample(input, sample, face_normal);
+
+    let color = shade_sample(input, sample, face_normal);
+    if ALPHA_MODE == 2u {
+        return color;
+    }
+    return vec4<f32>(color.rgb, 1.0);
 }
