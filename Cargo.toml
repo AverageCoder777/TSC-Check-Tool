@@ -34,3 +34,6 @@ slint-build = "1.19.0"
 #lto = true
 #codegen-units = 1
 #strip = true
+
+[lints.rust]
+unused_crate_dependencies = "warn"
