@@ -164,9 +164,13 @@ impl GpuRenderer {
 
         let adapter_features = adapter.features();
         let supports_pipeline_cache = adapter_features.contains(wgpu::Features::PIPELINE_CACHE);
+        let supports_bc = adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         let mut required_features = wgpu::Features::IMMEDIATES;
         if supports_pipeline_cache {
             required_features |= wgpu::Features::PIPELINE_CACHE;
+        }
+        if supports_bc {
+            required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
         }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -204,8 +208,13 @@ impl GpuRenderer {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let (texture_bind_group_layout, texture_bind_groups) =
-            create_texture_bind_groups(&device, &queue, textures, max_texture_dimension)?;
+        let (texture_bind_group_layout, texture_bind_groups) = create_texture_bind_groups(
+            &device,
+            &queue,
+            textures,
+            max_texture_dimension,
+            supports_bc,
+        )?;
         let max_texture_idx = texture_bind_groups.len().saturating_sub(1);
 
         let mut wire_lines = Vec::with_capacity(indices.len() * 2);

@@ -5,10 +5,10 @@ use std::sync::Arc;
 use glam::Vec3;
 use rayon::prelude::*;
 
-use super::Texture;
+use super::{Texture, TextureData};
 use crate::geo::GeoModel;
 use crate::geo::texture::resolve_texture_data;
-use crate::texture::decode_tgpcdx_to_rgba;
+use crate::texture::{DecodedTextureData, decode_tgpcdx_native};
 
 pub(super) struct LoadedModel {
     pub(super) model: GeoModel,
@@ -44,12 +44,28 @@ impl LoadedModel {
         let decoded: HashMap<PathBuf, (String, Result<Arc<Texture>, String>)> = unique_resolved
             .into_par_iter()
             .map(|(key, (resolved_path, bytes))| {
-                let result = decode_tgpcdx_to_rgba(&bytes).map(|(width, height, pixels)| {
-                    Arc::new(Texture {
-                        width,
-                        height,
-                        pixels,
-                    })
+                let result = decode_tgpcdx_native(&bytes).map(|decoded| {
+                    let texture = match decoded {
+                        DecodedTextureData::Rgba8 {
+                            width,
+                            height,
+                            pixels,
+                        } => Texture {
+                            width,
+                            height,
+                            data: TextureData::Rgba8(pixels),
+                        },
+                        DecodedTextureData::Compressed { format, mips } => {
+                            let (width, height) =
+                                mips.first().map(|m| (m.width, m.height)).unwrap_or((0, 0));
+                            Texture {
+                                width,
+                                height,
+                                data: TextureData::Compressed { format, mips },
+                            }
+                        }
+                    };
+                    Arc::new(texture)
                 });
                 (key, (resolved_path, result))
             })

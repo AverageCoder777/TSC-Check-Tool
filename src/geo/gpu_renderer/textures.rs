@@ -1,11 +1,15 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use super::super::viewer3d::{Texture, TextureData};
+use crate::texture::{CompressedFormat, TextureMip, decode_bc_to_rgba};
+
 pub(super) fn create_texture_bind_groups(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    textures: &[Arc<super::super::viewer3d::Texture>],
+    textures: &[Arc<Texture>],
     max_texture_dimension: u32,
+    supports_bc: bool,
 ) -> Result<(wgpu::BindGroupLayout, Vec<wgpu::BindGroup>), String> {
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("GeoPcDx texture bindings"),
@@ -41,7 +45,7 @@ pub(super) fn create_texture_bind_groups(
 
     let mut bind_groups = Vec::with_capacity(textures.len());
     for texture_data in textures {
-        let view = upload_texture(device, queue, texture_data, max_texture_dimension)?;
+        let view = upload_texture(device, queue, texture_data, max_texture_dimension, supports_bc)?;
         bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GeoPcDx texture bindings"),
             layout: &layout,
@@ -64,37 +68,133 @@ pub(super) fn create_texture_bind_groups(
 fn upload_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    texture_data: &super::super::viewer3d::Texture,
+    texture_data: &Texture,
+    max_texture_dimension: u32,
+    supports_bc: bool,
+) -> Result<wgpu::TextureView, String> {
+    match &texture_data.data {
+        TextureData::Rgba8(pixels) => upload_rgba_texture(
+            device,
+            queue,
+            texture_data.width,
+            texture_data.height,
+            pixels,
+            max_texture_dimension,
+        ),
+        TextureData::Compressed { format, mips } => {
+            if supports_bc
+                && let Some(start_idx) = mips.iter().position(|m| {
+                    m.width <= max_texture_dimension
+                        && m.height <= max_texture_dimension
+                        && m.width.is_multiple_of(4)
+                        && m.height.is_multiple_of(4)
+                })
+            {
+                return upload_compressed_texture(device, queue, *format, &mips[start_idx..]);
+            }
+
+            let base = mips.first().ok_or("compressed texture has no mip levels")?;
+            let rgba = decode_bc_to_rgba(*format, base.width, base.height, &base.data)?;
+            upload_rgba_texture(
+                device,
+                queue,
+                base.width,
+                base.height,
+                &rgba,
+                max_texture_dimension,
+            )
+        }
+    }
+}
+
+fn upload_compressed_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: CompressedFormat,
+    mips: &[TextureMip],
+) -> Result<wgpu::TextureView, String> {
+    let base = mips.first().ok_or("compressed texture has no mip levels")?;
+    let wgpu_format = match format {
+        CompressedFormat::Bc1 => wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+        CompressedFormat::Bc2 => wgpu::TextureFormat::Bc2RgbaUnormSrgb,
+        CompressedFormat::Bc3 => wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+    };
+    let block_bytes = format.block_bytes() as u32;
+    let mip_level_count = (mips.len() as u32).min(mip_level_count(base.width, base.height));
+
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("GeoPcDx albedo (BC)"),
+        size: wgpu::Extent3d {
+            width: base.width,
+            height: base.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu_format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    for (level, mip) in mips.iter().take(mip_level_count as usize).enumerate() {
+        let blocks_w = mip.width.div_ceil(4);
+        let blocks_h = mip.height.div_ceil(4);
+        let bytes_per_row = blocks_w * block_bytes;
+        let expected_bytes = (bytes_per_row as usize) * (blocks_h as usize);
+        let data = mip
+            .data
+            .get(..expected_bytes)
+            .ok_or("compressed mip data too small")?;
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(blocks_h),
+            },
+            wgpu::Extent3d {
+                width: blocks_w * 4,
+                height: blocks_h * 4,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    Ok(texture.create_view(&wgpu::TextureViewDescriptor::default()))
+}
+
+fn upload_rgba_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    src_width: u32,
+    src_height: u32,
+    src_pixels: &[u8],
     max_texture_dimension: u32,
 ) -> Result<wgpu::TextureView, String> {
-    let expected_bytes = (texture_data.width as usize)
-        .checked_mul(texture_data.height as usize)
+    let expected_bytes = (src_width as usize)
+        .checked_mul(src_height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or("texture dimensions overflow")?;
-    if texture_data.width == 0
-        || texture_data.height == 0
-        || expected_bytes != texture_data.pixels.len()
-    {
+    if src_width == 0 || src_height == 0 || expected_bytes != src_pixels.len() {
         return Err("invalid RGBA texture dimensions or data length".into());
     }
 
-    let (width, height, pixels) = if texture_data.width > max_texture_dimension
-        || texture_data.height > max_texture_dimension
-    {
-        let (sw, sh, scaled) = downscale_rgba(
-            texture_data.width,
-            texture_data.height,
-            &texture_data.pixels,
-            max_texture_dimension,
-        )?;
-        (sw, sh, Cow::Owned(scaled))
-    } else {
-        (
-            texture_data.width,
-            texture_data.height,
-            Cow::Borrowed(texture_data.pixels.as_slice()),
-        )
-    };
+    let (width, height, pixels) =
+        if src_width > max_texture_dimension || src_height > max_texture_dimension {
+            let (sw, sh, scaled) =
+                downscale_rgba(src_width, src_height, src_pixels, max_texture_dimension)?;
+            (sw, sh, Cow::Owned(scaled))
+        } else {
+            (src_width, src_height, Cow::Borrowed(src_pixels))
+        };
 
     let mip_levels = mip_level_count(width, height);
     let texture = device.create_texture(&wgpu::TextureDescriptor {

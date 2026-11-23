@@ -1,7 +1,9 @@
+use std::borrow::Cow;
+
 use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use super::model::LoadedModel;
-use super::{Camera, Texture};
+use super::{Camera, sample_rgba};
 use crate::geo::{GeoRenderMode, GeoVertex};
 
 const LIGHT_DIR: Vec3 = Vec3::new(-0.398_014_9, 0.696_526_05, 0.597_022_35);
@@ -57,16 +59,26 @@ pub(super) fn render_cpu(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<
                 .iter()
                 .filter(|s| s.visible && s.render_mode == GeoRenderMode::Blended),
         );
+    let decoded_textures: Vec<(u32, u32, Cow<'_, [u8]>)> = model
+        .textures
+        .iter()
+        .map(|tex| (tex.width, tex.height, tex.rgba_pixels()))
+        .collect();
+    let fallback_rgba = (
+        model.texture.width,
+        model.texture.height,
+        model.texture.rgba_pixels(),
+    );
 
     for submesh in ordered_submeshes {
         let start = (submesh.first_index as usize).min(total_indices);
         let end = start
             .saturating_add(submesh.index_count as usize)
             .min(total_indices);
-        let texture = model
-            .textures
+        let (tex_w, tex_h, tex_pixels) = decoded_textures
             .get(submesh.texture_index as usize)
-            .unwrap_or(&model.texture);
+            .map(|(w, h, p)| (*w, *h, p.as_ref()))
+            .unwrap_or((fallback_rgba.0, fallback_rgba.1, fallback_rgba.2.as_ref()));
         let alpha_cutoff = (submesh.alpha_cutoff.clamp(0.0, 1.0) * 255.0) as u8;
 
         for &[i0, i1, i2] in model.model.indices[start..end].as_chunks::<3>().0 {
@@ -106,7 +118,7 @@ pub(super) fn render_cpu(model: &LoadedModel, camera: Camera) -> (u32, u32, Vec<
                     width,
                     height,
                     [a, b, c],
-                    texture,
+                    (tex_w, tex_h, tex_pixels),
                     submesh.render_mode,
                     alpha_cutoff,
                 );
@@ -157,7 +169,7 @@ fn raster_triangle(
     width: u32,
     height: u32,
     vertices: [ProjectedVertex; 3],
-    texture: &Texture,
+    texture: (u32, u32, &[u8]),
     render_mode: GeoRenderMode,
     alpha_cutoff: u8,
 ) {
@@ -206,7 +218,7 @@ fn raster_triangle(
                 continue;
             }
             let uv = a.uv * w0 + b.uv * w1 + c.uv * w2;
-            let texel = texture.sample(uv.to_array());
+            let texel = sample_rgba(texture.0, texture.1, texture.2, uv.to_array());
             if (render_mode == GeoRenderMode::Cutout && texel[3] < alpha_cutoff)
                 || (render_mode == GeoRenderMode::Blended && texel[3] < 5)
             {

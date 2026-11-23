@@ -4,6 +4,7 @@ mod model;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
+use std::borrow::Cow;
 
 use glam::camera::rh::{proj::directx as proj, view};
 use glam::{Mat4, Vec3};
@@ -15,6 +16,7 @@ use crate::common::external_editor;
 use crate::geo::GeoModel;
 use crate::geo::gpu_renderer::GpuRenderer;
 use crate::{BatchEntry, GeoViewerWindow};
+use crate::texture::{CompressedFormat, TextureMip, decode_bc_to_rgba};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Camera {
@@ -84,10 +86,19 @@ impl Camera {
 }
 
 #[derive(Clone)]
+pub(crate) enum TextureData {
+    Rgba8(Vec<u8>),
+    Compressed {
+        format: CompressedFormat,
+        mips: Vec<TextureMip>,
+    },
+}
+
+#[derive(Clone)]
 pub(crate) struct Texture {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) pixels: Vec<u8>,
+    pub(crate) data: TextureData,
 }
 
 impl Texture {
@@ -95,33 +106,48 @@ impl Texture {
         Self {
             width: 2,
             height: 2,
-            pixels: vec![
+            data: TextureData::Rgba8(vec![
                 255, 0, 255, 255, 24, 24, 24, 255, 24, 24, 24, 255, 255, 0, 255, 255,
-            ],
+            ]),
         }
     }
 
-    pub(crate) fn sample(&self, uv: [f32; 2]) -> [u8; 4] {
-        if self.width == 0 || self.height == 0 {
-            return [255, 0, 255, 255];
+    pub(crate) fn rgba_pixels(&self) -> Cow<'_, [u8]> {
+        match &self.data {
+            TextureData::Rgba8(pixels) => Cow::Borrowed(pixels),
+            TextureData::Compressed { format, mips } => {
+                if let Some(base) = mips.first()
+                    && let Ok(rgba) =
+                        decode_bc_to_rgba(*format, base.width, base.height, &base.data)
+                {
+                    return Cow::Owned(rgba);
+                }
+                Cow::Owned(vec![255, 0, 255, 255])
+            }
         }
-        let u = if uv[0].is_finite() {
-            uv[0].rem_euclid(1.0)
-        } else {
-            0.0
-        };
-        let v = if uv[1].is_finite() {
-            uv[1].rem_euclid(1.0)
-        } else {
-            0.0
-        };
-        let x = ((u * self.width as f32).floor() as u32).min(self.width - 1);
-        let y = ((v * self.height as f32).floor() as u32).min(self.height - 1);
-        let offset = ((y * self.width + x) * 4) as usize;
-        match self.pixels.get(offset..offset + 4) {
-            Some(px) => [px[0], px[1], px[2], px[3]],
-            None => [255, 0, 255, 255],
-        }
+    }
+}
+
+pub(crate) fn sample_rgba(width: u32, height: u32, pixels: &[u8], uv: [f32; 2]) -> [u8; 4] {
+    if width == 0 || height == 0 {
+        return [255, 0, 255, 255];
+    }
+    let u = if uv[0].is_finite() {
+        uv[0].rem_euclid(1.0)
+    } else {
+        0.0
+    };
+    let v = if uv[1].is_finite() {
+        uv[1].rem_euclid(1.0)
+    } else {
+        0.0
+    };
+    let x = ((u * width as f32).floor() as u32).min(width - 1);
+    let y = ((v * height as f32).floor() as u32).min(height - 1);
+    let offset = ((y * width + x) * 4) as usize;
+    match pixels.get(offset..offset + 4) {
+        Some(px) => [px[0], px[1], px[2], px[3]],
+        None => [255, 0, 255, 255],
     }
 }
 
