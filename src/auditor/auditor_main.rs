@@ -2059,45 +2059,10 @@ pub fn audit_folders_with_progress(
     )
 }
 
-pub fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
-    let f = filter.trim().to_lowercase();
-    let target_kind = match f.as_str() {
-        "" | "all" | "все" => None,
-        _ if f.contains("геометр") || f.contains("geometry") => {
-            Some(AssetResourceKind::Geometry)
-        }
-        _ if f.contains("текстур") || f.contains("texture") => {
-            Some(AssetResourceKind::Texture)
-        }
-        _ if f.contains("анимац") || f.contains("animation") => {
-            Some(AssetResourceKind::Animation)
-        }
-        _ if f.contains("скрипт") || f.contains("script") => Some(AssetResourceKind::Script),
-        _ if f.contains("звук")
-            || f.contains("аудио")
-            || f.contains("sound")
-            || f.contains("audio") =>
-        {
-            Some(AssetResourceKind::Sound)
-        }
-        _ if f.contains("дочер") || f.contains("child") => {
-            Some(AssetResourceKind::ChildBlueprint)
-        }
-        _ if f.contains("неиспольз")
-            || f.contains("orphan")
-            || f.contains("unused")
-            || f.contains("dead")
-            || f.contains("мертв")
-            || f.contains("мёртв") =>
-        {
-            Some(AssetResourceKind::Unused)
-        }
-        _ => None,
-    };
-    let Some(target_kind) = target_kind else {
-        return;
-    };
-    items.retain(|b| b.kind == target_kind);
+pub fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: Option<AssetResourceKind>) {
+    if let Some(kind) = filter {
+        items.retain(|item| item.kind == kind);
+    }
 }
 
 fn cmp_path_ignore_ascii_case(a: &Path, b: &Path) -> Ordering {

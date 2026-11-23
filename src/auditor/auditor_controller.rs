@@ -185,8 +185,8 @@ impl AuditorController {
 
             let filter = handle
                 .upgrade()
-                .map(|w| w.get_current_filter().to_string())
-                .unwrap_or_else(|| "all".to_string());
+                .map(|w| filter_to_kind(w.get_current_filter()))
+                .unwrap_or(None);
 
             let generation_id = audit_generation.fetch_add(1, Ordering::SeqCst) + 1;
             let generation = audit_generation.clone();
@@ -274,7 +274,7 @@ impl AuditorController {
                     .unwrap_or((0, true));
 
                 let mut display_items = all_items.clone();
-                filter_items(&mut display_items, &filter);
+                filter_items(&mut display_items, filter);
                 sort_items(&mut display_items, col, asc);
 
                 if let Ok(mut s) = thread_state.lock() {
@@ -330,7 +330,7 @@ impl AuditorController {
                 let Ok(mut s) = state.lock() else { return };
 
                 let mut items = s.all_items.clone();
-                filter_items(&mut items, filter.as_str());
+                filter_items(&mut items, filter_to_kind(filter));
                 sort_items(&mut items, s.sort_col, s.sort_asc);
                 let rows_model = map_broken_resources_to_ui(&items);
                 s.display_items = items;
@@ -712,6 +712,19 @@ fn format_refs_preview(set: Option<&HashSet<PathBuf>>, empty: &str) -> String {
         format!("{} files: {}", s.len(), names.join(", "))
     } else {
         s.iter().map(display_name).collect::<Vec<_>>().join("; ")
+    }
+}
+
+fn filter_to_kind(filter: crate::AuditorFilter) -> Option<AssetResourceKind> {
+    match filter {
+        crate::AuditorFilter::All => None,
+        crate::AuditorFilter::Geometry => Some(AssetResourceKind::Geometry),
+        crate::AuditorFilter::Texture => Some(AssetResourceKind::Texture),
+        crate::AuditorFilter::Animation => Some(AssetResourceKind::Animation),
+        crate::AuditorFilter::Script => Some(AssetResourceKind::Script),
+        crate::AuditorFilter::Sound => Some(AssetResourceKind::Sound),
+        crate::AuditorFilter::ChildBlueprint => Some(AssetResourceKind::ChildBlueprint),
+        crate::AuditorFilter::Unused => Some(AssetResourceKind::Unused),
     }
 }
 

@@ -15,6 +15,17 @@ export { TextureViewerWindow } from "texture_viewer.slint";
 import { GeoViewerWindow } from "geo_viewer.slint";
 export { GeoViewerWindow } from "geo_viewer.slint";
 
+export enum AuditorFilter {
+    all,
+    geometry,
+    texture,
+    animation,
+    script,
+    sound,
+    child-blueprint,
+    unused,
+}
+
 export struct RouteItem {
     name: string,
     icon-source: image,
@@ -50,6 +61,7 @@ export component MainWindow inherits Window {
     title: "TSC Check Tool";
     min-width: 1350px;
     min-height: 1000px;
+    default-font-family: "Segoe UI Symbol";
 
     in property <[RouteItem]> route-items: [];
     in-out property <bool> route-thumbnails-enabled: true;
@@ -2144,8 +2156,10 @@ export component FolderAuditorWindow inherits Window {
     min-width: 900px;
     min-height: 620px;
 
+    property <bool> show-type-column: root.current-filter == AuditorFilter.all;
+
     in-out property <string> folder-path: "";
-    in-out property <string> current-filter: "all";
+    in-out property <AuditorFilter> current-filter: AuditorFilter.all;
     in-out property <int> selected-row-index: -1;
 
     in-out property <bool> is-selected-texture: false;
@@ -2174,7 +2188,7 @@ export component FolderAuditorWindow inherits Window {
 
     callback pick-folder();
     callback start-audit(string);
-    callback filter-changed(string);
+    callback filter-changed(AuditorFilter);
     callback row-selected(int);
     callback open-source-file(int);
     callback open-missing-target-folder(int);
@@ -2246,77 +2260,77 @@ export component FolderAuditorWindow inherits Window {
                 FilterTabButton {
                     text: @tr("All");
                     count: root.count-all;
-                    active: root.current-filter == "all";
+                    active: root.current-filter == AuditorFilter.all;
                     clicked => {
                         root.selected-row-index = -1;
-                        root.current-filter = "all";
-                        root.filter-changed("all");
+                        root.current-filter = AuditorFilter.all;
+                        root.filter-changed(AuditorFilter.all);
                     }
                 }
 
                 if root.count-geometry > 0: FilterTabButton {
                     text: @tr("Geometry");
                     count: root.count-geometry;
-                    active: root.current-filter == "geometry";
+                    active: root.current-filter == AuditorFilter.geometry;
                     clicked => {
                         root.selected-row-index = -1;
-                        root.current-filter = "geometry";
-                        root.filter-changed("geometry");
+                        root.current-filter = AuditorFilter.geometry;
+                        root.filter-changed(AuditorFilter.geometry);
                     }
                 }
 
                 if root.count-textures > 0: FilterTabButton {
                     text: @tr("Textures");
                     count: root.count-textures;
-                    active: root.current-filter == "texture";
+                    active: root.current-filter == AuditorFilter.texture;
                     clicked => {
                         root.selected-row-index = -1;
-                        root.current-filter = "texture";
-                        root.filter-changed("texture");
+                        root.current-filter = AuditorFilter.texture;
+                        root.filter-changed(AuditorFilter.texture);
                     }
                 }
 
                 if root.count-scripts > 0: FilterTabButton {
                     text: @tr("Scripts");
                     count: root.count-scripts;
-                    active: root.current-filter == "script";
+                    active: root.current-filter == AuditorFilter.script;
                     clicked => {
                         root.selected-row-index = -1;
-                        root.current-filter = "script";
-                        root.filter-changed("script");
+                        root.current-filter = AuditorFilter.script;
+                        root.filter-changed(AuditorFilter.script);
                     }
                 }
 
                 if root.count-sounds > 0: FilterTabButton {
                     text: @tr("Sounds");
                     count: root.count-sounds;
-                    active: root.current-filter == "sound";
+                    active: root.current-filter == AuditorFilter.sound;
                     clicked => {
                         root.selected-row-index = -1;
-                        root.current-filter = "sound";
-                        root.filter-changed("sound");
+                        root.current-filter = AuditorFilter.sound;
+                        root.filter-changed(AuditorFilter.sound);
                     }
                 }
 
                 if root.count-children > 0: FilterTabButton {
                     text: @tr("Child objects");
                     count: root.count-children;
-                    active: root.current-filter == "child";
+                    active: root.current-filter == AuditorFilter.child-blueprint;
                     clicked => {
                         root.selected-row-index = -1;
-                        root.current-filter = "child";
-                        root.filter-changed("child");
+                        root.current-filter = AuditorFilter.child-blueprint;
+                        root.filter-changed(AuditorFilter.child-blueprint);
                     }
                 }
 
                 if root.count-dead > 0: FilterTabButton {
                     text: @tr("Unused");
                     count: root.count-dead;
-                    active: root.current-filter == "orphans";
+                    active: root.current-filter == AuditorFilter.unused;
                     clicked => {
                         root.selected-row-index = -1;
-                        root.current-filter = "orphans";
-                        root.filter-changed("orphans");
+                        root.current-filter = AuditorFilter.unused;
+                        root.filter-changed(AuditorFilter.unused);
                     }
                 }
             }
@@ -2347,26 +2361,28 @@ export component FolderAuditorWindow inherits Window {
             padding-left: 10px;
             padding-right: 10px;
 
-            Text {
-                text: sort-col == 0 ? (sort-ascending ? @tr("Type ↑") : @tr("Type ↓")) : @tr("Type");
-                width: root.col-kind-width;
-                horizontal-alignment: left;
-                vertical-alignment: center;
-                color: #9ca3af;
-                font-size: 12px;
+            if root.show-type-column: HorizontalLayout {
+                Text {
+                    text: sort-col == 0 ? (sort-ascending ? @tr("Type ↑") : @tr("Type ↓")) : @tr("Type");
+                    width: root.col-kind-width;
+                    horizontal-alignment: left;
+                    vertical-alignment: center;
+                    color: #9ca3af;
+                    font-size: 12px;
 
-                TouchArea {
-                    clicked => { root.sort-column(0); }
+                    TouchArea {
+                        clicked => { root.sort-column(0); }
+                    }
+                }
+
+                ColumnSplitter {
+                    moved(delta) => {
+                        root.col-kind-width = max(80px, root.col-kind-width + delta);
+                    }
                 }
             }
 
-            ColumnSplitter {
-                moved(delta) => {
-                    root.col-kind-width = max(80px, root.col-kind-width + delta);
-                }
-            }
-
-            if root.current-filter != "orphans": HorizontalLayout {
+            if root.current-filter != AuditorFilter.unused: HorizontalLayout {
                 Text {
                     text: sort-col == 1 ? (sort-ascending ? @tr("Missing file ↑") : @tr("Missing file ↓")) : @tr("Missing file");
                     width: root.col-missing-width;
@@ -2388,7 +2404,7 @@ export component FolderAuditorWindow inherits Window {
             }
 
             Text {
-                text: root.current-filter == "orphans" ? (sort-col == 2 ? (sort-ascending ? @tr("Unused file ↑") : @tr("Unused file ↓")) : @tr("Unused file")) : (sort-col == 2 ? (sort-ascending ? @tr("Source file ↑") : @tr("Source file ↓")) : @tr("Source file"));
+                text: root.current-filter == AuditorFilter.unused ? (sort-col == 2 ? (sort-ascending ? @tr("Unused file ↑") : @tr("Unused file ↓")) : @tr("Unused file")) : (sort-col == 2 ? (sort-ascending ? @tr("Source file ↑") : @tr("Source file ↓")) : @tr("Source file"));
                 horizontal-alignment: left;
                 vertical-alignment: center;
                 horizontal-stretch: 1;
@@ -2428,20 +2444,22 @@ export component FolderAuditorWindow inherits Window {
                         padding-left: 10px;
                         padding-right: 10px;
 
-                        Text {
-                            text: item.kind_str;
-                            width: root.col-kind-width;
-                            horizontal-alignment: left;
-                            vertical-alignment: center;
-                            color: item.is_dead ? #eab308 : #ef4444;
-                            overflow: elide;
+                        if root.show-type-column: HorizontalLayout {
+                            Text {
+                                text: item.kind_str;
+                                width: root.col-kind-width;
+                                horizontal-alignment: left;
+                                vertical-alignment: center;
+                                color: item.is_dead ? #eab308 : #ef4444;
+                                overflow: elide;
+                            }
+
+                            Rectangle {
+                                width: 8px;
+                            }
                         }
 
-                        Rectangle {
-                            width: 8px;
-                        }
-
-                        if root.current-filter != "orphans": HorizontalLayout {
+                        if root.current-filter != AuditorFilter.unused: HorizontalLayout {
                             Text {
                                 text: item.expected_path;
                                 width: root.col-missing-width;
