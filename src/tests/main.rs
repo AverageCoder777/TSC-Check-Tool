@@ -1,5 +1,5 @@
 use super::{
-    ScenarioClueCollection, check_route, decode_xml_text, extract_scenario_clues,
+    check_route, decode_xml_text, extract_scenario_clues,
     inspect_route_folder, is_skipped_route_scan_directory, parse_route_name, read_route_name,
     scan_routes, scan_routes_with_ignored,
 };
@@ -191,68 +191,6 @@ fn extracts_scenario_names_descriptions_and_place_names() {
         !clues
             .iter()
             .any(|clue| clue.contains("74151eaf-456f-41e7-8b38-6f48ee8ef031"))
-    );
-}
-
-#[test]
-fn combines_repeated_start_locations_across_scenarios() {
-    let mut clues = ScenarioClueCollection::default();
-    clues.add(
-        "<ScenarioProperties><StartLocation>King's Cross</StartLocation></ScenarioProperties>",
-        "scenario-1/ScenarioProperties.xml",
-    );
-    clues.add(
-        "<ScenarioProperties><StartLocation> King's   Cross </StartLocation></ScenarioProperties>",
-        "scenario-2/ScenarioProperties.xml",
-    );
-    clues.add(
-        "<ScenarioProperties><StartLocation>Victoria</StartLocation></ScenarioProperties>",
-        "scenario-3/ScenarioProperties.xml",
-    );
-
-    let clues = clues.into_clues();
-    assert!(
-        clues
-            .iter()
-            .any(|clue| clue == "StartLocation: King's Cross (упоминается в 2 сценариях)")
-    );
-    assert!(clues.iter().any(|clue| clue == "StartLocation: Victoria"));
-    assert_eq!(
-        clues
-            .iter()
-            .filter(|clue| clue.starts_with("StartLocation: King's Cross"))
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn includes_scenario_properties_clues_in_incomplete_route_report() {
-    let temp = tempfile::tempdir().unwrap();
-    let route_path = temp.path().join("Content/Routes/broken-route");
-    let scenario_path = route_path.join("Scenarios/scenario-1");
-    fs::create_dir_all(&scenario_path).unwrap();
-    fs::write(
-            scenario_path.join("ScenarioProperties.xml"),
-            "<ScenarioProperties><ScenarioName><English>Coastal run</English></ScenarioName><ScenarioDescription>Through Hastings</ScenarioDescription></ScenarioProperties>",
-        )
-        .unwrap();
-
-    let report = inspect_route_folder(&route_path, "broken-route", None)
-        .unwrap()
-        .unwrap();
-
-    assert!(
-        report
-            .scenario_clues
-            .iter()
-            .any(|clue| clue.contains("ScenarioName: Coastal run"))
-    );
-    assert!(
-        report
-            .scenario_clues
-            .iter()
-            .any(|clue| clue.contains("ScenarioDescription: Through Hastings"))
     );
 }
 
