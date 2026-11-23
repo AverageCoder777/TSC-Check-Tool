@@ -170,17 +170,9 @@ pub(crate) fn find_submeshes(
             ids,
         );
         let topology = find_primitive_topology(node, ids);
-        // RailWorks stores `NumPrimitives` as a raw index count on primitive-set descriptors,
-        // but as a primitive count on legacy list nodes.
-        let primitives_to_indices = |value: u64| {
-            if is_primitive_set {
-                Some(value)
-            } else {
-                match topology {
-                    PrimitiveTopology::TriangleList => value.checked_mul(3),
-                    PrimitiveTopology::TriangleStrip => value.checked_add(2),
-                }
-            }
+        let primitives_to_indices = |value: u64| match topology {
+            PrimitiveTopology::TriangleList => value.checked_mul(3),
+            PrimitiveTopology::TriangleStrip => value.checked_add(2),
         };
         let count = match (
             find_number(children, &["indexcount", "numindices"], ids),
