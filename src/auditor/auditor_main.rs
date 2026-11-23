@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use rayon::prelude::*;
 use regex::Regex;
@@ -72,6 +72,70 @@ pub struct FullAssetGraph {
     pub forward_edges: HashMap<PathBuf, HashSet<PathBuf>>,
     pub missing_files: HashSet<PathBuf>,
     pub dead_files: HashSet<PathBuf>,
+}
+
+/// Потокобезопасный кэш содержимого директорий и папок провайдеров.
+/// Исключает повторные `fs::read_dir` и `stat` при проверке сотен кандидатов.
+struct DirCache {
+    dirs: RwLock<HashMap<PathBuf, Arc<HashSet<String>>>>,
+    providers: HashSet<String>,
+}
+
+impl DirCache {
+    fn new(assets_root: &Path) -> Self {
+        let mut providers = HashSet::new();
+        if let Ok(entries) = fs::read_dir(assets_root) {
+            for entry in entries.flatten() {
+                if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    providers.insert(entry.file_name().to_string_lossy().to_ascii_lowercase());
+                }
+            }
+        }
+        Self {
+            dirs: RwLock::new(HashMap::new()),
+            providers,
+        }
+    }
+
+    #[inline]
+    fn has_provider(&self, name: &str) -> bool {
+        !name.is_empty()
+            && !name.starts_with('.')
+            && self.providers.contains(&name.to_ascii_lowercase())
+    }
+
+    fn dir_entries(&self, dir: &Path) -> Arc<HashSet<String>> {
+        if let Ok(guard) = self.dirs.read()
+            && let Some(set) = guard.get(dir)
+        {
+            return Arc::clone(set);
+        }
+
+        let mut files = HashSet::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().is_ok_and(|t| t.is_file()) {
+                    let name = entry.file_name();
+                    let stripped = strip_shader_prefix(&name.to_string_lossy());
+                    files.insert(stripped.to_ascii_lowercase());
+                }
+            }
+        }
+
+        let arc = Arc::new(files);
+        if let Ok(mut guard) = self.dirs.write() {
+            guard.entry(dir.to_path_buf()).or_insert_with(|| Arc::clone(&arc));
+        }
+        arc
+    }
+
+    fn loose_path_exists(&self, path: &Path) -> bool {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return false;
+        };
+        let target = strip_shader_prefix(&name.to_string_lossy()).to_ascii_lowercase();
+        self.dir_entries(parent).contains(&target)
+    }
 }
 
 macro_rules! static_tag_regex {
@@ -152,6 +216,13 @@ fn path_lower_key(path: &Path) -> PathBuf {
 #[inline]
 fn push_unique_path(list: &mut Vec<PathBuf>, path: PathBuf) {
     if !list.contains(&path) {
+        list.push(path);
+    }
+}
+
+#[inline]
+fn insert_unique_path(list: &mut Vec<PathBuf>, set: &mut HashSet<PathBuf>, path: PathBuf) {
+    if set.insert(path.clone()) {
         list.push(path);
     }
 }
@@ -319,11 +390,11 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
         }
     }
 
-    // Анимации и звуки
+    // Анимации и звуки (только листовые теги без вложенных `<` — исключает бэктрекинг)
     {
-        static TAG_RE: OnceLock<Regex> = OnceLock::new();
-        let re = TAG_RE.get_or_init(|| {
-            Regex::new(r"(?is)<([A-Za-z0-9_]+)[^>]*>(.*?)</([A-Za-z0-9_]+)>").unwrap()
+        static LEAF_TAG_RE: OnceLock<Regex> = OnceLock::new();
+        let re = LEAF_TAG_RE.get_or_init(|| {
+            Regex::new(r"<([A-Za-z0-9_]+)[^>]*>([^<]+)</([A-Za-z0-9_]+)>").unwrap()
         });
         for cap in re.captures_iter(xml) {
             let tag = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -341,9 +412,6 @@ pub fn extract_bin_references(xml: &str, product_root: &Path) -> Vec<(AssetResou
                 continue;
             }
             let inner = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-            if inner.contains('<') {
-                continue;
-            }
             let clean = clean_xml_first_line(inner);
             if clean.is_empty() || is_numeric_token(&clean) {
                 continue;
@@ -537,26 +605,35 @@ fn material_has_valid_texture(inner: &str) -> bool {
     false
 }
 
-fn filter_material_blocks(xml: &str) -> String {
-    let mut result = xml.to_string();
-    for re in [re_hc_material(), re_dx_material()] {
-        result = re
-            .replace_all(&result, |caps: &regex::Captures| {
-                let full = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-                let inner = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-                let shader = tag_text_cached(inner, re_shader_name()).unwrap_or_default();
-                if shader.eq_ignore_ascii_case("Invisible") {
-                    return String::new();
-                }
-                let visible = tag_text_cached(inner, re_visible()).unwrap_or_default();
-                let visible_false =
-                    visible.eq_ignore_ascii_case("0") || visible.eq_ignore_ascii_case("false");
-                if visible_false && !material_has_valid_texture(inner) {
-                    return String::new();
-                }
-                full.to_string()
-            })
-            .into_owned();
+fn filter_material_blocks(xml: &str) -> Cow<'_, str> {
+    let has_hc = contains_ignore_ascii_case(xml, "cHcExplicitStateMaterial");
+    let has_dx = contains_ignore_ascii_case(xml, "cEffectMaterialDx");
+    if !has_hc && !has_dx {
+        return Cow::Borrowed(xml);
+    }
+
+    let filter_one = |caps: &regex::Captures| -> String {
+        let full = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+        let inner = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let shader = tag_text_cached(inner, re_shader_name()).unwrap_or_default();
+        if shader.eq_ignore_ascii_case("Invisible") {
+            return String::new();
+        }
+        let visible = tag_text_cached(inner, re_visible()).unwrap_or_default();
+        let visible_false =
+            visible.eq_ignore_ascii_case("0") || visible.eq_ignore_ascii_case("false");
+        if visible_false && !material_has_valid_texture(inner) {
+            return String::new();
+        }
+        full.to_string()
+    };
+
+    let mut result = Cow::Borrowed(xml);
+    if has_hc {
+        result = Cow::Owned(re_hc_material().replace_all(&result, filter_one).into_owned());
+    }
+    if has_dx {
+        result = Cow::Owned(re_dx_material().replace_all(&result, filter_one).into_owned());
     }
     result
 }
@@ -767,7 +844,22 @@ fn candidate_relatives(raw: &str, kind: AssetResourceKind) -> Vec<String> {
     out
 }
 
-fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) -> bool {
+fn is_provider_under_assets(first: &str, assets_root: &Path, dir_cache: Option<&DirCache>) -> bool {
+    if first.is_empty() || first.starts_with('.') {
+        return false;
+    }
+    match dir_cache {
+        Some(cache) => cache.has_provider(first),
+        None => assets_root.join(first).is_dir(),
+    }
+}
+
+fn is_global_asset_ref(
+    norm: &str,
+    kind: AssetResourceKind,
+    assets_root: &Path,
+    dir_cache: Option<&DirCache>,
+) -> bool {
     if kind == AssetResourceKind::Texture {
         return false;
     }
@@ -803,7 +895,8 @@ fn is_global_asset_ref(norm: &str, kind: AssetResourceKind, assets_root: &Path) 
         "ted",
         "kal000px",
     ];
-    KNOWN_PROVIDERS.iter().any(|k| p1.eq_ignore_ascii_case(k)) || assets_root.join(p1).is_dir()
+    KNOWN_PROVIDERS.iter().any(|k| p1.eq_ignore_ascii_case(k))
+        || is_provider_under_assets(p1, assets_root, dir_cache)
 }
 
 fn normalize_asset_ref(raw: &str) -> String {
@@ -820,6 +913,7 @@ fn candidate_paths(
     product_root: &Path,
     assets_root: &Path,
     kind: AssetResourceKind,
+    dir_cache: Option<&DirCache>,
 ) -> Vec<PathBuf> {
     let norm = normalize_asset_ref(raw);
     let rels = candidate_relatives(&norm, kind);
@@ -827,8 +921,7 @@ fn candidate_paths(
 
     for rel in &rels {
         let first = rel.split(['\\', '/']).find(|s| !s.is_empty()).unwrap_or("");
-        let provider_under_assets =
-            !first.is_empty() && !first.starts_with('.') && assets_root.join(first).is_dir();
+        let provider_under_assets = is_provider_under_assets(first, assets_root, dir_cache);
 
         if kind == AssetResourceKind::Texture {
             if provider_under_assets {
@@ -868,7 +961,9 @@ fn candidate_paths(
                 cands.push(normalize_path(&product_root.join(rel)));
             } else if provider_under_assets {
                 cands.push(normalize_path(&assets_root.join(rel)));
-            } else if local_subfolder || !assets_root.join(rel).exists() {
+            } else if local_subfolder
+                || !loose_path_exists_cached(&assets_root.join(rel), dir_cache)
+            {
                 cands.push(normalize_path(&parent.join(rel)));
                 cands.push(normalize_path(&product_root.join(rel)));
                 cands.push(normalize_path(&assets_root.join(rel)));
@@ -907,6 +1002,14 @@ fn loose_path_exists(path: &Path) -> bool {
     false
 }
 
+#[inline]
+fn loose_path_exists_cached(path: &Path, dir_cache: Option<&DirCache>) -> bool {
+    match dir_cache {
+        Some(cache) => cache.loose_path_exists(path),
+        None => loose_path_exists(path),
+    }
+}
+
 fn ap_exists(
     raw: &str,
     parent: &Path,
@@ -914,14 +1017,15 @@ fn ap_exists(
     assets_root: &Path,
     ap_cache: &ApArchiveCache,
     kind: AssetResourceKind,
+    dir_cache: Option<&DirCache>,
 ) -> bool {
     let norm = normalize_asset_ref(raw);
     let first = norm
         .split(['\\', '/'])
         .find(|s| !s.is_empty())
         .unwrap_or("");
-    let is_global = is_global_asset_ref(&norm, kind, assets_root)
-        || (!first.is_empty() && !first.starts_with('.') && assets_root.join(first).is_dir());
+    let is_global = is_global_asset_ref(&norm, kind, assets_root, dir_cache)
+        || is_provider_under_assets(first, assets_root, dir_cache);
 
     for rel in candidate_relatives(&norm, kind) {
         if is_global {
@@ -950,7 +1054,11 @@ fn ap_exists(
     false
 }
 
-fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
+fn register_texture_siblings_with(
+    target: &Path,
+    dir_cache: Option<&DirCache>,
+    mut add_path: impl FnMut(PathBuf),
+) {
     let (Some(dir), Some(stem_os)) = (target.parent(), target.file_stem()) else {
         return;
     };
@@ -966,21 +1074,21 @@ fn register_texture_siblings(target: &Path, outgoing: &mut Vec<PathBuf>) {
     };
     for suf in SEASON_SUFFIXES {
         let seasonal = dir.join(format!("{base}{suf}.TgPcDx"));
-        if loose_path_exists(&seasonal) {
-            push_unique_path(outgoing, normalize_path(&seasonal));
+        if loose_path_exists_cached(&seasonal, dir_cache) {
+            add_path(normalize_path(&seasonal));
         }
     }
     if ends_with_ignore_ascii_case(&stem, "_nm") {
         let base_nm = &stem[..stem.len().saturating_sub(3)];
         let nmc = dir.join(format!("{base_nm}_nmc.TgPcDx"));
-        if loose_path_exists(&nmc) {
-            push_unique_path(outgoing, normalize_path(&nmc));
+        if loose_path_exists_cached(&nmc, dir_cache) {
+            add_path(normalize_path(&nmc));
         }
     } else if ends_with_ignore_ascii_case(&stem, "_nmc") {
         let base_nmc = &stem[..stem.len().saturating_sub(4)];
         let nm = dir.join(format!("{base_nmc}_nm.TgPcDx"));
-        if loose_path_exists(&nm) {
-            push_unique_path(outgoing, normalize_path(&nm));
+        if loose_path_exists_cached(&nm, dir_cache) {
+            add_path(normalize_path(&nm));
         }
     }
 }
@@ -997,10 +1105,20 @@ fn find_assets_root(start_path: &Path) -> Option<PathBuf> {
 }
 
 pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut Vec<PathBuf>) {
+    extract_raw_bin_references_cached(bytes, bin_path, outgoing, None);
+}
+
+fn extract_raw_bin_references_cached(
+    bytes: &[u8],
+    bin_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+    dir_cache: Option<&DirCache>,
+) {
+    let mut outgoing_set: HashSet<PathBuf> = outgoing.iter().cloned().collect();
     for ext in ["GeoPcDx", "XSec"] {
         let paired = bin_path.with_extension(ext);
-        if loose_path_exists(&paired) {
-            push_unique_path(outgoing, normalize_path(&paired));
+        if loose_path_exists_cached(&paired, dir_cache) {
+            insert_unique_path(outgoing, &mut outgoing_set, normalize_path(&paired));
         }
     }
     let assets_root = find_assets_root(bin_path);
@@ -1026,21 +1144,25 @@ pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut 
         let is_tgpcdx = ends_with_ignore_ascii_case(&clean, ".tgpcdx");
         if let Some(root) = &assets_root {
             let candidate = root.join(clean.as_ref());
-            if loose_path_exists(&candidate) {
+            if loose_path_exists_cached(&candidate, dir_cache) {
                 if is_tgpcdx {
-                    register_texture_siblings(&candidate, outgoing);
+                    register_texture_siblings_with(&candidate, dir_cache, |p| {
+                        insert_unique_path(outgoing, &mut outgoing_set, p);
+                    });
                 }
-                push_unique_path(outgoing, normalize_path(&candidate));
+                insert_unique_path(outgoing, &mut outgoing_set, normalize_path(&candidate));
                 return;
             }
         }
         if let Some(dir) = parent_dir {
             let candidate = dir.join(clean.as_ref());
-            if loose_path_exists(&candidate) {
+            if loose_path_exists_cached(&candidate, dir_cache) {
                 if is_tgpcdx {
-                    register_texture_siblings(&candidate, outgoing);
+                    register_texture_siblings_with(&candidate, dir_cache, |p| {
+                        insert_unique_path(outgoing, &mut outgoing_set, p);
+                    });
                 }
-                push_unique_path(outgoing, normalize_path(&candidate));
+                insert_unique_path(outgoing, &mut outgoing_set, normalize_path(&candidate));
             }
         }
     };
@@ -1077,6 +1199,32 @@ pub fn extract_xml_texture_id_refs(
     seen: &mut HashMap<(AssetResourceKind, PathBuf, PathBuf), usize>,
     parent_file: &Path,
     ap_cache: &ApArchiveCache,
+) {
+    let mut outgoing_set: HashSet<PathBuf> = outgoing.iter().cloned().collect();
+    extract_xml_texture_id_refs_cached(
+        xml,
+        current_file_path,
+        outgoing,
+        &mut outgoing_set,
+        broken,
+        seen,
+        parent_file,
+        ap_cache,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn extract_xml_texture_id_refs_cached(
+    xml: &str,
+    current_file_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+    outgoing_set: &mut HashSet<PathBuf>,
+    broken: &mut Vec<BrokenResourceRef>,
+    seen: &mut HashMap<(AssetResourceKind, PathBuf, PathBuf), usize>,
+    parent_file: &Path,
+    ap_cache: &ApArchiveCache,
+    dir_cache: Option<&DirCache>,
 ) {
     let assets_root = find_assets_root(current_file_path);
     let parent_dir = current_file_path.parent();
@@ -1131,9 +1279,14 @@ pub fn extract_xml_texture_id_refs(
             .map(|r| r.join(&file_rel))
             .unwrap_or_else(|| PathBuf::from(&file_rel));
 
-        if let Some(candidate) = candidates.iter().find(|c| loose_path_exists(c)) {
-            register_texture_siblings(candidate, outgoing);
-            push_unique_path(outgoing, normalize_path(candidate));
+        if let Some(candidate) = candidates
+            .iter()
+            .find(|c| loose_path_exists_cached(c, dir_cache))
+        {
+            register_texture_siblings_with(candidate, dir_cache, |p| {
+                insert_unique_path(outgoing, outgoing_set, p);
+            });
+            insert_unique_path(outgoing, outgoing_set, normalize_path(candidate));
         } else if !ap_exists(
             &file_rel,
             parent_dir.unwrap_or(Path::new("")),
@@ -1141,6 +1294,7 @@ pub fn extract_xml_texture_id_refs(
             assets_root.as_deref().unwrap_or(Path::new("")),
             ap_cache,
             AssetResourceKind::Texture,
+            dir_cache,
         ) {
             record_broken_ref(
                 AssetResourceKind::Texture,
@@ -1157,6 +1311,23 @@ pub fn extract_xml_cross_section_refs(
     xml: &str,
     current_file_path: &Path,
     outgoing: &mut Vec<PathBuf>,
+) {
+    let mut outgoing_set: HashSet<PathBuf> = outgoing.iter().cloned().collect();
+    extract_xml_cross_section_refs_cached(
+        xml,
+        current_file_path,
+        outgoing,
+        &mut outgoing_set,
+        None,
+    );
+}
+
+fn extract_xml_cross_section_refs_cached(
+    xml: &str,
+    current_file_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+    outgoing_set: &mut HashSet<PathBuf>,
+    dir_cache: Option<&DirCache>,
 ) {
     let assets_root = find_assets_root(current_file_path);
     let parent_dir = current_file_path.parent();
@@ -1190,12 +1361,8 @@ pub fn extract_xml_cross_section_refs(
         };
 
         let mut check_and_add = |candidate: PathBuf| {
-            if loose_path_exists(&candidate) {
-                let norm = normalize_path(&candidate);
-                if !outgoing.contains(&norm) {
-                    register_texture_siblings(&candidate, outgoing);
-                    outgoing.push(norm);
-                }
+            if loose_path_exists_cached(&candidate, dir_cache) {
+                insert_unique_path(outgoing, outgoing_set, normalize_path(&candidate));
             }
         };
 
@@ -1214,6 +1381,23 @@ pub fn extract_absolute_blueprint_refs(
     xml: &str,
     current_file_path: &Path,
     outgoing: &mut Vec<PathBuf>,
+) {
+    let mut outgoing_set: HashSet<PathBuf> = outgoing.iter().cloned().collect();
+    extract_absolute_blueprint_refs_cached(
+        xml,
+        current_file_path,
+        outgoing,
+        &mut outgoing_set,
+        None,
+    );
+}
+
+fn extract_absolute_blueprint_refs_cached(
+    xml: &str,
+    current_file_path: &Path,
+    outgoing: &mut Vec<PathBuf>,
+    outgoing_set: &mut HashSet<PathBuf>,
+    dir_cache: Option<&DirCache>,
 ) {
     let assets_root = find_assets_root(current_file_path);
 
@@ -1255,23 +1439,11 @@ pub fn extract_absolute_blueprint_refs(
 
         let Some(target_dir) = base_dir else { continue };
 
-        let bin_candidate = target_dir.join(format!("{base_rel}.bin"));
-        if loose_path_exists(&bin_candidate) {
-            push_unique_path(outgoing, normalize_path(&bin_candidate));
-        }
-
-        let geo_candidate = target_dir.join(format!("{base_rel}.GeoPcDx"));
-        if loose_path_exists(&geo_candidate) {
-            let norm = normalize_path(&geo_candidate);
-            if !outgoing.contains(&norm) {
-                register_texture_siblings(&geo_candidate, outgoing);
-                outgoing.push(norm);
+        for ext in ["bin", "GeoPcDx", "XSec"] {
+            let candidate = target_dir.join(format!("{base_rel}.{ext}"));
+            if loose_path_exists_cached(&candidate, dir_cache) {
+                insert_unique_path(outgoing, outgoing_set, normalize_path(&candidate));
             }
-        }
-
-        let xsec_candidate = target_dir.join(format!("{base_rel}.XSec"));
-        if loose_path_exists(&xsec_candidate) {
-            push_unique_path(outgoing, normalize_path(&xsec_candidate));
         }
     }
 }
@@ -1397,27 +1569,46 @@ fn resolve_and_record_ref(
     default_base: &Path,
     parent_file: &Path,
     ap_cache: &ApArchiveCache,
+    dir_cache: &DirCache,
     outgoing: &mut Vec<PathBuf>,
+    outgoing_set: &mut HashSet<PathBuf>,
     broken: &mut Vec<BrokenResourceRef>,
     seen: &mut HashMap<(AssetResourceKind, PathBuf, PathBuf), usize>,
 ) {
-    let cands = candidate_paths(raw, parent, product_root, assets_root, kind);
+    let cands = candidate_paths(
+        raw,
+        parent,
+        product_root,
+        assets_root,
+        kind,
+        Some(dir_cache),
+    );
     let expected = cands
         .first()
         .cloned()
         .unwrap_or_else(|| default_base.join(raw));
 
-    let matched_loose = cands.iter().find(|p| loose_path_exists(p));
+    let matched_loose = cands.iter().find(|p| dir_cache.loose_path_exists(p));
     let exists = matched_loose.is_some()
-        || ap_exists(raw, parent, product_root, assets_root, ap_cache, kind);
+        || ap_exists(
+            raw,
+            parent,
+            product_root,
+            assets_root,
+            ap_cache,
+            kind,
+            Some(dir_cache),
+        );
 
     let resolved = matched_loose.unwrap_or(&expected);
-    push_unique_path(outgoing, normalize_path(resolved));
+    insert_unique_path(outgoing, outgoing_set, normalize_path(resolved));
 
     if kind == AssetResourceKind::Texture
         && let Some(loose_target) = matched_loose
     {
-        register_texture_siblings(loose_target, outgoing);
+        register_texture_siblings_with(loose_target, Some(dir_cache), |p| {
+            insert_unique_path(outgoing, outgoing_set, p);
+        });
     }
 
     if !exists {
@@ -1430,6 +1621,7 @@ fn audit_one_file(
     folder: &Path,
     assets_root: &Path,
     ap_cache: &ApArchiveCache,
+    dir_cache: &DirCache,
 ) -> FileAuditOutcome {
     let xml = match crate::assets::read_serz_xml(file) {
         Ok(x) => x,
@@ -1442,7 +1634,7 @@ fn audit_one_file(
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| e.eq_ignore_ascii_case("bin"))
                 {
-                    extract_raw_bin_references(&bytes, file, &mut outgoing);
+                    extract_raw_bin_references_cached(&bytes, file, &mut outgoing, Some(dir_cache));
                 }
                 return FileAuditOutcome {
                     parent: file.to_path_buf(),
@@ -1463,8 +1655,21 @@ fn audit_one_file(
     let mut broken: Vec<BrokenResourceRef> = Vec::new();
     let mut seen: HashMap<(AssetResourceKind, PathBuf, PathBuf), usize> = HashMap::new();
     let mut outgoing: Vec<PathBuf> = Vec::new();
-    extract_absolute_blueprint_refs(&xml, file, &mut outgoing);
-    extract_xml_cross_section_refs(&xml, file, &mut outgoing);
+    let mut outgoing_set: HashSet<PathBuf> = HashSet::new();
+    extract_absolute_blueprint_refs_cached(
+        &xml,
+        file,
+        &mut outgoing,
+        &mut outgoing_set,
+        Some(dir_cache),
+    );
+    extract_xml_cross_section_refs_cached(
+        &xml,
+        file,
+        &mut outgoing,
+        &mut outgoing_set,
+        Some(dir_cache),
+    );
 
     let parent = file.parent().unwrap_or(folder);
     let product_root = product_root_for(file, assets_root);
@@ -1472,14 +1677,16 @@ fn audit_one_file(
 
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext.eq_ignore_ascii_case("bin") {
-        extract_xml_texture_id_refs(
+        extract_xml_texture_id_refs_cached(
             &xml,
             file,
             &mut outgoing,
+            &mut outgoing_set,
             &mut broken,
             &mut seen,
             &parent_file,
             ap_cache,
+            Some(dir_cache),
         );
         for (kind, raw) in extract_bin_references(&xml, &product_root) {
             resolve_and_record_ref(
@@ -1491,7 +1698,9 @@ fn audit_one_file(
                 assets_root,
                 &parent_file,
                 ap_cache,
+                dir_cache,
                 &mut outgoing,
+                &mut outgoing_set,
                 &mut broken,
                 &mut seen,
             );
@@ -1507,7 +1716,9 @@ fn audit_one_file(
                 parent,
                 &parent_file,
                 ap_cache,
+                dir_cache,
                 &mut outgoing,
+                &mut outgoing_set,
                 &mut broken,
                 &mut seen,
             );
@@ -1523,7 +1734,9 @@ fn audit_one_file(
                 parent,
                 &parent_file,
                 ap_cache,
+                dir_cache,
                 &mut outgoing,
+                &mut outgoing_set,
                 &mut broken,
                 &mut seen,
             );
@@ -1542,6 +1755,22 @@ fn is_not_preload(entry: &walkdir::DirEntry) -> bool {
         .file_name()
         .to_str()
         .is_some_and(|n| n.eq_ignore_ascii_case("preload"))
+}
+
+fn record_script_root(
+    script_path: &Path,
+    cache: &mut HashMap<PathBuf, Option<PathBuf>>,
+    scripted_roots: &mut HashSet<PathBuf>,
+) {
+    let Some(parent) = script_path.parent() else {
+        return;
+    };
+    let root = cache
+        .entry(parent.to_path_buf())
+        .or_insert_with(|| find_scripted_component_root(script_path).map(|r| normalize_path(&r)));
+    if let Some(root) = root {
+        scripted_roots.insert(root.clone());
+    }
 }
 
 fn insert_outcome_edges(
@@ -1568,60 +1797,42 @@ pub fn audit_folders_with_progress(
     ap_cache: &ApArchiveCache,
     progress: Option<Arc<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> (AuditReport, FullAssetGraph) {
+    let dir_cache = DirCache::new(assets_root);
+
     let mut files: Vec<PathBuf> = Vec::new();
     let mut file_set: HashSet<PathBuf> = HashSet::new();
     let mut texture_files: Vec<PathBuf> = Vec::new();
     let mut texture_set: HashSet<PathBuf> = HashSet::new();
     let mut scripted_component_roots: HashSet<PathBuf> = HashSet::new();
+    let mut script_root_cache: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
 
     for folder_path in target_folders {
-        if let Ok(entries) = walkdir::WalkDir::new(folder_path)
+        for entry in walkdir::WalkDir::new(folder_path)
             .into_iter()
             .filter_entry(is_not_preload)
-            .collect::<Result<Vec<_>, _>>()
+            .flatten()
         {
-            for entry in entries {
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
-                }
-                let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-                    continue;
-                };
-                if ext.eq_ignore_ascii_case("lua") || ext.eq_ignore_ascii_case("out") {
-                    if let Some(root) = find_scripted_component_root(path) {
-                        scripted_component_roots.insert(normalize_path(&root));
-                    }
-                } else if ext.eq_ignore_ascii_case("bin")
-                    || ext.eq_ignore_ascii_case("geopcdx")
-                    || ext.eq_ignore_ascii_case("xsec")
-                {
-                    if file_set.insert(path.to_path_buf()) {
-                        files.push(path.to_path_buf());
-                    }
-                } else if ext.eq_ignore_ascii_case("tgpcdx")
-                    && texture_set.insert(path.to_path_buf())
-                {
-                    texture_files.push(path.to_path_buf());
-                }
+            if !entry.file_type().is_file() {
+                continue;
             }
-        } else {
-            let mut tmp_files = Vec::new();
-            let mut tmp_textures = Vec::new();
-            collect_files(
-                folder_path,
-                &mut tmp_files,
-                &mut tmp_textures,
-                &mut scripted_component_roots,
-            );
-            for p in tmp_files {
-                if file_set.insert(p.clone()) {
-                    files.push(p);
+            let path = entry.path();
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if ext.eq_ignore_ascii_case("lua") || ext.eq_ignore_ascii_case("out") {
+                record_script_root(path, &mut script_root_cache, &mut scripted_component_roots);
+            } else if ext.eq_ignore_ascii_case("bin")
+                || ext.eq_ignore_ascii_case("geopcdx")
+                || ext.eq_ignore_ascii_case("xsec")
+            {
+                let owned = path.to_path_buf();
+                if file_set.insert(owned.clone()) {
+                    files.push(owned);
                 }
-            }
-            for p in tmp_textures {
-                if texture_set.insert(p.clone()) {
-                    texture_files.push(p);
+            } else if ext.eq_ignore_ascii_case("tgpcdx") {
+                let owned = path.to_path_buf();
+                if texture_set.insert(owned.clone()) {
+                    texture_files.push(owned);
                 }
             }
         }
@@ -1642,45 +1853,29 @@ pub fn audit_folders_with_progress(
         if !should_scan_extra {
             continue;
         }
-        let mut all_product_files = Vec::new();
-        let mut dummy_textures = Vec::new();
-        if let Ok(entries) = walkdir::WalkDir::new(&product_root)
+        for entry in walkdir::WalkDir::new(&product_root)
             .into_iter()
             .filter_entry(is_not_preload)
-            .collect::<Result<Vec<_>, _>>()
+            .flatten()
         {
-            for entry in entries {
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
-                }
-                let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-                    continue;
-                };
-                if (ext.eq_ignore_ascii_case("bin")
-                    || ext.eq_ignore_ascii_case("geopcdx")
-                    || ext.eq_ignore_ascii_case("xsec"))
-                    && !target_folders.iter().any(|tf| path.starts_with(tf))
-                {
-                    all_product_files.push(path.to_path_buf());
-                } else if (ext.eq_ignore_ascii_case("lua") || ext.eq_ignore_ascii_case("out"))
-                    && let Some(root) = find_scripted_component_root(path)
-                {
-                    scripted_component_roots.insert(normalize_path(&root));
-                }
+            if !entry.file_type().is_file() {
+                continue;
             }
-        } else {
-            collect_files(
-                &product_root,
-                &mut all_product_files,
-                &mut dummy_textures,
-                &mut scripted_component_roots,
-            );
-            all_product_files.retain(|p| !target_folders.iter().any(|tf| p.starts_with(tf)));
-        }
-        for p in all_product_files {
-            if extra_set.insert(p.clone()) {
-                extra_files.push(p);
+            let path = entry.path();
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if (ext.eq_ignore_ascii_case("bin")
+                || ext.eq_ignore_ascii_case("geopcdx")
+                || ext.eq_ignore_ascii_case("xsec"))
+                && !target_folders.iter().any(|tf| path.starts_with(tf))
+            {
+                let owned = path.to_path_buf();
+                if extra_set.insert(owned.clone()) {
+                    extra_files.push(owned);
+                }
+            } else if ext.eq_ignore_ascii_case("lua") || ext.eq_ignore_ascii_case("out") {
+                record_script_root(path, &mut script_root_cache, &mut scripted_component_roots);
             }
         }
     }
@@ -1698,7 +1893,7 @@ pub fn audit_folders_with_progress(
         files
             .par_iter()
             .map(|f| {
-                let r = audit_one_file(f, assets_root, assets_root, ap_cache);
+                let r = audit_one_file(f, assets_root, assets_root, ap_cache, &dir_cache);
                 let done = processed.fetch_add(1, AtomicOrdering::Relaxed) + 1;
                 if let Some(cb) = &progress
                     && total_files > 0
@@ -1723,18 +1918,18 @@ pub fn audit_folders_with_progress(
     let extra_outcomes: Vec<FileAuditOutcome> = pool.install(|| {
         extra_files
             .par_iter()
-            .map(|f| audit_one_file(f, assets_root, assets_root, ap_cache))
+            .map(|f| audit_one_file(f, assets_root, assets_root, ap_cache, &dir_cache))
             .collect()
     });
     for outcome in &extra_outcomes {
         insert_outcome_edges(outcome, &mut outgoing_map, &mut incoming_map);
     }
 
-    // Дедупликация битых ссылок
+    // Регистронезависимая дедупликация битых ссылок
     let mut deduped: Vec<BrokenResourceRef> = Vec::with_capacity(broken_all.len());
     let mut seen: HashMap<(AssetResourceKind, PathBuf), usize> = HashMap::new();
     for mut b in broken_all {
-        let key = (b.kind, b.expected_path.clone());
+        let key = (b.kind, path_lower_key(&b.expected_path));
         if let Some(&idx) = seen.get(&key) {
             deduped[idx].count += b.count;
             for p in b.all_parents {
@@ -1862,44 +2057,6 @@ pub fn audit_folders_with_progress(
         },
         full_graph,
     )
-}
-
-fn collect_files(
-    dir: &Path,
-    out: &mut Vec<PathBuf>,
-    textures_out: &mut Vec<PathBuf>,
-    scripted_roots: &mut HashSet<PathBuf>,
-) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.eq_ignore_ascii_case("preload"))
-            {
-                continue;
-            }
-            if path.is_dir() {
-                collect_files(&path, out, textures_out, scripted_roots);
-            } else if path.is_file()
-                && let Some(ext) = path.extension().and_then(|e| e.to_str())
-            {
-                if ext.eq_ignore_ascii_case("lua") || ext.eq_ignore_ascii_case("out") {
-                    if let Some(root) = find_scripted_component_root(&path) {
-                        scripted_roots.insert(normalize_path(&root));
-                    }
-                } else if ext.eq_ignore_ascii_case("bin")
-                    || ext.eq_ignore_ascii_case("geopcdx")
-                    || ext.eq_ignore_ascii_case("xsec")
-                {
-                    out.push(path);
-                } else if ext.eq_ignore_ascii_case("tgpcdx") {
-                    textures_out.push(path);
-                }
-            }
-        }
-    }
 }
 
 pub fn filter_items(items: &mut Vec<BrokenResourceRef>, filter: &str) {
