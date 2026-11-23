@@ -30,6 +30,8 @@ pub(super) struct CameraUniform {
 pub(super) struct MaterialImmediate {
     pub(super) alpha_cutoff: f32,
     pub(super) highlight: f32,
+    pub(super) debug_mode: u32,
+    pub(super) mirrored: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -41,12 +43,21 @@ pub(super) enum PipelineKey {
     AlphaCw,
     AlphaCcw,
     Wireframe,
+    Backface,
 }
 
 impl PipelineKey {
-    pub(super) fn select(mode: GeoRenderMode, mirrored: bool, wireframe: bool) -> Self {
+    pub(super) fn select(
+        mode: GeoRenderMode,
+        mirrored: bool,
+        wireframe: bool,
+        debug_mode: u32,
+    ) -> Self {
         if wireframe {
             return Self::Wireframe;
+        }
+        if debug_mode == 4 {
+            return Self::Backface;
         }
         match (mode, mirrored) {
             (GeoRenderMode::Opaque, true) => Self::OpaqueCw,
@@ -67,6 +78,7 @@ pub(super) struct Pipelines {
     alpha_cw: wgpu::RenderPipeline,
     alpha_ccw: wgpu::RenderPipeline,
     wireframe: wgpu::RenderPipeline,
+    backface: wgpu::RenderPipeline,
 }
 
 impl Pipelines {
@@ -82,10 +94,7 @@ impl Pipelines {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("GeoPcDx pipeline layout"),
-            bind_group_layouts: &[
-                Some(camera_layout),
-                Some(texture_layout),
-            ],
+            bind_group_layouts: &[Some(camera_layout), Some(texture_layout)],
             immediate_size: size_of::<MaterialImmediate>() as u32,
         });
         let vertex_layout = Some(wgpu::VertexBufferLayout {
@@ -130,11 +139,19 @@ impl Pipelines {
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth24Plus,
+                    format: wgpu::TextureFormat::Depth32Float,
                     depth_write_enabled: Some(depth_write_enabled),
                     depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
+                    bias: if alpha_mode == ALPHA_MODE_BLENDED {
+                        wgpu::DepthBiasState {
+                            constant: -2,
+                            slope_scale: -1.0,
+                            clamp: 0.0,
+                        }
+                    } else {
+                        wgpu::DepthBiasState::default()
+                    },
                 }),
                 multisample: wgpu::MultisampleState {
                     count: MSAA_SAMPLE_COUNT,
@@ -203,6 +220,14 @@ impl Pipelines {
                 true,
                 None,
             ),
+            backface: make(
+                "GeoPcDx backface debug pipeline",
+                wgpu::PrimitiveTopology::TriangleList,
+                ALPHA_MODE_OPAQUE,
+                Some(wgpu::BlendState::REPLACE),
+                true,
+                None,
+            ),
         }
     }
 
@@ -215,6 +240,7 @@ impl Pipelines {
             PipelineKey::AlphaCw => &self.alpha_cw,
             PipelineKey::AlphaCcw => &self.alpha_ccw,
             PipelineKey::Wireframe => &self.wireframe,
+            PipelineKey::Backface => &self.backface,
         }
     }
 }

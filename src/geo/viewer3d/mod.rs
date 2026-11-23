@@ -131,6 +131,7 @@ enum ViewCommand {
     SelectBatch(Option<usize>),
     Preset(String),
     Filter(String),
+    DebugMode(u32),
 }
 
 pub fn show_geo_viewer(path: &Path) -> Result<(), String> {
@@ -214,6 +215,10 @@ fn bind_batch_panel(window: &GeoViewerWindow, sender: Sender<ViewCommand>) {
     let filter_sender = sender.clone();
     window.on_filter_batches(move |text| {
         let _ = filter_sender.send(ViewCommand::Filter(text.to_string()));
+    });
+    let debug_sender = sender.clone();
+    window.on_debug_mode_changed(move |mode| {
+        let _ = debug_sender.send(ViewCommand::DebugMode(mode.max(0) as u32));
     });
     window.on_select_batch(move |index| {
         let selected = (index >= 0).then_some(index as usize);
@@ -327,6 +332,12 @@ fn render_worker(
                 ViewCommand::SelectBatch(selected) => {
                     if let Some(gpu) = gpu.as_mut() {
                         gpu.set_highlighted_batch(selected);
+                    }
+                    need_render = true;
+                }
+                ViewCommand::DebugMode(mode) => {
+                    if let Some(gpu) = gpu.as_mut() {
+                        gpu.set_debug_mode(mode);
                     }
                     need_render = true;
                 }

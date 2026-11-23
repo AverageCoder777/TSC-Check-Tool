@@ -1,4 +1,11 @@
-import { VerticalBox, HorizontalBox, Button, CheckBox, LineEdit, ListView } from "std-widgets.slint";
+import {
+    VerticalBox,
+    HorizontalBox,
+    Button,
+    CheckBox,
+    LineEdit,
+    ListView,
+} from "std-widgets.slint";
 
 export struct BatchEntry {
     index: int,
@@ -24,6 +31,7 @@ export component GeoViewerWindow inherits Window {
     in-out property <string> texture-status: "";
     in-out property <bool> textures-expanded: false;
     in-out property <bool> wireframe: false;
+    in-out property <int> debug-mode: 0;
     in-out property <bool> batches-expanded: true;
     in-out property <[BatchEntry]> batch-items: [];
     in-out property <float> yaw: 0.7;
@@ -40,6 +48,7 @@ export component GeoViewerWindow inherits Window {
     callback apply-batch-preset(string);
     callback filter-batches(string);
     callback select-batch(int);
+    callback debug-mode-changed(int);
 
     function emit-camera() {
         root.camera-changed(
@@ -50,8 +59,7 @@ export component GeoViewerWindow inherits Window {
             root.pan-y,
             viewport.width / 1px,
             viewport.height / 1px,
-            root.wireframe
-        );
+            root.wireframe);
     }
 
     function reset-camera() {
@@ -66,13 +74,22 @@ export component GeoViewerWindow inherits Window {
     VerticalBox {
         spacing: 6px;
         padding: 8px;
+
         HorizontalBox {
             spacing: 8px;
-            Text { text: root.model-name; color: #e5e5e5; vertical-alignment: center; horizontal-stretch: 1; }
+
+            Text {
+                text: root.model-name;
+                color: #e5e5e5;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
             Button {
                 text: @tr("Open in editor");
                 clicked => { root.open-in-editor(); }
             }
+
             Button {
                 text: root.wireframe ? @tr("Solid") : @tr("Wireframe");
                 clicked => {
@@ -80,17 +97,33 @@ export component GeoViewerWindow inherits Window {
                     root.emit-camera();
                 }
             }
+
+            Button {
+                text: root.debug-mode == 0 ? @tr("View: Textured")
+                    : root.debug-mode == 1 ? @tr("View: Clay")
+                    : root.debug-mode == 2 ? @tr("View: Normals")
+                    : root.debug-mode == 3 ? @tr("View: UV")
+                    : @tr("View: Backface");
+                clicked => {
+                    root.debug-mode = Math.mod(root.debug-mode + 1, 5);
+                    root.debug-mode-changed(root.debug-mode);
+                }
+            }
+
             Button {
                 text: @tr("Reset camera");
                 clicked => { root.reset-camera(); }
             }
+
             Button {
                 text: root.batches-expanded ? @tr("Hide batches") : @tr("Batches");
                 clicked => { root.batches-expanded = !root.batches-expanded; }
             }
         }
+
         HorizontalBox {
             spacing: 6px;
+
             viewport := Rectangle {
                 background: #1c2028;
                 border-width: 1px;
@@ -98,12 +131,14 @@ export component GeoViewerWindow inherits Window {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
                 clip: true;
+
                 Image {
                     source: root.frame;
                     width: parent.width;
                     height: parent.height;
                     image-fit: contain;
                 }
+
                 viewport-focus := FocusScope {
 
                     key-pressed(event) => {
@@ -191,13 +226,15 @@ export component GeoViewerWindow inherits Window {
                         }
                     }
                 }
-                if root.status-text != "" : Rectangle {
+
+                if root.status-text != "": Rectangle {
                     x: 8px;
                     y: 8px;
                     width: Math.min(parent.width - 16px, 560px);
                     height: 34px;
                     background: #b8141820;
                     border-radius: 4px;
+
                     Text {
                         x: 8px;
                         y: 0px;
@@ -216,6 +253,7 @@ export component GeoViewerWindow inherits Window {
                     height: 26px;
                     background: #b8141820;
                     border-radius: 4px;
+
                     Text {
                         x: 8px;
                         y: 0px;
@@ -227,7 +265,8 @@ export component GeoViewerWindow inherits Window {
                         vertical-alignment: center;
                     }
                 }
-                if root.textures-expanded : Rectangle {
+
+                if root.textures-expanded: Rectangle {
                     x: 8px;
                     y: parent.height - self.height - 42px;
                     width: Math.min(parent.width - 16px, 480px);
@@ -237,6 +276,7 @@ export component GeoViewerWindow inherits Window {
                     border-color: #586170;
                     border-radius: 4px;
                     clip: true;
+
                     Text {
                         x: 8px;
                         y: 6px;
@@ -249,32 +289,50 @@ export component GeoViewerWindow inherits Window {
                     }
                 }
             }
-            if root.batches-expanded : Rectangle {
+
+            if root.batches-expanded: Rectangle {
                 width: 300px;
                 background: #1f242c;
                 border-width: 1px;
                 border-color: #3a414c;
                 border-radius: 4px;
+
                 VerticalBox {
                     padding: 8px;
                     spacing: 6px;
+
                     HorizontalBox {
                         spacing: 4px;
-                        Button { text: "LOD0"; clicked => { root.apply-batch-preset("lod0"); } }
-                        Button { text: @tr("All"); clicked => { root.apply-batch-preset("all"); } }
-                        Button { text: @tr("None"); clicked => { root.apply-batch-preset("none"); } }
+
+                        Button {
+                            text: "LOD0";
+                            clicked => { root.apply-batch-preset("lod0"); }
+                        }
+
+                        Button {
+                            text: @tr("All");
+                            clicked => { root.apply-batch-preset("all"); }
+                        }
+
+                        Button {
+                            text: @tr("None");
+                            clicked => { root.apply-batch-preset("none"); }
+                        }
                     }
+
                     LineEdit {
                         placeholder-text: @tr("Filter node / material / shader");
                         edited(text) => { root.filter-batches(text); }
                     }
+
                     Text {
                         text: @tr("{n} batch" | "{n} batches" % root.batch-items.length);
                         color: #8993a2;
                         font-size: 11px;
                     }
+
                     ListView {
-                        for item[idx] in root.batch-items : Rectangle {
+                        for item[idx] in root.batch-items: Rectangle {
                             height: 50px;
                             background: root.selected-batch == item.index
                                 ? #2b384e
@@ -282,15 +340,19 @@ export component GeoViewerWindow inherits Window {
                             border-width: root.selected-batch == item.index ? 1px : 0px;
                             border-color: #ff941f;
                             border-radius: 3px;
+
                             HorizontalBox {
                                 spacing: 6px;
                                 padding: 2px;
+
                                 CheckBox {
                                     checked: item.visible;
                                     toggled => { root.toggle-batch(item.index, self.checked); }
                                 }
+
                                 Rectangle {
                                     horizontal-stretch: 1;
+
                                     row-touch := TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => {
@@ -300,9 +362,11 @@ export component GeoViewerWindow inherits Window {
                                             root.select-batch(root.selected-batch);
                                         }
                                     }
+
                                     VerticalBox {
                                         padding: 0px;
                                         spacing: 2px;
+
                                         Text {
                                             text: "[#\{item.index}] \{item.node-name} (LOD\{item.lod-level})";
                                             color: root.selected-batch == item.index ? #ffd180 : #e5e5e5;
@@ -310,6 +374,7 @@ export component GeoViewerWindow inherits Window {
                                             overflow: elide;
                                             vertical-alignment: center;
                                         }
+
                                         Text {
                                             text: "\{item.material-name} • \{item.triangle-count} tris";
                                             color: #8993a2;
@@ -325,12 +390,14 @@ export component GeoViewerWindow inherits Window {
                 }
             }
         }
+
         Button {
             text: root.textures-expanded ? @tr("Hide textures") : @tr("Show textures");
             clicked => {
                 root.textures-expanded = !root.textures-expanded;
             }
         }
+
         Text {
             text: @tr("Left drag: orbit    Right/Middle drag: pan    Wheel: zoom    Arrows/WASD/QE: move    R: reset");
             color: #8993a2;

@@ -120,6 +120,7 @@ pub(crate) struct GpuRenderer {
     opaque_order: Vec<usize>,
     blended_order: Vec<usize>,
     highlighted_batch: Option<usize>,
+    debug_mode: u32,
     targets: Option<RenderTargets>,
 }
 
@@ -324,6 +325,7 @@ impl GpuRenderer {
             opaque_order,
             blended_order,
             highlighted_batch: None,
+            debug_mode: 0,
             targets: None,
         })
     }
@@ -341,6 +343,10 @@ impl GpuRenderer {
     }
     pub(crate) fn set_highlighted_batch(&mut self, batch_idx: Option<usize>) {
         self.highlighted_batch = batch_idx;
+    }
+
+    pub(crate) fn set_debug_mode(&mut self, mode: u32) {
+        self.debug_mode = mode;
     }
 
     fn ensure_render_targets(&mut self, width: u32, height: u32) {
@@ -435,7 +441,7 @@ impl GpuRenderer {
 
             let mut last_pipeline: Option<PipelineKey> = None;
             let mut last_texture: Option<usize> = None;
-            let mut last_material: Option<(u32, bool)> = None;
+            let mut last_material: Option<(u32, bool, u32, bool)> = None;
 
             for &index in self.opaque_order.iter().chain(&self.blended_order) {
                 let draw = &self.draws[index];
@@ -455,6 +461,7 @@ impl GpuRenderer {
                     draw.submesh.render_mode,
                     draw.submesh.mirrored,
                     camera.wireframe,
+                    self.debug_mode,
                 );
                 if last_pipeline != Some(pipeline_key) {
                     pass.set_pipeline(self.pipelines.get(pipeline_key));
@@ -465,11 +472,18 @@ impl GpuRenderer {
                     last_texture = Some(draw.texture_idx);
                 }
                 let is_highlighted = self.highlighted_batch == Some(index);
-                let material_key = (draw.submesh.alpha_cutoff.to_bits(), is_highlighted);
+                let material_key = (
+                    draw.submesh.alpha_cutoff.to_bits(),
+                    is_highlighted,
+                    self.debug_mode,
+                    draw.submesh.mirrored,
+                );
                 if last_material != Some(material_key) {
                     let immediate = MaterialImmediate {
                         alpha_cutoff: draw.submesh.alpha_cutoff,
                         highlight: if is_highlighted { 1.0 } else { 0.0 },
+                        debug_mode: self.debug_mode,
+                        mirrored: u32::from(draw.submesh.mirrored),
                     };
                     pass.set_immediates(0, bytemuck::bytes_of(&immediate));
                     last_material = Some(material_key);
