@@ -470,7 +470,7 @@ where
                 let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
                 if done.is_multiple_of(32) || done == total_files {
                     report_progress(&format!(
-                        "Analyzing filed. {done} out of {total_files}; threads: {worker_count}",
+                        "Analyzing files. {done} out of {total_files}; threads: {worker_count}",
                     ));
                 }
 

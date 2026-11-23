@@ -10,6 +10,8 @@ import {
     TextEdit,
     ComboBox,
 } from "std-widgets.slint";
+import "./fonts/JetBrainsMono.ttf";
+import "./fonts/Inter-Var.ttf";
 import { TextureViewerWindow } from "texture_viewer.slint";
 export { TextureViewerWindow } from "texture_viewer.slint";
 import { GeoViewerWindow } from "geo_viewer.slint";
@@ -61,7 +63,7 @@ export component MainWindow inherits Window {
     title: "TSC Check Tool";
     min-width: 1350px;
     min-height: 1000px;
-    default-font-family: "Segoe UI Symbol";
+    default-font-family: "Inter";
 
     in property <[RouteItem]> route-items: [];
     in-out property <bool> route-thumbnails-enabled: true;
@@ -444,6 +446,8 @@ export component MainWindow inherits Window {
                         for line[i] in log-lines: Text {
                             text: line.text;
                             font-size: 13px;
+                            font-family: "JetBrains Mono";
+                            font-weight: 300;
                             color: line.color;
                             wrap: TextWrap.word-wrap;
                         }

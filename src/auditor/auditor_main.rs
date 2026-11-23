@@ -214,13 +214,6 @@ fn path_lower_key(path: &Path) -> PathBuf {
 }
 
 #[inline]
-fn push_unique_path(list: &mut Vec<PathBuf>, path: PathBuf) {
-    if !list.contains(&path) {
-        list.push(path);
-    }
-}
-
-#[inline]
 fn insert_unique_path(list: &mut Vec<PathBuf>, set: &mut HashSet<PathBuf>, path: PathBuf) {
     if set.insert(path.clone()) {
         list.push(path);
@@ -1104,10 +1097,6 @@ fn find_assets_root(start_path: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-pub fn extract_raw_bin_references(bytes: &[u8], bin_path: &Path, outgoing: &mut Vec<PathBuf>) {
-    extract_raw_bin_references_cached(bytes, bin_path, outgoing, None);
-}
-
 fn extract_raw_bin_references_cached(
     bytes: &[u8],
     bin_path: &Path,
@@ -1189,29 +1178,6 @@ fn extract_raw_bin_references_cached(
             try_register(&format!("{prefix}{model}.TgPcDx"));
         }
     }
-}
-
-pub fn extract_xml_texture_id_refs(
-    xml: &str,
-    current_file_path: &Path,
-    outgoing: &mut Vec<PathBuf>,
-    broken: &mut Vec<BrokenResourceRef>,
-    seen: &mut HashMap<(AssetResourceKind, PathBuf, PathBuf), usize>,
-    parent_file: &Path,
-    ap_cache: &ApArchiveCache,
-) {
-    let mut outgoing_set: HashSet<PathBuf> = outgoing.iter().cloned().collect();
-    extract_xml_texture_id_refs_cached(
-        xml,
-        current_file_path,
-        outgoing,
-        &mut outgoing_set,
-        broken,
-        seen,
-        parent_file,
-        ap_cache,
-        None,
-    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1307,21 +1273,6 @@ fn extract_xml_texture_id_refs_cached(
     }
 }
 
-pub fn extract_xml_cross_section_refs(
-    xml: &str,
-    current_file_path: &Path,
-    outgoing: &mut Vec<PathBuf>,
-) {
-    let mut outgoing_set: HashSet<PathBuf> = outgoing.iter().cloned().collect();
-    extract_xml_cross_section_refs_cached(
-        xml,
-        current_file_path,
-        outgoing,
-        &mut outgoing_set,
-        None,
-    );
-}
-
 fn extract_xml_cross_section_refs_cached(
     xml: &str,
     current_file_path: &Path,
@@ -1375,21 +1326,6 @@ fn extract_xml_cross_section_refs_cached(
             check_and_add(p_dir.join(format!("{base}.GeoPcDx")));
         }
     }
-}
-
-pub fn extract_absolute_blueprint_refs(
-    xml: &str,
-    current_file_path: &Path,
-    outgoing: &mut Vec<PathBuf>,
-) {
-    let mut outgoing_set: HashSet<PathBuf> = outgoing.iter().cloned().collect();
-    extract_absolute_blueprint_refs_cached(
-        xml,
-        current_file_path,
-        outgoing,
-        &mut outgoing_set,
-        None,
-    );
 }
 
 fn extract_absolute_blueprint_refs_cached(
