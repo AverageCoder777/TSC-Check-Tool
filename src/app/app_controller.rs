@@ -255,8 +255,9 @@ impl CheckerApp {
                     Err(error) => {
                         let _ = tx.send((
                             missing_path,
-                            Err(format!(
-                                "Couldn't rename new asset to English names: {error}"
+                            Err(gettext!(
+                                "Couldn't rename new asset to English names: {}",
+                                error
                             )),
                         ));
                         crate::schedule_ui_sync();

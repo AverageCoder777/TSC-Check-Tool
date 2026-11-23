@@ -26,9 +26,11 @@ encoding_rs = "0.8"
 thiserror = "2"
 memchr = "2"
 open = "5"
+gettext = "0.4"
 
 [build-dependencies]
 slint-build = "1.19.0"
+rspolib = "0.1"
 
 #[profile.release]
 #lto = true

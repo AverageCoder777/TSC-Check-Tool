@@ -58,7 +58,7 @@ impl AppConfig {
             .map_err(|error| format!("Failed to prepare config: {error}"))?;
         fs::write(&path, data).map_err(|error| {
             format!(
-                "Не удалось сохранить конфигурацию {}: {error}",
+                "Failed to save config {}: {error}",
                 path.display()
             )
         })

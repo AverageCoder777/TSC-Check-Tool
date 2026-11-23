@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod i18n;
 mod assets;
 mod auditor;
 mod common;
@@ -332,14 +333,25 @@ fn handle_cli_args() {
 #[macro_export]
 macro_rules! gettext {
     ($s:expr) => {
-        $s
+        $crate::i18n::tr($s)
+    };
+    ($s:expr, $($arg:expr),+ $(,)?) => {
+        $crate::i18n::tr_fmt($s, &[$(&$arg as &dyn std::fmt::Display),+])
     };
 }
 
 #[macro_export]
 macro_rules! ngettext {
     ($singular:expr, $plural:expr, $n:expr) => {
-        if $n == 1 { $singular } else { $plural }
+        $crate::i18n::ntr($singular, $plural, ($n) as u64)
+    };
+    ($singular:expr, $plural:expr, $n:expr, $($arg:expr),+ $(,)?) => {
+        $crate::i18n::ntr_fmt(
+            $singular,
+            $plural,
+            ($n) as u64,
+            &[$(&$arg as &dyn std::fmt::Display),+],
+        )
     };
 }
 
