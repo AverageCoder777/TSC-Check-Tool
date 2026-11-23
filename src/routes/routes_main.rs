@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, mpsc};
 use walkdir::WalkDir;
@@ -69,6 +69,13 @@ static SCENARIO_TAG_RES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 fn is_ap_archive(path: &Path) -> bool {
     path.extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("ap"))
+}
+
+fn contains_ascii_ignore_case(haystack: &str, needle: &[u8]) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 /// Возвращает true, если элемент архива выглядит как «бомба» и его не стоит распаковывать.
@@ -174,8 +181,12 @@ pub(crate) fn scan_routes_with_cache(
         }
     }
 
-    let result =
-        scan_routes_with_ignored(&canonical_game_path, ignored_route_ids, max_threads, log)?;
+    let route_folders: Vec<(String, PathBuf)> = folder_ids
+        .iter()
+        .map(|id| (id.clone(), routes_path.join(id)))
+        .collect();
+    let result = scan_route_folders(&route_folders, ignored_route_ids, max_threads, log)?;
+
     let cache = RouteScanCache {
         icon_scan_version: ICON_SCAN_VERSION,
         game_path,
@@ -193,9 +204,16 @@ pub(crate) fn scan_routes_with_cache(
                 parent.display()
             )
         })?;
-        let contents = serde_json::to_vec(&cache)
+        let file = fs::File::create(&cache_file).map_err(|error| {
+            format!(
+                "Failed to save routes cache {}: {error}",
+                cache_file.display()
+            )
+        })?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, &cache)
             .map_err(|error| format!("Failed to serialize routes cache: {error}"))?;
-        fs::write(&cache_file, contents).map_err(|error| {
+        writer.flush().map_err(|error| {
             format!(
                 "Failed to save routes cache {}: {error}",
                 cache_file.display()
@@ -221,6 +239,7 @@ pub(crate) fn scan_routes(rw_path: &Path) -> Result<RouteScanResult, String> {
     scan_routes_with_ignored(rw_path, &HashSet::new(), 4, None)
 }
 
+#[cfg(test)]
 pub(crate) fn scan_routes_with_ignored(
     rw_path: &Path,
     ignored_route_ids: &HashSet<String>,
@@ -228,25 +247,24 @@ pub(crate) fn scan_routes_with_ignored(
     log: Option<&RouteScanLog>,
 ) -> Result<RouteScanResult, String> {
     let routes_path = rw_path.join("Content").join("Routes");
-    let entries = fs::read_dir(&routes_path)
-        .map_err(|error| format!("Failed to read {}: {error}", routes_path.display()))?;
-    let mut route_folders = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            format!(
-                "Error during reading routes list in {}: {error}",
-                routes_path.display()
-            )
-        })?;
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-        if metadata.file_type().is_dir() {
-            route_folders.push((entry.file_name().to_string_lossy().into_owned(), path));
-        }
-    }
+    let folder_ids = read_route_folder_ids(&routes_path)?;
+    let route_folders: Vec<(String, PathBuf)> = folder_ids
+        .into_iter()
+        .map(|id| {
+            let path = routes_path.join(&id);
+            (id, path)
+        })
+        .collect();
+    scan_route_folders(&route_folders, ignored_route_ids, max_threads, log)
+}
 
-    let thread_count = route_folders.len().clamp(1, max_threads);
+fn scan_route_folders(
+    route_folders: &[(String, PathBuf)],
+    ignored_route_ids: &HashSet<String>,
+    max_threads: usize,
+    log: Option<&RouteScanLog>,
+) -> Result<RouteScanResult, String> {
+    let thread_count = route_folders.len().clamp(1, max_threads.max(1));
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(thread_count)
         .build()
@@ -267,12 +285,7 @@ pub(crate) fn scan_routes_with_ignored(
         }
     }
 
-    routes.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then_with(|| left.id.cmp(&right.id))
-    });
+    routes.sort_by_cached_key(|route| (route.name.to_lowercase(), route.id.clone()));
     incomplete_folders.sort_by(|left, right| {
         left.file_count
             .cmp(&right.file_count)
@@ -392,68 +405,14 @@ pub(crate) fn inspect_route_folder(
         return Ok(None);
     }
 
-    // Slow path: detailed inventory, clues and archived names.
-    let mut archive_members = Vec::new();
-    let mut archived_route_name = None;
+    // Slow path: сначала обходим диск, чтобы знать, какие ScenarioProperties.xml
+    // перекрывают одноимённые файлы внутри .ap-архивов.
     let mut scenario_clues = ScenarioClueCollection::default();
-
-    for (child_path, name, is_directory) in &children {
-        if *is_directory || !is_ap_archive(child_path) {
-            continue;
-        }
-        let archive_file = fs::File::open(child_path)
-            .map_err(|error| format!("Failed to open archive {}: {error}", child_path.display()))?;
-        let mut archive = ZipArchive::new(archive_file)
-            .map_err(|error| format!("Failed to read archive {}: {error}", child_path.display()))?;
-        for index in 0..archive.len() {
-            let mut member = archive
-                .by_index(index)
-                .map_err(|error| format!("Error in archive {}: {error}", child_path.display()))?;
-            let raw_name = match member.name() {
-                Ok(name) => name,
-                Err(_) => continue,
-            };
-            let member_name = raw_name.replace('\\', "/");
-            let is_file = member.is_file();
-
-            if is_file && !is_suspicious_archive_member(member.size(), member.compressed_size()) {
-                let base_name = member_name.rsplit('/').next().unwrap_or_default();
-                if base_name.eq_ignore_ascii_case("ScenarioProperties.xml") {
-                    let mut bytes = Vec::new();
-                    member.read_to_end(&mut bytes).map_err(|error| {
-                        format!(
-                            "Failed to read {} from {}: {error}",
-                            member_name,
-                            child_path.display()
-                        )
-                    })?;
-                    let contents = decode_xml_bytes(&bytes);
-                    scenario_clues.add(&contents, &format!("[.ap: {name} :: {member_name}]"));
-                } else if archived_route_name.is_none()
-                    && (base_name.eq_ignore_ascii_case("RouteProperties.xml")
-                        || (member_name.len() >= 4
-                            && member_name[member_name.len() - 4..].eq_ignore_ascii_case(".xml")
-                            && member_name.to_lowercase().contains("routeinformation")))
-                {
-                    let mut bytes = Vec::new();
-                    if member.read_to_end(&mut bytes).is_err() {
-                        log_route_warning(log, child_path, "error reading archive element");
-                    } else {
-                        let contents = decode_xml_bytes(&bytes);
-                        archived_route_name =
-                            parse_route_name(&contents).or_else(|| parse_route_name_tag(&contents));
-                    }
-                }
-            }
-
-            archive_members.push((name.clone(), member_name, is_file));
-        }
-    }
-
-    // Single WalkDir pass: clues + inventory concurrently.
+    let mut disk_scenarios: HashSet<String> = HashSet::new();
     let mut inventory = Vec::new();
     let mut file_count = 0usize;
     let mut total_size_bytes = 0u64;
+
     for entry in WalkDir::new(path).follow_links(false) {
         let entry =
             entry.map_err(|error| format!("Error during check {}: {error}", path.display()))?;
@@ -470,8 +429,10 @@ pub(crate) fn inspect_route_folder(
                 .path()
                 .strip_prefix(path)
                 .unwrap_or(entry.path())
-                .display();
-            scenario_clues.add(&contents, &relative.to_string());
+                .to_string_lossy();
+            let normalized = relative.replace('\\', "/");
+            disk_scenarios.insert(normalized.to_lowercase());
+            scenario_clues.add(&contents, &relative);
         }
 
         if entry.path() == path {
@@ -493,12 +454,77 @@ pub(crate) fn inspect_route_folder(
         }
     }
 
-    for (archive, member, is_file) in &archive_members {
-        if *is_file {
+    let mut archived_route_name = None;
+    for (child_path, name, is_directory) in &children {
+        if *is_directory || !is_ap_archive(child_path) {
+            continue;
+        }
+        let archive_file = fs::File::open(child_path)
+            .map_err(|error| format!("Failed to open archive {}: {error}", child_path.display()))?;
+        let mut archive = ZipArchive::new(archive_file)
+            .map_err(|error| format!("Failed to read archive {}: {error}", child_path.display()))?;
+
+        // Читаем оглавление архива в памяти без seek, а через by_name открываем только нужные XML.
+        let mut xml_to_read: Vec<(String, String, bool)> = Vec::new();
+        for name_res in archive.file_names() {
+            let Ok(raw_name) = name_res else {
+                continue;
+            };
+            if raw_name.ends_with(['/', '\\']) {
+                continue;
+            }
+            let member_name = raw_name.replace('\\', "/");
             file_count += 1;
-            inventory.push(format!("[.ap: {archive}] {member}"));
+            inventory.push(format!("[.ap: {name}] {member_name}"));
+
+            let base_name = member_name.rsplit('/').next().unwrap_or_default();
+            if base_name.eq_ignore_ascii_case("ScenarioProperties.xml") {
+                if !disk_scenarios.contains(&member_name.to_lowercase()) {
+                    xml_to_read.push((raw_name.into_owned(), member_name, true));
+                }
+            } else if archived_route_name.is_none()
+                && (base_name.eq_ignore_ascii_case("RouteProperties.xml")
+                    || (member_name.len() >= 4
+                        && member_name[member_name.len() - 4..].eq_ignore_ascii_case(".xml")
+                        && contains_ascii_ignore_case(&member_name, b"routeinformation")))
+            {
+                xml_to_read.push((raw_name.into_owned(), member_name, false));
+            }
+        }
+
+        for (raw_name, member_name, is_scenario) in xml_to_read {
+            if !is_scenario && archived_route_name.is_some() {
+                continue;
+            }
+            let Ok(mut member) = archive.by_name(&raw_name) else {
+                continue;
+            };
+            if !member.is_file()
+                || is_suspicious_archive_member(member.size(), member.compressed_size())
+            {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            if is_scenario {
+                member.read_to_end(&mut bytes).map_err(|error| {
+                    format!(
+                        "Failed to read {} from {}: {error}",
+                        member_name,
+                        child_path.display()
+                    )
+                })?;
+                let contents = decode_xml_bytes(&bytes);
+                scenario_clues.add(&contents, &format!("[.ap: {name} :: {member_name}]"));
+            } else if member.read_to_end(&mut bytes).is_err() {
+                log_route_warning(log, child_path, "error reading archive element");
+            } else {
+                let contents = decode_xml_bytes(&bytes);
+                archived_route_name =
+                    parse_route_name(&contents).or_else(|| parse_route_name_tag(&contents));
+            }
         }
     }
+
     inventory.sort();
     let scenario_clues = scenario_clues.into_clues();
 
@@ -574,7 +600,7 @@ pub(crate) fn find_route_icon_with_cache(
         }
     }
 
-    let mut images = Vec::new();
+    let mut disk_images = Vec::new();
     if let Some(route_information) = route_information.filter(|path| path.is_dir()) {
         for entry in fs::read_dir(&route_information).map_err(|error| {
             format!(
@@ -597,14 +623,17 @@ pub(crate) fn find_route_icon_with_cache(
             }
             let path = entry.path();
             if is_route_image(path.extension()) {
-                images.push(path);
+                let priority = icon_priority(&path.file_name().unwrap_or_default().to_string_lossy());
+                disk_images.push((priority, path));
             }
         }
     }
-    images
-        .sort_by_key(|path| icon_priority(&path.file_name().unwrap_or_default().to_string_lossy()));
-    if let Some(image) = images.into_iter().next() {
-        return Ok(Some(image));
+    disk_images.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let best_disk = disk_images.into_iter().next();
+
+    // Если на диске уже лежит image.png (высший приоритет 0), архивы можно не открывать.
+    if let Some(((0, _), path)) = &best_disk {
+        return Ok(Some(path.clone()));
     }
 
     let mut archived_images = Vec::new();
@@ -634,10 +663,18 @@ pub(crate) fn find_route_icon_with_cache(
             .then_with(|| left.1.cmp(&right.1))
             .then_with(|| left.2.cmp(&right.2))
     });
-    let Some((_, archive_path, raw_member_name)) = archived_images.into_iter().next() else {
-        return Ok(None);
-    };
-    extract_archived_route_icon(&archive_path, &raw_member_name, cache_directory)
+
+    match (best_disk, archived_images.into_iter().next()) {
+        // При равном или лучшем приоритете побеждает файл на диске.
+        (Some((disk_prio, disk_path)), Some((arch_prio, _, _))) if disk_prio <= arch_prio => {
+            Ok(Some(disk_path))
+        }
+        (_, Some((_, archive_path, raw_member_name))) => {
+            extract_archived_route_icon(&archive_path, &raw_member_name, cache_directory)
+        }
+        (Some((_, disk_path)), None) => Ok(Some(disk_path)),
+        (None, None) => Ok(None),
+    }
 }
 
 fn is_route_image(extension: Option<&std::ffi::OsStr>) -> bool {
@@ -929,7 +966,7 @@ pub(crate) fn read_route_name(
                 .map_err(|error| format!("Failed to read {}: {error}", route_path.display()))?;
             for entry in entries {
                 let entry = entry
-                    .map_err(|error| format!("Read error{}: {error}", route_path.display()))?;
+                    .map_err(|error| format!("Read error {}: {error}", route_path.display()))?;
                 let archive_path = entry.path();
                 if !is_ap_archive(&archive_path) {
                     continue;
@@ -956,18 +993,25 @@ pub(crate) fn read_route_name(
                         continue;
                     }
                 };
-                for index in 0..archive.len() {
-                    let mut member = match archive.by_index(index) {
-                        Ok(member) => member,
-                        Err(_) => continue,
+                let candidates: Vec<String> = archive
+                    .file_names()
+                    .filter_map(Result::ok)
+                    .filter(|raw_name| {
+                        !raw_name.ends_with(['/', '\\'])
+                            && raw_name
+                                .rsplit(['/', '\\'])
+                                .next()
+                                .unwrap_or_default()
+                                .eq_ignore_ascii_case("RouteProperties.xml")
+                    })
+                    .map(std::borrow::Cow::into_owned)
+                    .collect();
+
+                for raw_name in candidates {
+                    let Ok(mut member) = archive.by_name(&raw_name) else {
+                        continue;
                     };
-                    let raw_name = match member.name() {
-                        Ok(name) => name,
-                        Err(_) => continue,
-                    };
-                    let base_name = raw_name.rsplit(['/', '\\']).next().unwrap_or_default();
                     if !member.is_file()
-                        || !base_name.eq_ignore_ascii_case("RouteProperties.xml")
                         || is_suspicious_archive_member(member.size(), member.compressed_size())
                     {
                         continue;
@@ -1012,22 +1056,29 @@ pub(crate) fn read_route_name(
 }
 
 pub(crate) fn parse_route_name(xml: &str) -> Option<String> {
-    let localization = LOCALIZATION_RE.captures(xml);
-    let localized_contents = localization
+    let localized_contents = LOCALIZATION_RE
+        .captures(xml)
         .and_then(|capture| capture.get(1))
         .map(|capture| capture.as_str())
         .unwrap_or(xml);
-    let values: Vec<_> = LANGUAGE_TAG_RE
-        .captures_iter(localized_contents)
-        .filter_map(|capture| {
-            let language = capture.get(1)?.as_str();
-            let value = decode_xml_text(capture.get(2)?.as_str());
-            (!value.is_empty()).then_some((language.eq_ignore_ascii_case("English"), value))
-        })
-        .collect();
-    values
-        .iter()
-        .find(|(is_english, _)| *is_english)
-        .or_else(|| values.first())
-        .map(|(_, name)| name.clone())
+    let mut fallback = None;
+    for capture in LANGUAGE_TAG_RE.captures_iter(localized_contents) {
+        let Some(language) = capture.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        let Some(raw_value) = capture.get(2).map(|m| m.as_str()) else {
+            continue;
+        };
+        let value = decode_xml_text(raw_value);
+        if value.is_empty() {
+            continue;
+        }
+        if language.eq_ignore_ascii_case("English") {
+            return Some(value);
+        }
+        if fallback.is_none() {
+            fallback = Some(value);
+        }
+    }
+    fallback
 }

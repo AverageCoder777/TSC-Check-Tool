@@ -19,7 +19,8 @@ impl IncompleteFoldersController {
     pub(crate) fn new(app: Arc<Mutex<CheckerApp>>) -> Self {
         Self {
             app,
-            window: IncompleteFoldersWindow::new().unwrap(),
+            window: IncompleteFoldersWindow::new()
+                .expect("failed to create IncompleteFoldersWindow"),
         }
     }
 
@@ -29,29 +30,39 @@ impl IncompleteFoldersController {
     }
 
     pub(crate) fn bind(&self) {
+        self.bind_open_in_explorer();
+        self.bind_delete_selected();
+        self.bind_delete_all();
+        self.bind_close_window();
+    }
+
+    fn bind_open_in_explorer(&self) {
         self.window.on_open_in_explorer(move |path| {
             if !path.is_empty() {
                 let _ = Command::new("explorer").arg(path.as_str()).spawn();
             }
         });
+    }
 
+    fn bind_delete_selected(&self) {
         let weak_del = self.window.as_weak();
         let app_del = self.app.clone();
         self.window.on_delete_selected(move |index| {
             let Ok(idx) = usize::try_from(index) else {
                 return;
             };
-            let has_target = app_del
-                .lock()
-                .map(|app| idx < app.incomplete_folders.len())
-                .unwrap_or(false);
-            if !has_target {
+            let target = app_del.lock().ok().and_then(|app| {
+                app.incomplete_folders
+                    .get(idx)
+                    .map(|folder| (folder.id.clone(), folder.path.clone()))
+            });
+            let Some((folder_id, target_path)) = target else {
                 return;
-            }
+            };
 
             let confirmed = rfd::MessageDialog::new()
                 .set_title("Folder deletion")
-                .set_description("Delete selected incomplete folder?")
+                .set_description(format!("Delete selected incomplete folder «{folder_id}»?"))
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
             if confirmed != rfd::MessageDialogResult::Ok {
@@ -59,15 +70,19 @@ impl IncompleteFoldersController {
             }
 
             if let Ok(mut app) = app_del.lock() {
-                let Some(path) = app.incomplete_folders.get(idx).map(|f| f.path.clone()) else {
+                let Some(pos) = app
+                    .incomplete_folders
+                    .iter()
+                    .position(|f| f.path == target_path)
+                else {
                     return;
                 };
-                match validate_delete_path(&path, &app) {
-                    Ok(()) => match fs::remove_dir_all(&path) {
+                match validate_delete_path(&target_path, &app) {
+                    Ok(()) => match fs::remove_dir_all(&target_path) {
                         Ok(()) => {
-                            app.incomplete_folders.remove(idx);
+                            app.incomplete_folders.remove(pos);
                             app.log_event(
-                                format!("Deleted incomplete folder: {}.", path.display()),
+                                format!("Deleted incomplete folder: {}.", target_path.display()),
                                 LogLevel::Info,
                             );
                             if let Some(w) = weak_del.upgrade() {
@@ -77,21 +92,26 @@ impl IncompleteFoldersController {
                         }
                         Err(error) => {
                             app.log_event(
-                                format!("Failed to delete {}: {error}.", path.display()),
+                                format!("Failed to delete {}: {error}.", target_path.display()),
                                 LogLevel::Error,
                             );
                         }
                     },
                     Err(e) => {
                         app.log_event(
-                            format!("Security error during deletion {}: {e}.", path.display()),
+                            format!(
+                                "Security error during deletion {}: {e}.",
+                                target_path.display()
+                            ),
                             LogLevel::Error,
                         );
                     }
                 }
             }
         });
+    }
 
+    fn bind_delete_all(&self) {
         let weak_all = self.window.as_weak();
         let app_all = self.app.clone();
         self.window.on_delete_all(move || {
@@ -181,7 +201,9 @@ impl IncompleteFoldersController {
                 crate::schedule_ui_sync();
             }
         });
+    }
 
+    fn bind_close_window(&self) {
         let weak_close = self.window.as_weak();
         self.window.on_close_window(move || {
             if let Some(w) = weak_close.upgrade() {
@@ -194,10 +216,9 @@ impl IncompleteFoldersController {
 fn update_window(window: &IncompleteFoldersWindow, folders: &[IncompleteRouteFolder]) {
     let items = build_incomplete_folder_items(folders);
     let total_bytes: u64 = folders.iter().map(|f| f.total_size_bytes).sum();
-    let count = folders.len();
     let summary = format!(
         "All: {} folders, total size: {}",
-        count,
+        folders.len(),
         format_size_bytes(total_bytes)
     );
     window.set_folders(ModelRc::new(VecModel::from(items)));
@@ -238,7 +259,9 @@ fn validate_delete_path_against(path: &Path, canon_routes: &Path) -> Result<(), 
 }
 
 fn format_size_bytes(bytes: u64) -> String {
-    if bytes >= 1_048_576 {
+    if bytes >= 1_073_741_824 {
+        format!("{:.2} GiB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_048_576 {
         format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
     } else if bytes >= 1024 {
         format!("{:.0} KiB", bytes as f64 / 1024.0)
