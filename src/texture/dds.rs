@@ -1,11 +1,11 @@
 //! DDS import/export, mip chain validation, and SERZ tree modification.
 
 use std::cmp::Reverse;
-use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufWriter, Cursor, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use super::inspect::write_output_bytes;
 use super::format::{
     ImportReport, dds_compression_of, dds_format_to_tgpcdx, expected_mip_size, mip_level_bytes,
     tgpcdx_dds_compression, tgpcdx_format_to_d3d, validate_dds_mip_chain,
@@ -15,7 +15,7 @@ use super::serz_parse::{
     image_mips_from_bytes, set_blob_data, set_or_insert_property,
 };
 use crate::common::serz::{
-    SerzNode, SerzReader, encode_tgpcdx_to_vec, patch_tgpcdx_blobs, validate_tgpcdx_binary,
+    SerzNode, SerzReader, encode_tgpcdx_to_vec, patch_tgpcdx_blobs,
 };
 
 /// Converts DDS file to TgPcDx.
@@ -220,29 +220,6 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
     let file = File::create(output).map_err(|e| e.to_string())?;
     let mut writer = BufWriter::new(file);
     dds.write(&mut writer).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Writes output bytes atomically without risking loss of the existing file.
-fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
-    if bytes.starts_with(b"SERZ") {
-        validate_tgpcdx_binary(bytes, None)?;
-    }
-
-    let mut tmp_os = OsString::from(output.as_os_str());
-    tmp_os.push(".tmp");
-    let tmp = PathBuf::from(tmp_os);
-
-    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-    if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
-        let _ = fs::remove_file(&tmp);
-        return Err("empty staged file".into());
-    }
-
-    if let Err(err) = fs::rename(&tmp, output) {
-        let _ = fs::remove_file(&tmp);
-        return Err(err.to_string());
-    }
     Ok(())
 }
 

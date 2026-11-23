@@ -251,55 +251,16 @@ fn open_texture_viewer(path: &Path) {
     if !path.is_file() {
         return;
     }
-    let data = match std::fs::read(path) {
-        Ok(d) => d,
-        Err(e) => {
-            common::external_editor::show_native_error("Error", &e.to_string());
-            std::process::exit(1);
-        }
-    };
-    match texture::decode_tgpcdx_to_rgba(&data) {
-        Ok((w, h, rgba)) => {
-            let controller = texture::texture_controller::TextureController::new(Arc::new(
-                Mutex::new(AuditorState::default()),
-            ));
-            if let Ok(mut st) = controller.tex_state.lock() {
-                *st = Some((w, h, rgba.clone(), path.to_path_buf()));
-            }
-            controller.bind_buttons();
-            let viewer = controller.window;
-            viewer.set_texture_image(texture::rgba_to_slint_image(w, h, &rgba));
-            viewer.set_texture_orig_width(w as i32);
-            viewer.set_texture_orig_height(h as i32);
-            viewer.set_zoom_factor(if w > 640 || h > 480 {
-                (640.0 / w as f32).min(480.0 / h as f32)
-            } else {
-                1.0
-            });
-            viewer.set_pan_x(0.0);
-            viewer.set_pan_y(0.0);
-            viewer.set_show_alpha(false);
-            let info = match texture::inspect_tgpcdx_with_path(&data, Some(path)) {
-                Ok(info) => texture::texture_info_text(&info, path, false),
-                Err(_) => format!("{} x {} px  TGPCDX  {}", w, h, path.display()),
-            };
-            viewer.set_info_text(info.into());
-            // Имя текстуры для редактирования
-            if let Ok(info) = texture::inspect_tgpcdx_with_path(&data, Some(path)) {
-                viewer.set_texture_name(info.name.into());
-            }
-            let enabled = !std::fs::metadata(path)
-                .map(|m| m.permissions().readonly())
-                .unwrap_or(false);
-            viewer.set_texture_name_enabled(enabled);
-            let _ = viewer.run();
-            std::process::exit(0);
-        }
-        Err(e) => {
-            common::external_editor::show_native_error("Error", &e);
-            std::process::exit(1);
-        }
+    let controller = texture::texture_controller::TextureController::new(Arc::new(Mutex::new(
+        AuditorState::default(),
+    )));
+    controller.bind_buttons();
+    if let Err(error) = controller.load_file_sync(path) {
+        common::external_editor::show_native_error("Error", &error);
+        std::process::exit(1);
     }
+    let _ = controller.window.run();
+    std::process::exit(0);
 }
 
 fn handle_cli_args() {

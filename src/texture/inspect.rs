@@ -1,18 +1,19 @@
 //! Texture metadata, inspection, and internal name editing.
 
-use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use super::decode::{ChannelMode, expand_and_sort_mips};
 use super::format::{
     DdsCompression, format_label_and_dds_name, mip_level_bytes, tgpcdx_dds_compression,
 };
 use super::serz_parse::{
-    all_image_blocks, count_c_hc_textures, extract_blob_size, extract_format, extract_tag,
-    extract_unnamed_u16, parse_bool_tag,
+    ImageMip, all_image_blocks, collect_serz_image_mips_owned, count_c_hc_textures,
+    extract_blob_size, extract_format, extract_tag, extract_unnamed_u16, image_mips_from_bytes,
+    parse_bool_tag,
 };
 use crate::app::settings::log_file;
 use crate::common::serz::{SerzNode, SerzReader, encode_tgpcdx_to_vec, validate_tgpcdx_binary};
@@ -40,37 +41,62 @@ pub struct TextureInfo {
     pub has_bak: bool,
 }
 
-/// Вариант с указанием пути на диске: позволяет сверить имя и проверить .bak.
-pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<TextureInfo, String> {
-    let (xml, serz_blob_bytes): (Cow<'_, str>, u64) = if data.starts_with(b"SERZ") {
-        // Single SERZ parse: get XML for metadata and blob sizes before clearing.
+#[derive(Default)]
+struct RawInspectStats {
+    name: String,
+    texture_count: u32,
+    block_count: usize,
+    width: u32,
+    height: u32,
+    min_width: u32,
+    min_height: u32,
+    raw_format: String,
+    is_swizzled: bool,
+    flags_u16: u16,
+    total_blob_bytes: u64,
+}
+
+/// Однопроходная загрузка мипмапов и метаданных (1 парсинг SERZ вместо 2, без XML).
+pub(super) fn load_tgpcdx_bundle(
+    data: &[u8],
+    path: Option<&Path>,
+) -> Result<(Vec<ImageMip>, Option<TextureInfo>), String> {
+    if data.starts_with(b"SERZ") {
         let mut reader = SerzReader::new(data);
         let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let info = inspect_serz_node(&root, data.len() as u64, path).ok();
+        let mut mips = Vec::new();
+        collect_serz_image_mips_owned(&mut root, &mut mips)?;
+        return Ok((expand_and_sort_mips(mips), info));
+    }
 
-        // Collect blob sizes BEFORE clearing blobs for XML generation.
-        let total = collect_blob_bytes_and_clear(&mut root);
-        let xml = SerzReader::to_xml(&root, 0, true);
-        (Cow::Owned(xml), total)
-    } else {
-        let xml = std::str::from_utf8(data).map_err(|e| format!("invalid text: {e}"))?;
-        (Cow::Borrowed(xml), 0)
-    };
+    let info = inspect_tgpcdx_with_path(data, path).ok();
+    let mips = expand_and_sort_mips(image_mips_from_bytes(data)?);
+    Ok((mips, info))
+}
 
-    let blocks = all_image_blocks(&xml);
+/// Вариант с указанием пути на диске: позволяет сверить имя и проверить .bak.
+pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<TextureInfo, String> {
+    if data.starts_with(b"SERZ") {
+        let mut reader = SerzReader::new(data);
+        let root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        return inspect_serz_node(&root, data.len() as u64, path);
+    }
+
+    let xml = std::str::from_utf8(data).map_err(|e| format!("invalid text: {e}"))?;
+    let blocks = all_image_blocks(xml);
     if blocks.is_empty() {
         return Err("no image blocks".into());
     }
 
-    let texture_count = count_c_hc_textures(&xml).max(1);
-
-    // width/height = максимальные (базовый уровень), min_width/min_height = минимальные.
-    let mut width = 0u32;
-    let mut height = 0u32;
-    let mut min_width = u32::MAX;
-    let mut min_height = u32::MAX;
-    let mut raw_format = String::new();
-    let mut is_swizzled = false;
-    let mut flags_u16 = 0u16;
+    let mut stats = RawInspectStats {
+        name: extract_tag(xml, "Name", "cDeltaString").unwrap_or_default(),
+        texture_count: count_c_hc_textures(xml).max(1),
+        block_count: blocks.len(),
+        min_width: u32::MAX,
+        min_height: u32::MAX,
+        ..Default::default()
+    };
 
     for block in &blocks {
         let w: u32 = extract_tag(block, "Width", "sUInt16")
@@ -81,55 +107,155 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
             .or_else(|| extract_tag(block, "Height", "sUInt32"))
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+        stats.total_blob_bytes += extract_blob_size(block);
         if w == 0 || h == 0 {
             continue;
         }
-        width = width.max(w);
-        height = height.max(h);
-        min_width = min_width.min(w);
-        min_height = min_height.min(h);
-        if raw_format.is_empty() {
-            raw_format = extract_tag(block, "Format", "cDeltaString")
+        stats.width = stats.width.max(w);
+        stats.height = stats.height.max(h);
+        stats.min_width = stats.min_width.min(w);
+        stats.min_height = stats.min_height.min(h);
+        if stats.raw_format.is_empty() {
+            stats.raw_format = extract_tag(block, "Format", "cDeltaString")
                 .unwrap_or_else(|| extract_format(block));
         }
-        if !is_swizzled {
-            is_swizzled = parse_bool_tag(block, "IsSwizzled");
+        if !stats.is_swizzled {
+            stats.is_swizzled = parse_bool_tag(block, "IsSwizzled");
         }
-        if flags_u16 == 0 {
-            flags_u16 = extract_unnamed_u16(block);
+        if stats.flags_u16 == 0 {
+            stats.flags_u16 = extract_unnamed_u16(block);
         }
     }
-
-    if width == 0 || height == 0 {
-        return Err("invalid dimensions".into());
-    }
-    if min_width == u32::MAX {
-        min_width = width;
-        min_height = height;
+    if stats.raw_format.is_empty() {
+        stats.raw_format = extract_format(blocks[0]);
     }
 
-    if raw_format.is_empty() {
-        raw_format = extract_format(blocks[0]);
-    }
+    finalize_texture_info(stats, data.len() as u64, path)
+}
 
-    let total_blob_bytes = if serz_blob_bytes > 0 {
-        serz_blob_bytes
-    } else {
-        blocks.iter().map(|b| extract_blob_size(b)).sum()
+fn inspect_serz_node(
+    root: &SerzNode,
+    data_len: u64,
+    path: Option<&Path>,
+) -> Result<TextureInfo, String> {
+    let mut stats = RawInspectStats {
+        min_width: u32::MAX,
+        min_height: u32::MAX,
+        ..Default::default()
+    };
+    collect_serz_stats(root, &mut stats);
+    if stats.block_count == 0 {
+        return Err("no image blocks".into());
+    }
+    stats.texture_count = stats.texture_count.max(1);
+    finalize_texture_info(stats, data_len, path)
+}
+
+fn collect_serz_stats(node: &SerzNode, stats: &mut RawInspectStats) {
+    let SerzNode::Element { name, children, .. } = node else {
+        return;
     };
 
-    let (mip_count, min_width, min_height, mip_storage_mode) = if blocks.len() <= 1 {
-        let fmt = tgpcdx_dds_compression(&raw_format);
+    if name == "cHcTexture" {
+        stats.texture_count += 1;
+        if stats.name.is_empty()
+            && let Some(prop) = find_name_property(children)
+        {
+            stats.name = prop.to_owned();
+        }
+    } else if name == "cHcImageDx" {
+        stats.block_count += 1;
+        let mut w = 0u32;
+        let mut h = 0u32;
+        let mut fmt: Option<&str> = None;
+        let mut swizzled = false;
+        let mut flags = 0u16;
+        let mut seen_blob = false;
+
+        for child in children {
+            match child {
+                SerzNode::Property {
+                    name,
+                    type_name,
+                    value,
+                    ..
+                } => match name.as_str() {
+                    "Width" => w = value.trim().parse().unwrap_or(0),
+                    "Height" => h = value.trim().parse().unwrap_or(0),
+                    "Format" if type_name == "cDeltaString" => fmt = Some(value.trim()),
+                    "IsSwizzled" => {
+                        let v = value.trim();
+                        swizzled = v == "1"
+                            || v.eq_ignore_ascii_case("true")
+                            || v.eq_ignore_ascii_case("yes")
+                            || v.parse::<u32>().is_ok_and(|n| n != 0);
+                    }
+                    "e" if type_name == "sUInt16" && (!seen_blob || flags == 0) => {
+                        if let Ok(v) = value.trim().parse::<u16>() {
+                            flags = v;
+                        }
+                    }
+                    _ => {}
+                },
+                SerzNode::Blob { data } => {
+                    seen_blob = true;
+                    stats.total_blob_bytes += data.len() as u64;
+                }
+                _ => {}
+            }
+        }
+
+        if w > 0 && h > 0 {
+            stats.width = stats.width.max(w);
+            stats.height = stats.height.max(h);
+            stats.min_width = stats.min_width.min(w);
+            stats.min_height = stats.min_height.min(h);
+        }
+        if stats.raw_format.is_empty()
+            && let Some(f) = fmt
+            && !f.is_empty()
+        {
+            stats.raw_format = f.to_owned();
+        }
+        if !stats.is_swizzled {
+            stats.is_swizzled = swizzled;
+        }
+        if stats.flags_u16 == 0 {
+            stats.flags_u16 = flags;
+        }
+        return;
+    }
+
+    for child in children {
+        collect_serz_stats(child, stats);
+    }
+}
+
+fn finalize_texture_info(
+    mut stats: RawInspectStats,
+    data_len: u64,
+    path: Option<&Path>,
+) -> Result<TextureInfo, String> {
+    if stats.width == 0 || stats.height == 0 {
+        return Err("invalid dimensions".into());
+    }
+    if stats.min_width == u32::MAX {
+        stats.min_width = stats.width;
+        stats.min_height = stats.height;
+    }
+
+    let (mip_count, min_width, min_height, mip_storage_mode) = if stats.block_count <= 1 {
+        let fmt = tgpcdx_dds_compression(&stats.raw_format);
         let mut levels = 1u32;
-        let mut mw = width;
-        let mut mh = height;
-        let mut sum = mip_level_bytes(width, height, fmt).unwrap_or(0) as u64;
-        if fmt != DdsCompression::Unknown && total_blob_bytes > sum {
-            while sum < total_blob_bytes && !(mw == 1 && mh == 1) {
+        let mut mw = stats.width;
+        let mut mh = stats.height;
+        let mut sum = mip_level_bytes(stats.width, stats.height, fmt).unwrap_or(0) as u64;
+        if fmt != DdsCompression::Unknown && stats.total_blob_bytes > sum {
+            while sum < stats.total_blob_bytes && !(mw == 1 && mh == 1) {
                 let w = (mw / 2).max(1);
                 let h = (mh / 2).max(1);
                 let sz = mip_level_bytes(w, h, fmt).unwrap_or(0) as u64;
-                if sz == 0 || sz > total_blob_bytes - sum {
+                if sz == 0 || sz > stats.total_blob_bytes - sum {
                     break;
                 }
                 sum += sz;
@@ -138,51 +264,47 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
                 mh = h;
             }
         }
-        (levels, mw, mh, "Blob (1× cHcImageDx)".to_string())
+        (levels, mw, mh, "Blob (1× cHcImageDx)".to_owned())
     } else {
         (
-            blocks.len() as u32,
-            min_width,
-            min_height,
-            format!("Separate nodes ({}× cHcImageDx)", blocks.len()),
+            stats.block_count as u32,
+            stats.min_width,
+            stats.min_height,
+            format!("Separate nodes ({}× cHcImageDx)", stats.block_count),
         )
     };
 
-    let name = extract_tag(&xml, "Name", "cDeltaString").unwrap_or_default();
-    let (format_label, dds_format) = format_label_and_dds_name(&raw_format);
-
+    let (format_label, dds_format) = format_label_and_dds_name(&stats.raw_format);
     let (file_size_bytes, has_bak, name_matches_filename) = match path {
         Some(p) => {
-            let fs_size = fs::metadata(p)
-                .map(|m| m.len())
-                .unwrap_or(data.len() as u64);
+            let fs_size = fs::metadata(p).map(|m| m.len()).unwrap_or(data_len);
             let has = fs::metadata(append_path_suffix(p, ".bak")).is_ok();
             let file_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            let internal_tail = name.rsplit(['\\', '/']).next().unwrap_or(&name);
+            let internal_tail = stats.name.rsplit(['\\', '/']).next().unwrap_or(&stats.name);
             let matches = !file_stem.is_empty() && file_stem.eq_ignore_ascii_case(internal_tail);
             (fs_size, has, matches)
         }
-        None => (data.len() as u64, false, false),
+        None => (data_len, false, false),
     };
 
-    let header_bytes = file_size_bytes.saturating_sub(total_blob_bytes);
+    let header_bytes = file_size_bytes.saturating_sub(stats.total_blob_bytes);
 
     Ok(TextureInfo {
-        name,
-        is_swizzled,
-        width,
-        height,
+        name: stats.name,
+        is_swizzled: stats.is_swizzled,
+        width: stats.width,
+        height: stats.height,
         mip_count,
         min_width,
         min_height,
-        raw_format,
+        raw_format: stats.raw_format,
         format_label,
         dds_format,
-        texture_count,
+        texture_count: stats.texture_count,
         mip_storage_mode,
-        flags_u16,
+        flags_u16: stats.flags_u16,
         file_size_bytes,
-        total_blob_bytes,
+        total_blob_bytes: stats.total_blob_bytes,
         header_bytes,
         name_matches_filename,
         has_bak,
@@ -190,23 +312,22 @@ pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<Text
 }
 
 /// Валидация и нормализация внутреннего имени текстуры.
-/// Возвращает нормализованное имя или ошибку.
 pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Err("Internal texture name cannot be empty".into());
     }
-
     if !trimmed.is_ascii() {
-        return Err("Internal name must contain only ASCII symbols (withour Cyrillic)".into());
+        return Err("Internal name must contain only ASCII symbols (without Cyrillic)".into());
     }
 
     const FORBIDDEN_EXTS: [&str; 4] = [".tgpcdx", ".dds", ".ace", ".tgpc"];
     if FORBIDDEN_EXTS.iter().any(|ext| {
-        trimmed.len() >= ext.len() && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
+        trimmed.len() >= ext.len()
+            && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
     }) {
         return Err(format!(
-            "Internal name must not contain file extention (.tgpcdx, .dds, .ace): {trimmed}"
+            "Internal name must not contain a file extension (.tgpcdx, .dds, .ace): {trimmed}"
         ));
     }
 
@@ -230,7 +351,7 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     let meta = fs::metadata(tgpcdx_path).map_err(|e| e.to_string())?;
     if meta.permissions().readonly() {
         return Err(format!(
-            "File is read-only (possibly inside the .ap archive): {}. Unpack it before editing.",
+            "File is read-only (possibly inside a .ap archive): {}. Unpack it before editing.",
             tgpcdx_path.display()
         ));
     }
@@ -268,9 +389,19 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     Ok(())
 }
 
+/// Восстанавливает `.TgPcDx` из соседнего `.bak` (атомарно).
+pub(crate) fn restore_tgpcdx_from_backup(tgpcdx_path: &Path) -> Result<(), String> {
+    let bak_path = append_path_suffix(tgpcdx_path, ".bak");
+    if !bak_path.is_file() {
+        return Err(format!("Backup file not found: {}", bak_path.display()));
+    }
+    let bytes = fs::read(&bak_path).map_err(|e| format!("Failed to read backup: {e}"))?;
+    write_output_bytes(tgpcdx_path, &bytes)?;
+    append_tgpcdx_log(&format!("Restored from backup: {}", tgpcdx_path.display()));
+    Ok(())
+}
+
 /// Обновляет имена cHcTexture/Name с учётом групп текстур.
-/// Для одиночных текстур (texture_count == 1) — просто ставит новое имя.
-/// Для групп — меняет общий префикс, сохраняя уникальные суффиксы каждого узла.
 pub fn update_tgpcdx_internal_names(root: &mut SerzNode, new_name: &str) -> Result<(), String> {
     let mut current_names = Vec::new();
     collect_c_hc_texture_names(root, &mut current_names);
@@ -411,7 +542,7 @@ fn find_common_prefix(names: &[String]) -> String {
     prefix.to_owned()
 }
 
-/// Writes output bytes atomically with rollback on failure.
+/// Writes output bytes atomically with `.old` rollback on failure (Windows-safe).
 pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     if bytes.starts_with(b"SERZ") {
         validate_tgpcdx_binary(bytes, None)?;
@@ -439,26 +570,10 @@ pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn append_path_suffix(path: &Path, suffix: &str) -> PathBuf {
+pub(super) fn append_path_suffix(path: &Path, suffix: &str) -> PathBuf {
     let mut os = OsString::from(path.as_os_str());
     os.push(suffix);
     PathBuf::from(os)
-}
-
-/// Собирает суммарный размер всех Blob и очищает их (для генерации XML без блобов).
-fn collect_blob_bytes_and_clear(node: &mut SerzNode) -> u64 {
-    let mut total = 0u64;
-    if let SerzNode::Element { children, .. } = node {
-        for child in children {
-            if let SerzNode::Blob { data } = child {
-                total += data.len() as u64;
-                data.clear();
-            } else {
-                total += collect_blob_bytes_and_clear(child);
-            }
-        }
-    }
-    total
 }
 
 /// Appends a log message to the TgPcDx log file.
@@ -472,9 +587,16 @@ pub fn append_tgpcdx_log(message: &str) {
     }
 }
 
-/// Собирает многострочный текст информационной панели окна просмотра текстур.
-pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> String {
-    let dds_name = info.dds_format.unwrap_or("неизвестный");
+/// Расширенная карточка текстуры с учётом режима каналов и текущего уровня мипмапа.
+pub(crate) fn texture_info_text_with_view(
+    info: &TextureInfo,
+    path: &Path,
+    mode: ChannelMode,
+    mip_index: usize,
+    mip_w: u32,
+    mip_h: u32,
+) -> String {
+    let dds_name = info.dds_format.unwrap_or("unknown");
     let mut s = String::with_capacity(512);
     if !info.name.is_empty() {
         let mark = if info.name_matches_filename {
@@ -505,10 +627,10 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
         u8::from(info.is_swizzled),
         info.flags_u16,
     );
-    let bak = if info.has_bak { "есть" } else { "нет" };
+    let bak = if info.has_bak { "yes" } else { "no" };
     let _ = writeln!(
         s,
-        "File size: {} ({} B) | Pixels (blob): {} Б | Header: {} Б | Backup (.bak): {bak}",
+        "File size: {} ({} B) | Pixels (blob): {} B | Header: {} B | Backup (.bak): {bak}",
         format_size_bytes(info.file_size_bytes),
         format_bytes_spaces(info.file_size_bytes),
         format_bytes_spaces(info.total_blob_bytes),
@@ -516,11 +638,9 @@ pub fn texture_info_text(info: &TextureInfo, path: &Path, show_alpha: bool) -> S
     );
     let _ = writeln!(
         s,
-        "Import requires: DDS in format {dds_name}, sizes are a power of two, with mipmaps."
+        "View: {} | Active mip: #{mip_index} ({mip_w}×{mip_h} px) | Import requires: DDS {dds_name} (power of two, with mipmaps)",
+        mode.label(),
     );
-    if show_alpha {
-        s.push_str("View mode: alpha channel\n");
-    }
     let _ = write!(s, "TGPCDX  {}", path.display());
     s
 }

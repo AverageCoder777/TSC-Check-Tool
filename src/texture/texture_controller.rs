@@ -6,9 +6,14 @@ use std::thread;
 
 use slint::{ComponentHandle, Weak};
 
+use super::decode::{ChannelMode, apply_channel_mode, decode_mip_to_rgba};
+use super::inspect::{
+    load_tgpcdx_bundle, restore_tgpcdx_from_backup, texture_info_text_with_view,
+};
+use super::serz_parse::ImageMip;
 use super::{
-    TextureInfo, convert_dds_to_tgpcdx_report, decode_tgpcdx_to_rgba, export_tgpcdx_to_dds,
-    inspect_tgpcdx_with_path, rgba_to_slint_image, texture_info_text, update_tgpcdx_internal_name,
+    TextureInfo, convert_dds_to_tgpcdx_report, export_tgpcdx_to_dds, rgba_to_slint_image,
+    update_tgpcdx_internal_name,
 };
 use crate::app::LogLevel;
 use crate::auditor::AuditorController;
@@ -17,23 +22,37 @@ use crate::{AuditorState, MainWindow, TextureViewerWindow, log_event};
 
 pub type LoadedTexture = (u32, u32, Vec<u8>, PathBuf);
 pub type SharedTextureState = Arc<Mutex<Option<LoadedTexture>>>;
-type SharedTextureInfo = Arc<Mutex<Option<TextureInfo>>>;
+
+struct ViewerState {
+    path: PathBuf,
+    mips: Vec<ImageMip>,
+    current_mip: usize,
+    current_rgba: Arc<Vec<u8>>,
+    channel_mode: ChannelMode,
+    info: Option<TextureInfo>,
+}
+
+type SharedViewerState = Arc<Mutex<Option<ViewerState>>>;
 
 struct TextureSnapshot {
+    path: PathBuf,
+    mips: Vec<ImageMip>,
     width: u32,
     height: u32,
-    rgba: Vec<u8>,
+    rgba: Arc<Vec<u8>>,
+    preview_rgba: Vec<u8>,
     info: Option<TextureInfo>,
     info_text: String,
     name: String,
     writable: bool,
+    has_bak: bool,
 }
 
 pub struct TextureController {
     pub window: TextureViewerWindow,
     pub weak: Weak<TextureViewerWindow>,
     pub tex_state: SharedTextureState,
-    tex_info: SharedTextureInfo,
+    viewer_state: SharedViewerState,
     pub preview_generation: Arc<AtomicU64>,
     pub auditor_state: Arc<Mutex<AuditorState>>,
 }
@@ -46,186 +65,317 @@ impl TextureController {
             window,
             weak,
             tex_state: Arc::new(Mutex::new(None)),
-            tex_info: Arc::new(Mutex::new(None)),
+            viewer_state: Arc::new(Mutex::new(None)),
             preview_generation: Arc::new(AtomicU64::new(0)),
             auditor_state,
         }
     }
 
     pub fn bind(&self, auditor: &AuditorController) {
-        let auditor_state_for_preview = self.auditor_state.clone();
-        let tex_state_for_preview = self.tex_state.clone();
-        let tex_info_for_preview = self.tex_info.clone();
+        self.bind_preview(auditor);
+        self.bind_buttons();
+    }
+
+    pub fn bind_buttons(&self) {
+        self.bind_editor();
+        self.bind_view_controls();
+        self.bind_dds_actions();
+        self.bind_name_actions();
+        self.bind_pixel_probe();
+    }
+
+    fn bind_preview(&self, auditor: &AuditorController) {
+        let auditor_state = self.auditor_state.clone();
+        let tex_state = self.tex_state.clone();
+        let viewer_state = self.viewer_state.clone();
         let viewer_weak = self.weak.clone();
+        let ui_weak = crate::UI_WEAK.get().cloned();
         let preview_generation = self.preview_generation.clone();
 
         auditor.window.on_preview_texture(move |row| {
             if row < 0 {
                 return;
             }
-            let generation_id = preview_generation.fetch_add(1, Ordering::AcqRel) + 1;
-            let preview_gen = preview_generation.clone();
-
-            let target_item = auditor_state_for_preview
+            let target_item = auditor_state
                 .lock()
                 .ok()
                 .and_then(|g| g.display_items.get(row as usize).cloned());
-
             let Some(item) = target_item else { return };
-            let path = if item
-                .expected_path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("tgpcdx"))
-            {
+
+            let path = if is_tgpcdx_file(&item.expected_path) {
                 item.expected_path
-            } else if item
-                .parent_file
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("tgpcdx"))
-            {
+            } else if is_tgpcdx_file(&item.parent_file) {
                 item.parent_file
             } else {
                 return;
             };
 
-            if !path.is_file() {
-                return;
-            }
-
-            let tex_state = tex_state_for_preview.clone();
-            let tex_info = tex_info_for_preview.clone();
+            let generation_id = preview_generation.fetch_add(1, Ordering::AcqRel) + 1;
+            let gen_ref = preview_generation.clone();
+            let tex_state = tex_state.clone();
+            let viewer_state = viewer_state.clone();
             let viewer_weak = viewer_weak.clone();
+            let ui_weak = ui_weak.clone();
 
             thread::spawn(move || {
-                if preview_gen.load(Ordering::Acquire) != generation_id {
+                if gen_ref.load(Ordering::Acquire) != generation_id {
                     return;
                 }
-                let Ok(snapshot) = load_texture_snapshot(&path) else {
-                    return;
+                let snapshot = match load_texture_snapshot(&path, ChannelMode::Rgb) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let msg = format!("Failed to open texture {}: {e}", path.display());
+                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
+                        return;
+                    }
                 };
-                if preview_gen.load(Ordering::Acquire) != generation_id {
+                if gen_ref.load(Ordering::Acquire) != generation_id {
                     return;
                 }
-                store_snapshot(&tex_state, &tex_info, &path, &snapshot);
+                store_snapshot(&tex_state, &viewer_state, &snapshot, ChannelMode::Rgb);
 
                 let _ = slint::invoke_from_event_loop(move || {
-                    if preview_gen.load(Ordering::Acquire) != generation_id {
+                    if gen_ref.load(Ordering::Acquire) != generation_id {
                         return;
                     }
                     if let Some(v) = viewer_weak.upgrade() {
                         apply_texture_to_viewer(&v, &snapshot, true);
-                        v.set_texture_name_enabled(snapshot.writable);
                         let _ = v.show();
                     }
                 });
             });
         });
-
-        self.bind_buttons();
     }
 
-    pub fn bind_buttons(&self) {
-        // Открытие в VS Code
-        let editor_weak = self.weak.clone();
-        let editor_state = self.tex_state.clone();
-        let editor_info = self.tex_info.clone();
-        let editor_ui_weak = crate::UI_WEAK.get().cloned();
+    fn bind_editor(&self) {
+        let viewer_weak = self.weak.clone();
+        let tex_state = self.tex_state.clone();
+        let viewer_state = self.viewer_state.clone();
+        let preview_gen = self.preview_generation.clone();
+        let ui_weak = crate::UI_WEAK.get().cloned();
+
         self.window.on_open_in_editor(move || {
-            let Some(path) = current_texture_path(&editor_state) else {
+            let Some(path) = current_texture_path(&viewer_state) else {
                 notify(
-                    &editor_weak,
-                    &editor_ui_weak,
+                    &viewer_weak,
+                    &ui_weak,
                     "There is no loaded texture to open in editor.",
                     LogLevel::Warning,
                 );
                 return;
             };
-            let callback_path = path.clone();
-            let callback_viewer = editor_weak.clone();
-            let callback_ui = editor_ui_weak.clone();
-            let callback_state = editor_state.clone();
-            let callback_info = editor_info.clone();
+            let gen_at_start = preview_gen.load(Ordering::Acquire);
+            let cb_path = path.clone();
+            let cb_viewer = viewer_weak.clone();
+            let cb_ui = ui_weak.clone();
+            let cb_tex = tex_state.clone();
+            let cb_state = viewer_state.clone();
+            let cb_gen = preview_gen.clone();
+
             if let Err(error) =
                 external_editor::open_and_sync_with_vscode(&path, move |result| match result {
-                    Ok(message) => match load_texture_snapshot(&callback_path) {
-                        Ok(snapshot) => {
-                            store_snapshot(
-                                &callback_state,
-                                &callback_info,
-                                &callback_path,
-                                &snapshot,
-                            );
-                            notify(&callback_viewer, &callback_ui, &message, LogLevel::Info);
-                            let viewer = callback_viewer.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(v) = viewer.upgrade() {
-                                    apply_texture_to_viewer(&v, &snapshot, true);
-                                }
-                            });
+                    Ok(message) => {
+                        if cb_gen.load(Ordering::Acquire) != gen_at_start {
+                            return;
                         }
-                        Err(error) => {
-                            let message = format!(
-                                "File was changed, but preview could not be updated: {error}"
-                            );
-                            notify(&callback_viewer, &callback_ui, &message, LogLevel::Error);
+                        let mode = current_channel_mode(&cb_state);
+                        match load_texture_snapshot(&cb_path, mode) {
+                            Ok(snapshot) => {
+                                store_snapshot(&cb_tex, &cb_state, &snapshot, mode);
+                                notify(&cb_viewer, &cb_ui, &message, LogLevel::Info);
+                                let vw = cb_viewer.clone();
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(v) = vw.upgrade() {
+                                        apply_texture_to_viewer(&v, &snapshot, false);
+                                    }
+                                });
+                            }
+                            Err(error) => {
+                                let msg = format!(
+                                    "File changed, but preview could not be updated: {error}"
+                                );
+                                notify(&cb_viewer, &cb_ui, &msg, LogLevel::Error);
+                            }
                         }
-                    },
+                    }
                     Err(error) => {
-                        let message = format!("Editor error: {error}");
-                        notify(&callback_viewer, &callback_ui, &message, LogLevel::Error);
+                        let msg = format!("Editor error: {error}");
+                        notify(&cb_viewer, &cb_ui, &msg, LogLevel::Error);
                     }
                 })
             {
-                let message = format!("Failed to open file in editor: {error}");
-                notify(&editor_weak, &editor_ui_weak, &message, LogLevel::Error);
+                let msg = format!("Failed to open file in editor: {error}");
+                notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
             }
         });
+    }
 
-        let viewer_weak_toggle = self.weak.clone();
-        let tex_state_for_toggle = self.tex_state.clone();
-        let tex_info_for_toggle = self.tex_info.clone();
-        self.window.on_toggle_alpha(move || {
-            let Some(v) = viewer_weak_toggle.upgrade() else {
+    fn bind_view_controls(&self) {
+        // Переключение режима каналов (RGB / RGBA / Alpha / R / G / B) в фоновом потоке
+        let viewer_weak = self.weak.clone();
+        let viewer_state = self.viewer_state.clone();
+        let preview_gen = self.preview_generation.clone();
+        self.window.on_cycle_channel_mode(move || {
+            let Some(v) = viewer_weak.upgrade() else {
                 return;
             };
-            let show_alpha = !v.get_show_alpha();
-            v.set_show_alpha(show_alpha);
+            let next_mode = ChannelMode::from_index(v.get_channel_mode() + 1);
+            v.set_channel_mode(next_mode.as_index());
 
-            let Ok(guard) = tex_state_for_toggle.lock() else {
-                return;
+            let gen_id = preview_gen.fetch_add(1, Ordering::AcqRel) + 1;
+            let (rgba, w, h, info_text) = {
+                let Ok(mut guard) = viewer_state.lock() else {
+                    return;
+                };
+                let Some(st) = guard.as_mut() else { return };
+                st.channel_mode = next_mode;
+                let mip = &st.mips[st.current_mip];
+                let info_text = format_info_text(
+                    st.info.as_ref(),
+                    &st.path,
+                    next_mode,
+                    st.current_mip,
+                    mip.width,
+                    mip.height,
+                );
+                (st.current_rgba.clone(), mip.width, mip.height, info_text)
             };
-            let Some((w, h, rgba, path)) = guard.as_ref() else {
-                return;
-            };
-            let img = if show_alpha {
-                let mut alpha_rgba = Vec::with_capacity(rgba.len());
-                for &[_, _, _, a] in rgba.as_chunks::<4>().0 {
-                    alpha_rgba.extend_from_slice(&[a, a, a, 255]);
+
+            let vw = viewer_weak.clone();
+            let gen_ref = preview_gen.clone();
+            thread::spawn(move || {
+                let preview = apply_channel_mode(&rgba, next_mode).into_owned();
+                if gen_ref.load(Ordering::Acquire) != gen_id {
+                    return;
                 }
-                rgba_to_slint_image(*w, *h, &alpha_rgba)
-            } else {
-                rgba_to_slint_image(*w, *h, rgba)
-            };
-            let info_text = tex_info_for_toggle
-                .lock()
-                .ok()
-                .and_then(|g| g.as_ref().map(|i| texture_info_text(i, path, show_alpha)))
-                .unwrap_or_else(|| fallback_info_text(path, *w, *h, show_alpha));
-            drop(guard);
-
-            v.set_texture_image(img);
-            v.set_info_text(info_text.into());
+                let _ = slint::invoke_from_event_loop(move || {
+                    if gen_ref.load(Ordering::Acquire) != gen_id {
+                        return;
+                    }
+                    if let Some(v) = vw.upgrade() {
+                        v.set_texture_image(rgba_to_slint_image(w, h, &preview));
+                        v.set_info_text(info_text.into());
+                    }
+                });
+            });
         });
 
-        let tex_state_for_export = self.tex_state.clone();
-        let viewer_weak_export = self.weak.clone();
-        let ui_weak_export = crate::UI_WEAK.get().cloned();
+        // Выбор уровня мипмапа (+1 / -1)
+        let viewer_weak_mip = self.weak.clone();
+        let tex_state_mip = self.tex_state.clone();
+        let viewer_state_mip = self.viewer_state.clone();
+        let preview_gen_mip = self.preview_generation.clone();
+        let ui_weak_mip = crate::UI_WEAK.get().cloned();
+        self.window.on_step_mip(move |delta| {
+            let gen_id = preview_gen_mip.fetch_add(1, Ordering::AcqRel) + 1;
+            let (target_mip, mip_index, mip_count, mode, path, info) = {
+                let Ok(guard) = viewer_state_mip.lock() else {
+                    return;
+                };
+                let Some(st) = guard.as_ref() else { return };
+                if st.mips.len() <= 1 {
+                    return;
+                }
+                let next_idx = (st.current_mip as i32 + delta)
+                    .clamp(0, st.mips.len().saturating_sub(1) as i32)
+                    as usize;
+                if next_idx == st.current_mip {
+                    return;
+                }
+                (
+                    st.mips[next_idx].clone(),
+                    next_idx,
+                    st.mips.len(),
+                    st.channel_mode,
+                    st.path.clone(),
+                    st.info.clone(),
+                )
+            };
+
+            let vw = viewer_weak_mip.clone();
+            let uiw = ui_weak_mip.clone();
+            let tex_state = tex_state_mip.clone();
+            let viewer_state = viewer_state_mip.clone();
+            let gen_ref = preview_gen_mip.clone();
+
+            thread::spawn(move || {
+                let rgba = match decode_mip_to_rgba(&target_mip) {
+                    Ok(r) => Arc::new(r),
+                    Err(e) => {
+                        let msg = format!("Failed to decode mip #{mip_index}: {e}");
+                        notify(&vw, &uiw, &msg, LogLevel::Error);
+                        return;
+                    }
+                };
+                let preview = apply_channel_mode(&rgba, mode).into_owned();
+                if gen_ref.load(Ordering::Acquire) != gen_id {
+                    return;
+                }
+
+                if let Ok(mut guard) = viewer_state.lock()
+                    && let Some(st) = guard.as_mut()
+                {
+                    st.current_mip = mip_index;
+                    st.current_rgba = rgba.clone();
+                }
+                if let Ok(mut ts) = tex_state.lock() {
+                    *ts = Some((
+                        target_mip.width,
+                        target_mip.height,
+                        (*rgba).clone(),
+                        path.clone(),
+                    ));
+                }
+
+                let info_text = format_info_text(
+                    info.as_ref(),
+                    &path,
+                    mode,
+                    mip_index,
+                    target_mip.width,
+                    target_mip.height,
+                );
+                let mip_label = format!(
+                    "Mip {}/{} ({}×{})",
+                    mip_index + 1,
+                    mip_count,
+                    target_mip.width,
+                    target_mip.height
+                );
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if gen_ref.load(Ordering::Acquire) != gen_id {
+                        return;
+                    }
+                    if let Some(v) = vw.upgrade() {
+                        v.set_texture_image(rgba_to_slint_image(
+                            target_mip.width,
+                            target_mip.height,
+                            &preview,
+                        ));
+                        v.set_texture_orig_width(target_mip.width as i32);
+                        v.set_texture_orig_height(target_mip.height as i32);
+                        v.set_mip_index(mip_index as i32);
+                        v.set_mip_label(mip_label.into());
+                        v.set_info_text(info_text.into());
+                        v.set_pixel_info("".into());
+                    }
+                });
+            });
+        });
+    }
+
+    fn bind_dds_actions(&self) {
+        // Экспорт в DDS
+        let viewer_state = self.viewer_state.clone();
+        let viewer_weak = self.weak.clone();
+        let ui_weak = crate::UI_WEAK.get().cloned();
         self.window.on_export_dds(move || {
-            let Some(path) = current_texture_path(&tex_state_for_export) else {
+            let Some(path) = current_texture_path(&viewer_state) else {
                 notify(
-                    &viewer_weak_export,
-                    &ui_weak_export,
-                    "There is no loaded texture to export",
+                    &viewer_weak,
+                    &ui_weak,
+                    "There is no loaded texture to export.",
                     LogLevel::Warning,
                 );
                 return;
@@ -234,17 +384,16 @@ impl TextureController {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("texture");
-            let default_name = format!("{stem}.dds");
             let Some(out) = rfd::FileDialog::new()
                 .add_filter("DirectDraw Surface (*.dds)", &["dds"])
-                .set_file_name(&default_name)
+                .set_file_name(format!("{stem}.dds"))
                 .save_file()
             else {
                 return;
             };
 
-            let viewer_weak = viewer_weak_export.clone();
-            let ui_weak = ui_weak_export.clone();
+            let vw = viewer_weak.clone();
+            let uiw = ui_weak.clone();
             thread::spawn(move || {
                 let (msg, level) = match export_tgpcdx_to_dds(&path, &out) {
                     Ok(()) => (
@@ -253,35 +402,34 @@ impl TextureController {
                     ),
                     Err(e) => (format!("DDS export failure: {e}"), LogLevel::Error),
                 };
-                notify(&viewer_weak, &ui_weak, &msg, level);
+                notify(&vw, &uiw, &msg, level);
             });
         });
 
         // Замена из DDS
         let viewer_weak_replace = self.weak.clone();
-        let tex_state_for_replace = self.tex_state.clone();
-        let tex_info_for_replace = self.tex_info.clone();
+        let tex_state_replace = self.tex_state.clone();
+        let viewer_state_replace = self.viewer_state.clone();
+        let preview_gen_replace = self.preview_generation.clone();
         let ui_weak_replace = crate::UI_WEAK.get().cloned();
         self.window.on_replace_from_dds(move || {
-            let Some(path) = current_texture_path(&tex_state_for_replace) else {
+            let Some(path) = current_texture_path(&viewer_state_replace) else {
                 notify(
                     &viewer_weak_replace,
                     &ui_weak_replace,
-                    "There is no loaded texture to replace",
+                    "There is no loaded texture to replace.",
                     LogLevel::Warning,
                 );
                 return;
             };
-
             if is_readonly(&path) {
                 let msg = format!(
-                    "File is read-only (possibly inside the .ap archive):: {}. Unpack before replacing.",
+                    "File is read-only (possibly inside a .ap archive): {}. Unpack before replacing.",
                     path.display()
                 );
                 notify(&viewer_weak_replace, &ui_weak_replace, &msg, LogLevel::Warning);
                 return;
             }
-
             let Some(input) = rfd::FileDialog::new()
                 .add_filter("DirectDraw Surface (*.dds)", &["dds"])
                 .pick_file()
@@ -289,106 +437,181 @@ impl TextureController {
                 return;
             };
 
-            let viewer_weak = viewer_weak_replace.clone();
-            let ui_weak = ui_weak_replace.clone();
-            let tex_state = tex_state_for_replace.clone();
-            let tex_info = tex_info_for_replace.clone();
+            let gen_id = preview_gen_replace.fetch_add(1, Ordering::AcqRel) + 1;
+            let gen_ref = preview_gen_replace.clone();
+            let vw = viewer_weak_replace.clone();
+            let uiw = ui_weak_replace.clone();
+            let tex_state = tex_state_replace.clone();
+            let viewer_state = viewer_state_replace.clone();
+
             thread::spawn(move || {
                 if let Err(e) = external_editor::create_backup_file(&path) {
-                    let msg = format!("Failed to create backup: {e}");
-                    notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
+                    notify(&vw, &uiw, &format!("Failed to create backup: {e}"), LogLevel::Error);
                     return;
                 }
-
-                match convert_dds_to_tgpcdx_report(&input, &path) {
-                    Ok(report) => {
-                        let msg = format!(
-                            "DDS import completed: format {}, mipmaps {}, {} bytes",
-                            report.dds_format, report.mip_count, report.total_bytes
-                        );
-                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
-                    }
+                let report = match convert_dds_to_tgpcdx_report(&input, &path) {
+                    Ok(r) => r,
                     Err(e) => {
-                        let msg = format!("Error replacing from DDS: {e}");
-                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
+                        notify(&vw, &uiw, &format!("Error replacing from DDS: {e}"), LogLevel::Error);
                         return;
                     }
-                }
+                };
+                let msg = format!(
+                    "DDS imported: {} ({} mipmaps, {} B)",
+                    report.dds_format, report.mip_count, report.total_bytes
+                );
+                notify(&vw, &uiw, &msg, LogLevel::Success);
 
-                if let Ok(snapshot) = load_texture_snapshot(&path) {
-                    store_snapshot(&tex_state, &tex_info, &path, &snapshot);
-                    let vw = viewer_weak.clone();
+                if gen_ref.load(Ordering::Acquire) != gen_id {
+                    return;
+                }
+                let mode = current_channel_mode(&viewer_state);
+                if let Ok(snapshot) = load_texture_snapshot(&path, mode) {
+                    store_snapshot(&tex_state, &viewer_state, &snapshot, mode);
+                    let vw_ui = vw.clone();
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(v) = vw.upgrade() {
+                        if gen_ref.load(Ordering::Acquire) != gen_id {
+                            return;
+                        }
+                        if let Some(v) = vw_ui.upgrade() {
                             apply_texture_to_viewer(&v, &snapshot, true);
                         }
                     });
-                    let msg = format!("Texture replaced from DDS: {}", path.display());
-                    notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
                 } else {
                     notify(
-                        &viewer_weak,
-                        &ui_weak,
-                        "Couldn't restart preview after replacement",
+                        &vw,
+                        &uiw,
+                        "Texture replaced, but preview could not be reloaded.",
                         LogLevel::Warning,
                     );
                 }
             });
         });
 
-        // Сохранение внутреннего имени текстуры
-        let tex_state_for_name = self.tex_state.clone();
-        let tex_info_for_name = self.tex_info.clone();
-        let viewer_weak_name = self.weak.clone();
-        let ui_weak_name = crate::UI_WEAK.get().cloned();
-        self.window.on_save_texture_internal_name(move |new_name| {
-            let Some(path) = current_texture_path(&tex_state_for_name) else {
+        // Восстановление из .bak
+        let viewer_weak_bak = self.weak.clone();
+        let tex_state_bak = self.tex_state.clone();
+        let viewer_state_bak = self.viewer_state.clone();
+        let preview_gen_bak = self.preview_generation.clone();
+        let ui_weak_bak = crate::UI_WEAK.get().cloned();
+        self.window.on_restore_backup(move || {
+            let Some(path) = current_texture_path(&viewer_state_bak) else {
                 return;
             };
-            let viewer_weak = viewer_weak_name.clone();
-            let ui_weak = ui_weak_name.clone();
-            let tex_state = tex_state_for_name.clone();
-            let tex_info = tex_info_for_name.clone();
-            let new_name = new_name.to_string();
-            thread::spawn(
-                move || match update_tgpcdx_internal_name(&path, &new_name) {
-                    Ok(()) => {
-                        if let Ok(snapshot) = load_texture_snapshot(&path) {
-                            store_snapshot(&tex_state, &tex_info, &path, &snapshot);
-                            let vw = viewer_weak.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(v) = vw.upgrade() {
-                                    apply_texture_to_viewer(&v, &snapshot, false);
-                                }
-                            });
+            let gen_id = preview_gen_bak.fetch_add(1, Ordering::AcqRel) + 1;
+            let gen_ref = preview_gen_bak.clone();
+            let vw = viewer_weak_bak.clone();
+            let uiw = ui_weak_bak.clone();
+            let tex_state = tex_state_bak.clone();
+            let viewer_state = viewer_state_bak.clone();
+
+            thread::spawn(move || {
+                if let Err(e) = restore_tgpcdx_from_backup(&path) {
+                    notify(&vw, &uiw, &format!("Restore failed: {e}"), LogLevel::Error);
+                    return;
+                }
+                let mode = current_channel_mode(&viewer_state);
+                match load_texture_snapshot(&path, mode) {
+                    Ok(snapshot) => {
+                        if gen_ref.load(Ordering::Acquire) != gen_id {
+                            return;
                         }
-                        let msg = format!("Internal texture name is saved: {}", path.display());
-                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Success);
+                        store_snapshot(&tex_state, &viewer_state, &snapshot, mode);
+                        let vw_ui = vw.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if gen_ref.load(Ordering::Acquire) != gen_id {
+                                return;
+                            }
+                            if let Some(v) = vw_ui.upgrade() {
+                                apply_texture_to_viewer(&v, &snapshot, true);
+                            }
+                        });
+                        notify(
+                            &vw,
+                            &uiw,
+                            &format!("Restored from .bak: {}", path.display()),
+                            LogLevel::Success,
+                        );
                     }
                     Err(e) => {
-                        let msg = format!("Failed to save name: {e}");
-                        notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
+                        notify(
+                            &vw,
+                            &uiw,
+                            &format!("Restored, but preview failed: {e}"),
+                            LogLevel::Warning,
+                        );
                     }
-                },
-            );
+                }
+            });
+        });
+    }
+
+    fn bind_name_actions(&self) {
+        // Сохранение внутреннего имени
+        let tex_state = self.tex_state.clone();
+        let viewer_state = self.viewer_state.clone();
+        let preview_gen = self.preview_generation.clone();
+        let viewer_weak = self.weak.clone();
+        let ui_weak = crate::UI_WEAK.get().cloned();
+        self.window.on_save_texture_internal_name(move |new_name| {
+            let Some(path) = current_texture_path(&viewer_state) else {
+                return;
+            };
+            let gen_id = preview_gen.fetch_add(1, Ordering::AcqRel) + 1;
+            let gen_ref = preview_gen.clone();
+            let vw = viewer_weak.clone();
+            let uiw = ui_weak.clone();
+            let tex_state = tex_state.clone();
+            let viewer_state = viewer_state.clone();
+            let new_name = new_name.to_string();
+
+            thread::spawn(move || match update_tgpcdx_internal_name(&path, &new_name) {
+                Ok(()) => {
+                    let mode = current_channel_mode(&viewer_state);
+                    if let Ok(snapshot) = load_texture_snapshot(&path, mode)
+                        && gen_ref.load(Ordering::Acquire) == gen_id
+                    {
+                        store_snapshot(&tex_state, &viewer_state, &snapshot, mode);
+                        let vw_ui = vw.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if gen_ref.load(Ordering::Acquire) != gen_id {
+                                return;
+                            }
+                            if let Some(v) = vw_ui.upgrade() {
+                                apply_texture_to_viewer(&v, &snapshot, false);
+                            }
+                        });
+                    }
+                    notify(
+                        &vw,
+                        &uiw,
+                        &format!("Internal texture name saved: {}", path.display()),
+                        LogLevel::Success,
+                    );
+                }
+                Err(e) => {
+                    notify(&vw, &uiw, &format!("Failed to save name: {e}"), LogLevel::Error);
+                }
+            });
         });
 
         // Подстановка имени по имени файла
-        let tex_state_for_fn = self.tex_state.clone();
-        let tex_info_for_fn = self.tex_info.clone();
+        let viewer_state_fn = self.viewer_state.clone();
         let viewer_weak_fn = self.weak.clone();
         self.window.on_texture_name_from_file(move || {
             let Some(v) = viewer_weak_fn.upgrade() else {
                 return;
             };
-            let Some(path) = current_texture_path(&tex_state_for_fn) else {
-                return;
+            let (path, current_name) = {
+                let Ok(guard) = viewer_state_fn.lock() else {
+                    return;
+                };
+                let Some(st) = guard.as_ref() else { return };
+                (
+                    st.path.clone(),
+                    st.info.as_ref().map(|i| i.name.clone()).unwrap_or_default(),
+                )
             };
-            let current_name = tex_info_for_fn
-                .lock()
-                .ok()
-                .and_then(|g| g.as_ref().map(|i| i.name.clone()))
-                .unwrap_or_default();
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let new_name = match current_name.rfind(['\\', '/']) {
                 Some(pos) => format!("{}{stem}", &current_name[..=pos]),
@@ -397,13 +620,82 @@ impl TextureController {
             v.set_texture_name(new_name.into());
         });
     }
+
+    fn bind_pixel_probe(&self) {
+        let viewer_weak = self.weak.clone();
+        let viewer_state = self.viewer_state.clone();
+        self.window.on_probe_pixel(move |mx, my, vw, vh| {
+            let Some(v) = viewer_weak.upgrade() else {
+                return;
+            };
+            let zoom = v.get_zoom_factor();
+            if zoom <= 0.0 {
+                return;
+            }
+            let pan_x = v.get_pan_x();
+            let pan_y = v.get_pan_y();
+
+            let text = {
+                let Ok(guard) = viewer_state.lock() else {
+                    return;
+                };
+                let Some(st) = guard.as_ref() else { return };
+                let mip = &st.mips[st.current_mip];
+                let w = mip.width as f32;
+                let h = mip.height as f32;
+                let img_x = (vw - w * zoom) * 0.5 + pan_x;
+                let img_y = (vh - h * zoom) * 0.5 + pan_y;
+                let px = ((mx - img_x) / zoom).floor() as i64;
+                let py = ((my - img_y) / zoom).floor() as i64;
+
+                if px >= 0 && py >= 0 && (px as u32) < mip.width && (py as u32) < mip.height {
+                    let offset = ((py as usize) * (mip.width as usize) + (px as usize)) * 4;
+                    if let Some(&[r, g, b, a]) = st.current_rgba.get(offset..offset + 4) {
+                        format!(
+                            "X: {px}, Y: {py} | RGBA({r}, {g}, {b}, {a}) #{r:02X}{g:02X}{b:02X}{a:02X}"
+                        )
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            };
+            v.set_pixel_info(text.into());
+        });
+    }
+    pub fn load_file_sync(&self, path: &Path) -> Result<(), String> {
+        let snapshot = load_texture_snapshot(path, ChannelMode::Rgb)?;
+        store_snapshot(
+            &self.tex_state,
+            &self.viewer_state,
+            &snapshot,
+            ChannelMode::Rgb,
+        );
+        apply_texture_to_viewer(&self.window, &snapshot, true);
+        Ok(())
+    }
 }
 
-fn current_texture_path(tex_state: &SharedTextureState) -> Option<PathBuf> {
-    tex_state
+fn is_tgpcdx_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("tgpcdx"))
+        && path.is_file()
+}
+
+fn current_texture_path(viewer_state: &SharedViewerState) -> Option<PathBuf> {
+    viewer_state
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().map(|(_, _, _, p)| p.clone()))
+        .and_then(|g| g.as_ref().map(|s| s.path.clone()))
+}
+
+fn current_channel_mode(viewer_state: &SharedViewerState) -> ChannelMode {
+    viewer_state
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.channel_mode))
+        .unwrap_or_default()
 }
 
 fn is_readonly(path: &Path) -> bool {
@@ -412,43 +704,57 @@ fn is_readonly(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn load_texture_snapshot(path: &Path) -> Result<TextureSnapshot, String> {
+fn load_texture_snapshot(path: &Path, mode: ChannelMode) -> Result<TextureSnapshot, String> {
     let data = fs::read(path).map_err(|e| e.to_string())?;
-    let (width, height, rgba) = decode_tgpcdx_to_rgba(&data)?;
-    let info = inspect_tgpcdx_with_path(&data, Some(path)).ok();
-    let info_text = info
-        .as_ref()
-        .map(|i| texture_info_text(i, path, false))
-        .unwrap_or_else(|| fallback_info_text(path, width, height, false));
+    let (mips, info) = load_tgpcdx_bundle(&data, Some(path))?;
+    let base = mips.first().ok_or("no image blocks")?;
+    let width = base.width;
+    let height = base.height;
+    let rgba = Arc::new(decode_mip_to_rgba(base)?);
+    let preview_rgba = apply_channel_mode(&rgba, mode).into_owned();
+    let info_text = format_info_text(info.as_ref(), path, mode, 0, width, height);
     let name = info.as_ref().map(|i| i.name.clone()).unwrap_or_default();
+    let has_bak = info.as_ref().is_some_and(|i| i.has_bak);
     let writable = !is_readonly(path);
+
     Ok(TextureSnapshot {
+        path: path.to_path_buf(),
+        mips,
         width,
         height,
         rgba,
+        preview_rgba,
         info,
         info_text,
         name,
         writable,
+        has_bak,
     })
 }
 
 fn store_snapshot(
     tex_state: &SharedTextureState,
-    tex_info: &SharedTextureInfo,
-    path: &Path,
+    viewer_state: &SharedViewerState,
     snapshot: &TextureSnapshot,
+    mode: ChannelMode,
 ) {
     if let Ok(mut st) = tex_state.lock() {
         *st = Some((
             snapshot.width,
             snapshot.height,
-            snapshot.rgba.clone(),
-            path.to_path_buf(),
+            (*snapshot.rgba).clone(),
+            snapshot.path.clone(),
         ));
     }
-    if let Ok(mut info) = tex_info.lock() {
-        *info = snapshot.info.clone();
+    if let Ok(mut vs) = viewer_state.lock() {
+        *vs = Some(ViewerState {
+            path: snapshot.path.clone(),
+            mips: snapshot.mips.clone(),
+            current_mip: 0,
+            current_rgba: snapshot.rgba.clone(),
+            channel_mode: mode,
+            info: snapshot.info.clone(),
+        });
     }
 }
 
@@ -456,11 +762,22 @@ fn apply_texture_to_viewer(v: &TextureViewerWindow, snapshot: &TextureSnapshot, 
     v.set_texture_image(rgba_to_slint_image(
         snapshot.width,
         snapshot.height,
-        &snapshot.rgba,
+        &snapshot.preview_rgba,
     ));
+    v.set_texture_orig_width(snapshot.width as i32);
+    v.set_texture_orig_height(snapshot.height as i32);
+    v.set_mip_index(0);
+    v.set_mip_count(snapshot.mips.len() as i32);
+    v.set_mip_label(
+        format!(
+            "Mip 1/{} ({}×{})",
+            snapshot.mips.len(),
+            snapshot.width,
+            snapshot.height
+        )
+        .into(),
+    );
     if reset_view {
-        v.set_texture_orig_width(snapshot.width as i32);
-        v.set_texture_orig_height(snapshot.height as i32);
         v.set_zoom_factor(if snapshot.width > 640 || snapshot.height > 480 {
             (640.0 / snapshot.width as f32).min(480.0 / snapshot.height as f32)
         } else {
@@ -468,10 +785,32 @@ fn apply_texture_to_viewer(v: &TextureViewerWindow, snapshot: &TextureSnapshot, 
         });
         v.set_pan_x(0.0);
         v.set_pan_y(0.0);
-        v.set_show_alpha(false);
+        v.set_channel_mode(ChannelMode::Rgb.as_index());
+        v.set_status_text("".into());
+        v.set_pixel_info("".into());
     }
     v.set_info_text(snapshot.info_text.as_str().into());
     v.set_texture_name(snapshot.name.as_str().into());
+    v.set_texture_name_enabled(snapshot.writable);
+    v.set_has_bak(snapshot.has_bak);
+}
+
+fn format_info_text(
+    info: Option<&TextureInfo>,
+    path: &Path,
+    mode: ChannelMode,
+    mip_index: usize,
+    mip_w: u32,
+    mip_h: u32,
+) -> String {
+    match info {
+        Some(i) => texture_info_text_with_view(i, path, mode, mip_index, mip_w, mip_h),
+        None => format!(
+            "{mip_w} × {mip_h} px  [{}]  TGPCDX  {}",
+            mode.label(),
+            path.display()
+        ),
+    }
 }
 
 fn notify(
@@ -485,15 +824,10 @@ fn notify(
     let uiw = ui_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(v) = vw.upgrade() {
-            v.set_info_text(msg.as_str().into());
+            v.set_status_text(msg.as_str().into());
         }
         if let Some(ui) = uiw.and_then(|w| w.upgrade()) {
             log_event(&ui, &msg, level);
         }
     });
-}
-
-fn fallback_info_text(path: &Path, w: u32, h: u32, show_alpha: bool) -> String {
-    let alpha = if show_alpha { "  [альфа]" } else { "" };
-    format!("{w} x {h} px  TGPCDX  {}{alpha}", path.display())
 }

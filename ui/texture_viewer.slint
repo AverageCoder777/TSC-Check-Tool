@@ -1,117 +1,294 @@
-import { VerticalBox, HorizontalBox, Button, LineEdit } from "std-widgets.slint";
+import {
+    VerticalBox,
+    HorizontalBox,
+    Button,
+    LineEdit,
+} from "std-widgets.slint";
 
 export component TextureViewerWindow inherits Window {
     title: @tr("Texture viewer");
-    preferred-width: 950px;
-    preferred-height: 750px;
-    min-width: 600px;
-    min-height: 480px;
+    preferred-width: 980px;
+    preferred-height: 780px;
+    min-width: 660px;
+    min-height: 500px;
+
     in-out property <image> texture-image;
     in-out property <int> texture-orig-width: 0;
     in-out property <int> texture-orig-height: 0;
     in-out property <float> zoom-factor: 1.0;
-    in-out property <length> pan_x: 0px;
-    in-out property <length> pan_y: 0px;
+    in-out property <length> pan-x: 0px;
+    in-out property <length> pan-y: 0px;
+
     in-out property <string> info-text: "";
-    in-out property <bool> show-alpha: false;
+    in-out property <string> status-text: "";
+    in-out property <string> pixel-info: "";
     in-out property <string> texture-name: "";
     in-out property <bool> texture-name-enabled: true;
+    in-out property <bool> has-bak: false;
 
-    callback toggle-alpha();
+    // 0: RGB, 1: RGBA, 2: Alpha, 3: R, 4: G, 5: B
+    in-out property <int> channel-mode: 0;
+    in-out property <int> mip-index: 0;
+    in-out property <int> mip-count: 1;
+    in-out property <string> mip-label: "Mip 1/1";
+    in-out property <bool> pixelated: false;
+    // 0: Dark, 1: Gray, 2: Light
+    in-out property <int> bg-mode: 0;
+
+    callback cycle-channel-mode();
+    callback step-mip(int);
+    callback probe-pixel(float, float, float, float);
     callback export-dds();
     callback replace-from-dds();
+    callback restore-backup();
     callback open-in-editor();
     callback save-texture-internal-name(string);
     callback texture-name-from-file();
 
     VerticalBox {
+        spacing: 6px;
+
         HorizontalBox {
             spacing: 6px;
-            Text { text: @tr("Internal name:"); vertical-alignment: center; }
+
+            Text {
+                text: @tr("Internal name:");
+                vertical-alignment: center;
+            }
+
             LineEdit {
                 text <=> root.texture-name;
                 enabled: root.texture-name-enabled;
                 horizontal-stretch: 1;
                 accepted => { root.save-texture-internal-name(self.text); }
             }
-            Button { text: @tr("Save"); enabled: root.texture-name-enabled; clicked => { root.save-texture-internal-name(root.texture-name); } }
-            Button { text: @tr("Open in editor"); clicked => { root.open-in-editor(); } }
-            Button { text: @tr("Rename by file name"); enabled: root.texture-name-enabled; clicked => { root.texture-name-from-file(); } }
+
+            Button {
+                text: @tr("Save");
+                enabled: root.texture-name-enabled;
+                clicked => { root.save-texture-internal-name(root.texture-name); }
+            }
+
+            Button {
+                text: @tr("Rename by file name");
+                enabled: root.texture-name-enabled;
+                clicked => { root.texture-name-from-file(); }
+            }
+
+            Button {
+                text: @tr("Open in editor");
+                clicked => { root.open-in-editor(); }
+            }
         }
+
+        // Карточка метаданных
         Rectangle {
             background: #252525;
             border-width: 1px;
             border-color: #3a3a3a;
             border-radius: 6px;
+
             VerticalBox {
-                padding: 10px;
+                padding: 8px;
+
                 Text {
-                    text: info-text;
-                    font-size: 13px;
+                    text: root.info-text;
+                    font-size: 12px;
                     color: #e5e5e5;
                     wrap: TextWrap.word-wrap;
                     horizontal-stretch: 1;
                 }
             }
         }
-        Rectangle {
+
+        HorizontalBox {
+            spacing: 6px;
+
+            Button {
+                text: root.channel-mode == 0 ? @tr("View: RGB")
+                    : root.channel-mode == 1 ? @tr("View: RGBA")
+                    : root.channel-mode == 2 ? @tr("View: Alpha")
+                    : root.channel-mode == 3 ? @tr("View: R")
+                    : root.channel-mode == 4 ? @tr("View: G")
+                    : @tr("View: B");
+                clicked => { root.cycle-channel-mode(); }
+            }
+
+            Button {
+                text: "◀";
+                enabled: root.mip-index > 0;
+                clicked => { root.step-mip(-1); }
+            }
+
+            Text {
+                text: root.mip-label;
+                vertical-alignment: center;
+                font-size: 12px;
+                color: #d8d8d8;
+            }
+
+            Button {
+                text: "▶";
+                enabled: root.mip-index + 1 < root.mip-count;
+                clicked => { root.step-mip(1); }
+            }
+
+            Button {
+                text: @tr("Fit");
+                clicked => {
+                    if (root.texture-orig-width > 0 && root.texture-orig-height > 0) {
+                        root.zoom-factor = Math.min(
+                            (viewport.width / 1px) / root.texture-orig-width,
+                            (viewport.height / 1px) / root.texture-orig-height);
+                        root.pan-x = 0px;
+                        root.pan-y = 0px;
+                    }
+                }
+            }
+
+            Button {
+                text: "100%";
+                clicked => {
+                    root.zoom-factor = 1.0;
+                    root.pan-x = 0px;
+                    root.pan-y = 0px;
+                }
+            }
+
+            Button {
+                text: root.pixelated ? @tr("Filter: Nearest") : @tr("Filter: Linear");
+                clicked => { root.pixelated = !root.pixelated; }
+            }
+
+            Button {
+                text: root.bg-mode == 0 ? @tr("BG: Dark")
+                    : root.bg-mode == 1 ? @tr("BG: Gray")
+                    : @tr("BG: Light");
+                clicked => { root.bg-mode = Math.mod(root.bg-mode + 1, 3); }
+            }
+
+            Text {
+                text: "\{Math.round(root.zoom-factor * 100)}%";
+                vertical-alignment: center;
+                font-size: 12px;
+                color: #a8b2c0;
+                horizontal-stretch: 1;
+                horizontal-alignment: right;
+            }
+        }
+
+        viewport := Rectangle {
             horizontal-stretch: 1;
             vertical-stretch: 1;
             clip: true;
-            background: #1e1e1e;
-            property <length> viewport-width: self.width;
-            property <length> viewport-height: self.height;
+            border-width: 1px;
+            border-color: #3a3a3a;
+            border-radius: 4px;
+            background: root.bg-mode == 0 ? #1a1a1a
+                : root.bg-mode == 1 ? #606060
+                : #d8d8d8;
 
             Image {
-                source: texture-image;
-                x: (parent.width - self.width) / 2 + root.pan_x;
-                y: (parent.height - self.height) / 2 + root.pan_y;
+                source: root.texture-image;
+                image-rendering: root.pixelated ? ImageRendering.pixelated : ImageRendering.smooth;
+                x: (parent.width - self.width) / 2 + root.pan-x;
+                y: (parent.height - self.height) / 2 + root.pan-y;
                 width: root.texture-orig-width * root.zoom-factor * 1px;
                 height: root.texture-orig-height * root.zoom-factor * 1px;
             }
 
             TouchArea {
-                property <length> drag_start_x;
-                property <length> drag_start_y;
-                property <float> old_zoom;
-                property <float> new_zoom;
+                property <length> drag-start-x;
+                property <length> drag-start-y;
+                property <float> old-zoom;
+                property <float> new-zoom;
 
                 mouse-cursor: self.pressed ? grabbing : grab;
 
                 pointer-event(event) => {
                     if (event.kind == PointerEventKind.down) {
-                        drag_start_x = self.mouse-x;
-                        drag_start_y = self.mouse-y;
+                        drag-start-x = self.mouse-x;
+                        drag-start-y = self.mouse-y;
                     }
                 }
 
                 moved => {
                     if (self.pressed) {
-                        root.pan_x += self.mouse-x - drag_start_x;
-                        root.pan_y += self.mouse-y - drag_start_y;
-                        drag_start_x = self.mouse-x;
-                        drag_start_y = self.mouse-y;
+                        root.pan-x += self.mouse-x - drag-start-x;
+                        root.pan-y += self.mouse-y - drag-start-y;
+                        drag-start-x = self.mouse-x;
+                        drag-start-y = self.mouse-y;
                     }
+                    root.probe-pixel(
+                        self.mouse-x / 1px,
+                        self.mouse-y / 1px,
+                        self.width / 1px,
+                        self.height / 1px);
                 }
 
                 scroll-event(event) => {
-                    old_zoom = root.zoom_factor;
-                    if (event.delta-y > 0) {
-                        new_zoom = Math.min(10.0, old_zoom * 1.15);
-                    } else if (event.delta-y < 0) {
-                        new_zoom = Math.max(0.05, old_zoom / 1.15);
-                    } else {
-                        new_zoom = old_zoom;
+                    old-zoom = root.zoom-factor;
+                    if (old-zoom <= 0.0) {
+                        old-zoom = 1.0;
                     }
-                    root.pan_x = (self.mouse-x - self.width / 2) * (1.0 - new_zoom / old_zoom) + (new_zoom / old_zoom) * root.pan_x;
-                    root.pan_y = (self.mouse-y - self.height / 2) * (1.0 - new_zoom / old_zoom) + (new_zoom / old_zoom) * root.pan_y;
-                    root.zoom_factor = new_zoom;
+                    if (event.delta-y > 0) {
+                        new-zoom = Math.min(32.0, old-zoom * 1.15);
+                    } else if (event.delta-y < 0) {
+                        new-zoom = Math.max(0.05, old-zoom / 1.15);
+                    } else {
+                        new-zoom = old-zoom;
+                    }
+                    root.pan-x = (self.mouse-x - self.width / 2) * (1.0 - new-zoom / old-zoom)
+                        + (new-zoom / old-zoom) * root.pan-x;
+                    root.pan-y = (self.mouse-y - self.height / 2) * (1.0 - new-zoom / old-zoom)
+                        + (new-zoom / old-zoom) * root.pan-y;
+                    root.zoom-factor = new-zoom;
                     accept
                 }
             }
         }
-        Button { text: show-alpha ? @tr("Default mode") : @tr("Alpha mode"); clicked => { toggle-alpha(); } }
-        Button { text: @tr("Export to DDS"); clicked => { export-dds(); } }
-        Button { text: @tr("Import from DDS"); clicked => { replace-from-dds(); } }
+
+        HorizontalBox {
+            spacing: 12px;
+
+            Text {
+                text: root.pixel-info;
+                font-size: 12px;
+                color: #b9c7d9;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            Text {
+                text: root.status-text;
+                font-size: 12px;
+                color: #9ad19a;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-alignment: right;
+            }
+        }
+
+        HorizontalBox {
+            spacing: 6px;
+
+            Button {
+                text: @tr("Export to DDS");
+                horizontal-stretch: 1;
+                clicked => { root.export-dds(); }
+            }
+
+            Button {
+                text: @tr("Import from DDS");
+                horizontal-stretch: 1;
+                clicked => { root.replace-from-dds(); }
+            }
+
+            Button {
+                text: @tr("Restore .bak");
+                enabled: root.has-bak;
+                clicked => { root.restore-backup(); }
+            }
+        }
     }
 }

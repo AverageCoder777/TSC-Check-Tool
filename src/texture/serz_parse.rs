@@ -283,7 +283,7 @@ pub fn collect_serz_image_mips(node: &SerzNode, mips: &mut Vec<ImageMip>) -> Res
 }
 
 /// Собирает мипмапы из временного SERZ дерева с переносом Blob без копирования.
-fn collect_serz_image_mips_owned(
+pub(super) fn collect_serz_image_mips_owned(
     node: &mut SerzNode,
     mips: &mut Vec<ImageMip>,
 ) -> Result<(), String> {

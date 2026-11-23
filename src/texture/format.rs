@@ -16,7 +16,7 @@ pub enum DdsCompression {
 }
 
 impl DdsCompression {
-    pub fn as_dds_name(self) -> &'static str {
+    pub const fn as_dds_name(self) -> &'static str {
         match self {
             Self::Dxt1 => "DXT1",
             Self::Dxt3 => "DXT3",
@@ -27,6 +27,17 @@ impl DdsCompression {
             Self::Unknown => "unknown format",
         }
     }
+}
+
+pub(super) fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 /// Распознаёт формат сжатия по заголовку DDS_HEADER файла .dds.
@@ -93,32 +104,26 @@ pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
     DdsCompression::Unknown
 }
 
-/// DdsCompression from TgPcDx format string.
+/// DdsCompression from TgPcDx format string (zero allocations).
 pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
-    let u = fmt.to_ascii_uppercase();
-    if u.contains("INTERP_ALPHA") || u.contains("DXT5") || u.contains("BC3") {
-        return DdsCompression::Dxt5;
+    let has = |needle| contains_ignore_ascii_case(fmt, needle);
+    if has("INTERP_ALPHA") || has("DXT5") || has("BC3") {
+        DdsCompression::Dxt5
+    } else if has("EXPL_ALPHA") || has("DXT3") || has("BC2") {
+        DdsCompression::Dxt3
+    } else if has("COMPRESSED") || has("DXT1") || has("BC1") {
+        DdsCompression::Dxt1
+    } else if has("BGRA") {
+        DdsCompression::Bgra8888
+    } else if has("8888") || has("RGBA") || has("ARGB") || has("UNCOMPRESSED") {
+        DdsCompression::Rgba8888
+    } else if has("L8") {
+        DdsCompression::L8
+    } else if has("A8") {
+        DdsCompression::A8
+    } else {
+        DdsCompression::Unknown
     }
-    if u.contains("EXPL_ALPHA") || u.contains("DXT3") || u.contains("BC2") {
-        return DdsCompression::Dxt3;
-    }
-    if u.contains("COMPRESSED") || u.contains("DXT1") || u.contains("BC1") {
-        return DdsCompression::Dxt1;
-    }
-    if u.contains("BGRA") {
-        return DdsCompression::Bgra8888;
-    }
-    if u.contains("8888") || u.contains("RGBA") || u.contains("ARGB") || u.contains("UNCOMPRESSED")
-    {
-        return DdsCompression::Rgba8888;
-    }
-    if u.contains("L8") {
-        return DdsCompression::L8;
-    }
-    if u.contains("A8") {
-        return DdsCompression::A8;
-    }
-    DdsCompression::Unknown
 }
 
 /// (человекочитаемая метка, эквивалент в DDS) для тега `Format` из .TgPcDx.
@@ -130,8 +135,8 @@ pub fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
         DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => {
             ("RGBA8888 (uncompressed)".into(), Some("RGBA8888"))
         }
-        DdsCompression::L8 => ("L8 / A8 (8-bit grayscales)".into(), Some("L8")),
-        DdsCompression::A8 => ("L8 / A8 (8-bit grayscales)".into(), Some("A8")),
+        DdsCompression::L8 => ("L8 (8-bit grayscale)".into(), Some("L8")),
+        DdsCompression::A8 => ("A8 (8-bit alpha)".into(), Some("A8")),
         DdsCompression::Unknown => (fmt.to_owned(), None),
     }
 }
@@ -220,8 +225,7 @@ pub struct ImportReport {
 }
 
 /// Проверяет, что буфер данных .dds содержит ровно столько байт, сколько
-/// требуется заявленным уровням мипмапов (сумма размеров уровней строго
-/// равна длине буфера — без обрезанных хвостов и лишнего мусора).
+/// требуется заявленным уровням мипмапов.
 pub fn validate_dds_mip_chain(
     width: u32,
     height: u32,
@@ -234,21 +238,17 @@ pub fn validate_dds_mip_chain(
         return Err("unknown compression format of DDS".into());
     }
     if width == 0 || height == 0 {
-        return Err("incorrect DDS sizes".into());
+        return Err("incorrect DDS dimensions".into());
     }
     if declared_levels == 0 {
-        return Err("No mipmap levels in DDS".into());
+        return Err("no mipmap levels in DDS".into());
     }
     if let Some(expected) = expected_levels
         && declared_levels < expected
     {
-        let level_word = match declared_levels % 10 {
-            1 if declared_levels % 100 != 11 => "level",
-            2..=4 if !(12..=14).contains(&(declared_levels % 100)) => "levels",
-            _ => "levels",
-        };
+        let level_word = if declared_levels == 1 { "level" } else { "levels" };
         return Err(format!(
-            "In DDS file there are {declared_levels} {level_word} mipmaps, expected {expected}. Enable mipmap generation while saving DDS."
+            "DDS file has {declared_levels} mipmap {level_word}, expected {expected}. Enable mipmap generation when saving DDS."
         ));
     }
 
@@ -266,7 +266,7 @@ pub fn validate_dds_mip_chain(
 
     if total != data_len {
         return Err(format!(
-            "DDS file cutted or have extra data: expected {total} bytes of mipmaps, found {data_len}"
+            "DDS file is truncated or has extra data: expected {total} bytes of mipmaps, found {data_len}"
         ));
     }
     Ok(MipChainInfo {
