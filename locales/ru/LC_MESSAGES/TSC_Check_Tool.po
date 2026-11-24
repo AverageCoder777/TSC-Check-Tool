@@ -2,8 +2,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-11-24 00:24+0000\n"
-"PO-Revision-Date: 2026-11-24 14:24+0300\n"
+"POT-Creation-Date: 2026-11-24 11:49+0000\n"
+"PO-Revision-Date: 2026-11-24 14:53+0300\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ru\n"
@@ -64,37 +64,37 @@ msgctxt "MainWindow"
 msgid "No scenarios were found in Scenarios folder of selected route."
 msgstr "В папке Scenarios не найдено ни одной записи."
 
-#: ui\app.slint:381
+#: ui\app.slint:383
 msgctxt "MainWindow"
 msgid "Check route"
 msgstr "Проверить маршрут"
 
-#: ui\app.slint:403
+#: ui\app.slint:394
 msgctxt "MainWindow"
 msgid "Show all assets"
 msgstr "Показать все объекты"
 
-#: ui\app.slint:414
+#: ui\app.slint:401
 msgctxt "MainWindow"
 msgid "Hide log"
 msgstr "Скрыть лог"
 
-#: ui\app.slint:414
+#: ui\app.slint:401
 msgctxt "MainWindow"
 msgid "Show log"
 msgstr "Показать лог"
 
-#: ui\app.slint:436
+#: ui\app.slint:423
 msgctxt "MainWindow"
 msgid "Log"
 msgstr "Лог"
 
-#: ui\app.slint:500
+#: ui\app.slint:487
 msgctxt "MainWindow"
 msgid "Corrupted folders found ({})"
 msgstr "Найдено поврежденных папок {{}}"
 
-#: ui\app.slint:509
+#: ui\app.slint:496
 msgctxt "MainWindow"
 msgid ""
 "Incomplete route folders were found in the Content/Routes folder. These "
@@ -105,507 +105,507 @@ msgstr ""
 "отображаться в качестве маршрутов. Вы можете проигнорировать это "
 "предупреждение, отключить его навсегда или просмотреть список."
 
-#: ui\app.slint:520
+#: ui\app.slint:507
 msgctxt "MainWindow"
 msgid "Ignore"
 msgstr "Игнорировать"
 
-#: ui\app.slint:525
+#: ui\app.slint:512
 msgctxt "MainWindow"
 msgid "Don't show anymore"
 msgstr "Больше не показывать"
 
-#: ui\app.slint:530
+#: ui\app.slint:517
 msgctxt "MainWindow"
 msgid "Show list"
 msgstr "Показать список"
 
-#: ui\app.slint:543
+#: ui\app.slint:530
 msgctxt "AssetInventoryWindow"
 msgid "Route assets list"
 msgstr "Список объектов маршрута"
 
-#: ui\app.slint:568
+#: ui\app.slint:555
 msgctxt "AssetInventoryWindow"
 msgid "Search by path, tile, or source file"
-msgstr "Поиск по пути, тайлам или файлу-источнику"
+msgstr "Поиск по пути, плиткам или файлу-источнику"
 
-#: ui\app.slint:574
+#: ui\app.slint:561
 msgctxt "AssetInventoryWindow"
 msgid "Show all"
 msgstr "Показать все"
 
-#: ui\app.slint:574
+#: ui\app.slint:561
 msgctxt "AssetInventoryWindow"
 msgid "Only missing"
 msgstr "Только недостающие"
 
-#: ui\app.slint:579
+#: ui\app.slint:566
 msgctxt "AssetInventoryWindow"
 msgid "Open in editor"
 msgstr "Открыть в редакторе"
 
-#: ui\app.slint:596
+#: ui\app.slint:583
 msgctxt "AssetInventoryWindow"
-msgid "Replace in route"
-msgstr "Заменить на маршруте"
+msgid "Replace"
+msgstr "Заменить"
 
-#: ui\app.slint:618
+#: ui\app.slint:605
 msgctxt "AssetInventoryWindow"
-msgid "Delete from route"
-msgstr "Удалить из маршрута"
+msgid "Delete"
+msgstr "Удалить"
 
-#: ui\app.slint:628
+#: ui\app.slint:615
 msgctxt "AssetInventoryWindow"
-msgid "Check for symbols"
-msgstr "Проверить на символы"
+msgid "Check symbols"
+msgstr "Проверить символы"
 
-#: ui\app.slint:634
+#: ui\app.slint:621
 msgctxt "AssetInventoryWindow"
 msgid "⚠ Track infrastructure can be replaced only in the TSC editor!!!"
 msgstr "⚠ Путевая инфраструктура меняется только в редакторе TSC!!!"
 
-#: ui\app.slint:644
+#: ui\app.slint:631
 msgctxt "AssetInventoryWindow"
 msgid "Asset path"
 msgstr "Путь объекта"
 
-#: ui\app.slint:649
+#: ui\app.slint:636
 msgctxt "AssetInventoryWindow"
 msgid "Uses count"
 msgstr "Число использований"
 
-#: ui\app.slint:650
+#: ui\app.slint:637
 msgctxt "AssetInventoryWindow"
 msgid "Tiles"
-msgstr "Тайлы"
+msgstr "Плитки"
 
-#: ui\app.slint:661
+#: ui\app.slint:648
 msgctxt "IgnoreListWindow"
 msgid "Ignore-list of routes"
 msgstr "Игнор-список маршрутов"
 
-#: ui\app.slint:675
+#: ui\app.slint:662
 msgctxt "IgnoreListWindow"
 msgid "Add selected to ignore-list"
 msgstr "Добавить выбранный в игнор-лист"
 
-#: ui\app.slint:689 ui\app.slint:711
+#: ui\app.slint:676 ui\app.slint:698
 msgctxt "IncompleteFoldersWindow"
 msgid "Incomplete and corrupted routes"
 msgstr "Неполные и поврежденные маршруты"
 
-#: ui\app.slint:763
+#: ui\app.slint:750
 msgctxt "IncompleteFoldersWindow"
 msgid "No incomplete folders found"
 msgstr "Не найдено неполных папок"
 
-#: ui\app.slint:804
+#: ui\app.slint:791
 msgctxt "IncompleteFoldersWindow"
 msgid "{} files"
 msgstr "{} файлов"
 
-#: ui\app.slint:817
+#: ui\app.slint:804
 msgctxt "IncompleteFoldersWindow"
 msgid "Missing: "
 msgstr "Утеряно: "
 
-#: ui\app.slint:841
+#: ui\app.slint:828
 msgctxt "IncompleteFoldersWindow"
 msgid "📁 explorer"
 msgstr "📁 проводник"
 
-#: ui\app.slint:876
+#: ui\app.slint:863
 msgctxt "IncompleteFoldersWindow"
 msgid "Delete selected"
 msgstr "Удалить выбранное"
 
-#: ui\app.slint:897
+#: ui\app.slint:884
 msgctxt "IncompleteFoldersWindow"
 msgid "Delete all"
 msgstr "Удалить все"
 
-#: ui\app.slint:911
+#: ui\app.slint:898
 msgctxt "IncompleteFoldersWindow"
 msgid "Close"
 msgstr "Закрыть"
 
-#: ui\app.slint:986
+#: ui\app.slint:973
 msgctxt "ScenarioWindow"
 msgid "Time: {}"
 msgstr "Время: {}"
 
-#: ui\app.slint:1004
+#: ui\app.slint:991
 msgctxt "ScenarioWindow"
 msgid "Author: {}"
 msgstr "Автор: {}"
 
-#: ui\app.slint:1022
+#: ui\app.slint:1009
 msgctxt "ScenarioWindow"
 msgid "Weather: {}"
 msgstr "Погода: {}"
 
-#: ui\app.slint:1040
+#: ui\app.slint:1027
 msgctxt "ScenarioWindow"
 msgid "Season: {}"
 msgstr "Сезон: {}"
 
-#: ui\app.slint:1072
+#: ui\app.slint:1059
 msgctxt "ScenarioWindow"
 msgid "Consists ({})"
 msgstr "Составы {{}}"
 
-#: ui\app.slint:1108
+#: ui\app.slint:1095
 msgctxt "ScenarioWindow"
 msgid "Player"
 msgstr "Игрок"
 
-#: ui\app.slint:1150
+#: ui\app.slint:1137
 msgctxt "ScenarioWindow"
 msgid "Wagons ({})"
 msgstr "Вагоны {{}}"
 
-#: ui\app.slint:1201
+#: ui\app.slint:1188
 msgctxt "ScenarioWindow"
 msgid "Wagon properties"
 msgstr "Свойства вагона"
 
-#: ui\app.slint:1263
+#: ui\app.slint:1250
 msgctxt "ScenarioWindow"
 msgid "Open folder"
 msgstr "Открыть папку"
 
-#: ui\app.slint:1283
+#: ui\app.slint:1270
 msgctxt "ScenarioWindow"
 msgid "Open in LocoSwap"
 msgstr "Открыть в LocoSwap"
 
-#: ui\app.slint:1293
+#: ui\app.slint:1280
 msgctxt "ScenarioWindow"
 msgid "Close"
 msgstr "Закрыть"
 
-#: ui\app.slint:1306 ui\app.slint:1344
+#: ui\app.slint:1293 ui\app.slint:1331
 msgctxt "MissingAssetsWindow"
 msgid "Missing objects"
 msgstr "Утерянные объекты"
 
-#: ui\app.slint:1351
+#: ui\app.slint:1338
 msgctxt "MissingAssetsWindow"
 msgid "Search by path or file"
 msgstr "Поиск по пути или файлу"
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Scenery"
 msgstr "Окружение"
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Loft"
 msgstr "Лофт"
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Road"
 msgstr "Дорога"
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Track infrastructure"
 msgstr "Путевая инфраструктура"
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Track rules"
 msgstr "Правила пути"
 
-#: ui\app.slint:1458
+#: ui\app.slint:1445
 msgctxt "MissingAssetsWindow"
 msgid "Path corrupted"
 msgstr "Путь поврежден"
 
-#: ui\app.slint:1548
+#: ui\app.slint:1535
 msgctxt "MissingAssetsWindow"
 msgid "Used on tiles for: {}"
-msgstr "Используется на тайлах для: {}"
+msgstr "Используется на плитках для: {}"
 
-#: ui\app.slint:1625
+#: ui\app.slint:1612
 msgctxt "MissingAssetsWindow"
 msgid "Copy all list"
 msgstr "Скопировать весь список"
 
-#: ui\app.slint:1650
+#: ui\app.slint:1637
 msgctxt "MissingAssetsWindow"
 msgid "Delete from route"
 msgstr "Удалить из маршрута"
 
-#: ui\app.slint:1672
+#: ui\app.slint:1659
 msgctxt "MissingAssetsWindow"
 msgid "Fix all broken paths"
 msgstr "Исправить все сломанные пути"
 
-#: ui\app.slint:1698
+#: ui\app.slint:1685
 msgctxt "MissingAssetsWindow"
 msgid "Replace"
 msgstr "Заменить"
 
-#: ui\app.slint:1711
+#: ui\app.slint:1698
 msgctxt "RoutePropertiesWarningWindow"
 msgid "RouteProperties.xml warning"
 msgstr "Предупреждение RouteProperties.xml"
 
-#: ui\app.slint:1726
+#: ui\app.slint:1713
 msgctxt "RoutePropertiesWarningWindow"
 msgid "Providers/products not declared in RouteProperties.xml"
 msgstr "Провайдер/продукт не записан в RouteProperties.xml"
 
-#: ui\app.slint:1793
+#: ui\app.slint:1780
 msgctxt "RoutePropertiesWarningWindow"
 msgid "Close"
 msgstr "Закрыть"
 
-#: ui\app.slint:1801
+#: ui\app.slint:1788
 msgctxt "ApAssetPickerWindow"
 msgid "Asset selection from archive"
 msgstr "Выбор объекта из архива"
 
-#: ui\app.slint:1822
+#: ui\app.slint:1809
 msgctxt "ApAssetPickerWindow"
 msgid "Asset selection from archive: {}"
 msgstr "Выбор объекта из архива: {}"
 
-#: ui\app.slint:1828
+#: ui\app.slint:1815
 msgctxt "ApAssetPickerWindow"
 msgid "Search"
 msgstr "Поиск"
 
-#: ui\app.slint:1875
+#: ui\app.slint:1862
 msgctxt "ApAssetPickerWindow"
 msgid "Extracting..."
 msgstr "Извлечение..."
 
-#: ui\app.slint:1881
+#: ui\app.slint:1868
 msgctxt "ApAssetPickerWindow"
 msgid "Cancel"
 msgstr "Отменить"
 
-#: ui\app.slint:1899
+#: ui\app.slint:1886
 msgctxt "ApAssetPickerWindow"
 msgid "Select"
 msgstr "Выбрать"
 
-#: ui\app.slint:1912
+#: ui\app.slint:1899
 msgctxt "SettingsWindow"
 msgid "Settings"
 msgstr "Настройки"
 
-#: ui\app.slint:1948
+#: ui\app.slint:1935
 msgctxt "SettingsWindow"
 msgid "CPU threads:"
 msgstr "Потоки CPU:"
 
-#: ui\app.slint:1973
+#: ui\app.slint:1960
 msgctxt "SettingsWindow"
 msgid "LocoSwap path:"
 msgstr "Путь к LocoSwap:"
 
-#: ui\app.slint:1991 ui\app.slint:2025
+#: ui\app.slint:1978 ui\app.slint:2012
 msgctxt "SettingsWindow"
 msgid "Review"
 msgstr "Обзор"
 
-#: ui\app.slint:2007
+#: ui\app.slint:1994
 msgctxt "SettingsWindow"
 msgid "Game root folder:"
 msgstr "Папка с игрой:"
 
-#: ui\app.slint:2032
+#: ui\app.slint:2019
 msgctxt "SettingsWindow"
 msgid "Route icons"
 msgstr "Иконки маршрутов"
 
-#: ui\app.slint:2039
+#: ui\app.slint:2026
 msgctxt "SettingsWindow"
 msgid "Game installed on HDD"
 msgstr "Игра установлена на HDD"
 
-#: ui\app.slint:2046
+#: ui\app.slint:2033
 msgctxt "SettingsWindow"
 msgid "Hide Quick-Drive and Free-Roam scenario types"
 msgstr "Спрятать сценарии быстрой и свободной игры"
 
-#: ui\app.slint:2059
+#: ui\app.slint:2046
 msgctxt "SettingsWindow"
 msgid "UI Language:"
 msgstr "Язык интерфейса:"
 
-#: ui\app.slint:2159
+#: ui\app.slint:2146
 msgctxt "FolderAuditorWindow"
 msgid "Asset folder check"
 msgstr "Проверка папки объекта"
 
-#: ui\app.slint:2179
+#: ui\app.slint:2166
 msgctxt "FolderAuditorWindow"
 msgid "Ready for check"
 msgstr "Готов к проверке"
 
-#: ui\app.slint:2216
+#: ui\app.slint:2203
 msgctxt "FolderAuditorWindow"
 msgid "Folder to check..."
 msgstr "Папка для проверки..."
 
-#: ui\app.slint:2221
+#: ui\app.slint:2208
 msgctxt "FolderAuditorWindow"
 msgid "Review"
 msgstr "Обзор"
 
-#: ui\app.slint:2227
+#: ui\app.slint:2214
 msgctxt "FolderAuditorWindow"
 msgid "Checking..."
 msgstr "Проверка..."
 
-#: ui\app.slint:2227
+#: ui\app.slint:2214
 msgctxt "FolderAuditorWindow"
 msgid "Start check"
 msgstr "Начать проверку"
 
-#: ui\app.slint:2265
+#: ui\app.slint:2252
 msgctxt "FolderAuditorWindow"
 msgid "All"
 msgstr "Все"
 
-#: ui\app.slint:2276
+#: ui\app.slint:2263
 msgctxt "FolderAuditorWindow"
 msgid "Geometry"
 msgstr "Геометрия"
 
-#: ui\app.slint:2287
+#: ui\app.slint:2274
 msgctxt "FolderAuditorWindow"
 msgid "Textures"
 msgstr "Текстуры"
 
-#: ui\app.slint:2298
+#: ui\app.slint:2285
 msgctxt "FolderAuditorWindow"
 msgid "Scripts"
 msgstr "Скрипты"
 
-#: ui\app.slint:2309
+#: ui\app.slint:2296
 msgctxt "FolderAuditorWindow"
 msgid "Sounds"
 msgstr "Звуки"
 
-#: ui\app.slint:2320
+#: ui\app.slint:2307
 msgctxt "FolderAuditorWindow"
 msgid "Child objects"
 msgstr "Дочерние объекты"
 
-#: ui\app.slint:2331
+#: ui\app.slint:2318
 msgctxt "FolderAuditorWindow"
 msgid "Unused"
 msgstr "Неиспользуемое"
 
-#: ui\app.slint:2355
+#: ui\app.slint:2342
 msgctxt "FolderAuditorWindow"
 msgid "Full graph"
 msgstr "Полный граф"
 
-#: ui\app.slint:2370
+#: ui\app.slint:2357
 msgctxt "FolderAuditorWindow"
 msgid "Type ↑"
 msgstr "Тип ↑"
 
-#: ui\app.slint:2370
+#: ui\app.slint:2357
 msgctxt "FolderAuditorWindow"
 msgid "Type ↓"
 msgstr "Тип ↓"
 
-#: ui\app.slint:2370
+#: ui\app.slint:2357
 msgctxt "FolderAuditorWindow"
 msgid "Type"
 msgstr "Тип"
 
-#: ui\app.slint:2391
+#: ui\app.slint:2378
 msgctxt "FolderAuditorWindow"
 msgid "Missing file ↑"
 msgstr "Утерянный файл ↑"
 
-#: ui\app.slint:2391
+#: ui\app.slint:2378
 msgctxt "FolderAuditorWindow"
 msgid "Missing file ↓"
 msgstr "Утерянный файл ↓"
 
-#: ui\app.slint:2391
+#: ui\app.slint:2378
 msgctxt "FolderAuditorWindow"
 msgid "Missing file"
 msgstr "Утерянный файл"
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Unused file ↑"
 msgstr "Неиспользуемый файл ↑"
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Unused file ↓"
 msgstr "Неиспользуемый файл ↓"
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Unused file"
 msgstr "Неиспользуемый файл"
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Source file ↑"
 msgstr "Источник ↑"
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Source file ↓"
 msgstr "Источник ↓"
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Source file"
 msgstr "Источник"
 
-#: ui\app.slint:2435
+#: ui\app.slint:2422
 msgctxt "FolderAuditorWindow"
 msgid "No problems found"
 msgstr "Проблем не найдено"
 
-#: ui\app.slint:2507
+#: ui\app.slint:2494
 msgctxt "FolderAuditorWindow"
 msgid "Incoming links: "
 msgstr "Входящие ссылки: "
 
-#: ui\app.slint:2514
+#: ui\app.slint:2501
 msgctxt "FolderAuditorWindow"
 msgid "Outgoing links: "
 msgstr "Исходящие ссылки: "
 
-#: ui\app.slint:2526
+#: ui\app.slint:2513
 msgctxt "FolderAuditorWindow"
 msgid "Open folder of source file"
 msgstr "Открыть папку источника"
 
-#: ui\app.slint:2532
+#: ui\app.slint:2519
 msgctxt "FolderAuditorWindow"
 msgid "Open source file"
 msgstr "Открыть источник"
 
-#: ui\app.slint:2538
+#: ui\app.slint:2525
 msgctxt "FolderAuditorWindow"
 msgid "Open folder of missing file"
 msgstr "Открыть папку утерянного файла"
 
-#: ui\app.slint:2543
+#: ui\app.slint:2530
 msgctxt "FolderAuditorWindow"
 msgid "View texture"
 msgstr "Открыть текстуру"
 
-#: ui\app.slint:2548
+#: ui\app.slint:2535
 msgctxt "FolderAuditorWindow"
 msgid "Dependency graph"
 msgstr "Граф зависимостей"
@@ -873,7 +873,7 @@ msgstr "Лог: {}"
 #: .\target\i18n_src\app\app_controller.rs:619
 #, rust-format
 msgid "Replaced placements: {}; edited tiles: {}. {}"
-msgstr "Заменено использований: {}, отредактировано тайлов: {}, {}"
+msgstr "Заменено использований: {}, отредактировано плиток: {}, {}"
 
 #: .\target\i18n_src\app\app_controller.rs:626
 #, rust-format
@@ -950,7 +950,7 @@ msgstr "Проверка завершена: ошибок нет."
 msgid "Check completed: {}."
 msgstr "Проверка завершена: {}."
 
-#: .\target\i18n_src\assets\ap_picker_controller.rs:169
+#: .\target\i18n_src\assets\ap_picker_controller.rs:170
 #, rust-format
 msgid "Unpacking error: {}"
 msgstr "Ошибка распаковки: {}"
@@ -989,7 +989,7 @@ msgid ""
 "Delete loft {0} (Loft tiles: {1}, segments: {2})? This action will "
 "physically change the route files."
 msgstr ""
-"Удалить лофт {0} (тайлы лофта: {1}, сегменты: {2})? Это действие приведёт к "
+"Удалить лофт {0} (плитки: {1}, сегменты: {2})? Это действие приведёт к "
 "физическому изменению файлов маршрутов."
 
 #: .\target\i18n_src\assets\inventory_controller.rs:313
@@ -1001,13 +1001,13 @@ msgid_plural ""
 "Delete object {0} from all Scenery tiles ({1} entries)? This action will "
 "physically change the route files."
 msgstr[0] ""
-"Удалить объект {0} из всех тайлов окружения ({1} запись)? Это действие "
+"Удалить объект {0} из всех плиток окружения ({1} запись)? Это действие "
 "приведёт к физическим изменениям в файлах маршрутов."
 msgstr[1] ""
-"Удалить объект {0} из всех тайлов окружения ({1} записи)? Это действие "
+"Удалить объект {0} из всех плиток окружения ({1} записи)? Это действие "
 "приведёт к физическим изменениям в файлах маршрутов."
 msgstr[2] ""
-"Удалить объект {0} из всех тайлов окружения ({1} записей)? Это действие "
+"Удалить объект {0} из всех плиток окружения ({1} записей)? Это действие "
 "приведёт к физическим изменениям в файлах маршрутов."
 
 #: .\target\i18n_src\assets\inventory_controller.rs:320
@@ -1027,7 +1027,7 @@ msgstr ""
 #, rust-format
 msgid "No suitable tiles for object {0} were found to delete."
 msgstr ""
-"Не найдено подходящих тайлов для объекта {0}, которые можно было бы удалить."
+"Не найдено подходящих плиток для объекта {0}, которые можно было бы удалить."
 
 #: .\target\i18n_src\assets\inventory_controller.rs:343
 msgid "Object deletion"
@@ -1036,16 +1036,16 @@ msgstr "Удаление объекта"
 #: .\target\i18n_src\assets\inventory_controller.rs:392
 #, rust-format
 msgid "Object {0} deleted (tiles: {1}, uses: {2})"
-msgstr "Объект {0} удален (тайлы: {1}, использований: {2})"
+msgstr "Объект {0} удален (плитки: {1}, использований: {2})"
 
 #: .\target\i18n_src\assets\inventory_controller.rs:402
 #, rust-format
 msgid ""
 "Warning: it was not possible to delete uses of the object in the following "
-"tiles {0} (probably a composite lot, manual removal is required): {1}"
+"tiles {0} (probably a composite loft, manual removal is required): {1}"
 msgstr ""
 "Предупреждение: не удалось удалить упоминания объекта в следующих плитках "
-"{0} (вероятно, это составной лофт, требуется удаление вручную): {1}"
+"{0} (вероятно, составной лофт, требуется ручное удаление): {1}"
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:178
 #, rust-format
@@ -1136,8 +1136,8 @@ msgstr "Не удалось открыть граф зависимостей: {}
 msgid "Failed to build full graph: {}"
 msgstr "Не удалось построить полный граф: {}"
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:535
-#: .\target\i18n_src\auditor\auditor_controller.rs:564
+#: .\target\i18n_src\auditor\auditor_controller.rs:536
+#: .\target\i18n_src\auditor\auditor_controller.rs:567
 #, rust-format
 msgid "Parent folder opened in explorer: {}."
 msgstr "Родительская папка открыта в проводнике: {}."
@@ -1187,38 +1187,38 @@ msgstr "Ошибка XML синтаксиса"
 msgid "Editor error: {}"
 msgstr "Ошибка редактора: {}"
 
-#: .\target\i18n_src\geo\viewer3d\mod.rs:199
+#: .\target\i18n_src\geo\viewer3d\mod.rs:201
 #, rust-format
 msgid "Failed to open editor: {}"
 msgstr "Не удалось открыть редактор: {}"
 
-#: .\target\i18n_src\geo\viewer3d\mod.rs:286
+#: .\target\i18n_src\geo\viewer3d\mod.rs:289
 #, rust-format
 msgid "Unable to load model: {}"
 msgstr "Не удалось загрузить модель: {}"
 
-#: .\target\i18n_src\geo\viewer3d\mod.rs:315
-#: .\target\i18n_src\geo\viewer3d\mod.rs:389
+#: .\target\i18n_src\geo\viewer3d\mod.rs:318
+#: .\target\i18n_src\geo\viewer3d\mod.rs:392
 #, rust-format
 msgid "Render failed: {}"
 msgstr "Ошибка отрисовки: : {}"
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:83
+#: .\target\i18n_src\geo\viewer3d\model.rs:84
 #, rust-format
 msgid "Loaded: {0} ({1})"
 msgstr "Загружено: {0} ({1})"
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:87
+#: .\target\i18n_src\geo\viewer3d\model.rs:88
 #, rust-format
 msgid "Missing / invalid: {0} ({1})"
 msgstr "Недостающих / сломанных: {0} ({1})"
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:92
+#: .\target\i18n_src\geo\viewer3d\model.rs:93
 #, rust-format
 msgid "Missing: {0}"
 msgstr "Недостающих: {0}"
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:99
+#: .\target\i18n_src\geo\viewer3d\model.rs:100
 msgid "No texture references found"
 msgstr "Упоминаний текстуры не найдено"
 
@@ -1291,41 +1291,41 @@ msgstr[2] "Всего: {0} папок, полный размер: {1}"
 msgid "Unnamed consist"
 msgstr "Безымянный состав"
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:353
+#: .\target\i18n_src\scenarios\scenario_controller.rs:354
 #, rust-format
 msgid "Scenario folder is open in explorer: {}."
 msgstr "Папка сценария открыта в проводнике: {}"
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:399
+#: .\target\i18n_src\scenarios\scenario_controller.rs:403
 msgid "Locoswap isn't configured: set path to Locoswap in settings."
 msgstr "LocoSwap не настроен: установите путь к программе в настройках."
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:406
+#: .\target\i18n_src\scenarios\scenario_controller.rs:412
 #, rust-format
 msgid "Locoswap is not found: {}."
 msgstr "LocoSwap не найден: {}."
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:420
+#: .\target\i18n_src\scenarios\scenario_controller.rs:428
 #, rust-format
 msgid "Locoswap is launched for scenario: {}."
 msgstr "LocoSwap запущен для сценария: {}."
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:595
+#: .\target\i18n_src\scenarios\scenario_controller.rs:603
 #, rust-format
 msgid "Asset path is open in explorer: {}."
 msgstr "Путь объекта открыт в проводнике: {}."
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:615
+#: .\target\i18n_src\scenarios\scenario_controller.rs:624
 #, rust-format
 msgid "Failed to find asset blueprint in route: {}/{}."
 msgstr "Не удалось найти чертежи объекта в маршруте: {}/{}."
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:661
+#: .\target\i18n_src\scenarios\scenario_controller.rs:673
 #, rust-format
 msgid "Stock path is open in explorer: {}."
 msgstr "Путь к подвижному составу открыт в проводнике: {}."
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:683
+#: .\target\i18n_src\scenarios\scenario_controller.rs:696
 #, rust-format
 msgid "Failed to find stock blueprint: {}/{}."
 msgstr "Не удалось найти чертеж подвижного состава: {}/{}."
@@ -1417,3 +1417,11 @@ msgstr "Внутреннее имя текстуры сохранено: {}"
 #, rust-format
 msgid "Failed to save name: {}"
 msgstr "Не удалось сохранить имя: {}"
+
+#~ msgctxt "AssetInventoryWindow"
+#~ msgid "Replace in route"
+#~ msgstr "Заменить на маршруте"
+
+#~ msgctxt "AssetInventoryWindow"
+#~ msgid "Delete from route"
+#~ msgstr "Удалить из маршрута"
