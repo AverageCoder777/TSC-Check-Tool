@@ -194,6 +194,7 @@ impl SettingsController {
             if let Some(sw) = weak.upgrade() {
                 sw.set_language_index(language_index(&lang));
             }
+            crate::schedule_ui_sync();
         });
     }
 

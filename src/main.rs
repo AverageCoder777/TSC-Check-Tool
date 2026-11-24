@@ -412,9 +412,9 @@ fn main() {
     let _ = APP.set(app.clone());
     let app_for_controllers = app.clone();
 
+    app::settings::apply_saved_language(&app::settings::load_language());
     let ui = MainWindow::new().unwrap();
     let _ = UI_WEAK.set(ui.as_weak());
-    app::settings::apply_saved_language(&app::settings::load_language());
     let ui_handle = ui.as_weak();
     if let Ok(mut app) = app.lock() {
         app.start_route_scan();

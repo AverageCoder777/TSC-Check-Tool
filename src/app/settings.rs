@@ -106,7 +106,7 @@ pub fn apply_saved_language(lang: &str) {
     if lang == "system" {
         return;
     }
-    let _ = slint::select_bundled_translation(lang);
+    crate::i18n::set_language(crate::i18n::Language::from_code(lang));
 }
 
 pub(crate) fn last_game_path_file() -> PathBuf {
