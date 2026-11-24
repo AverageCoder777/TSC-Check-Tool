@@ -40,30 +40,49 @@ fn has_route_data_extension_str(name: &str) -> bool {
         || (bytes.len() >= 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".xml"))
 }
 
+fn is_valid_route_root_file(name: &str) -> bool {
+    name.eq_ignore_ascii_case("RouteProperties.xml")
+}
+
+fn is_valid_network_root_file(name: &str) -> bool {
+    name.eq_ignore_ascii_case("Tracks.bin")
+        || name.eq_ignore_ascii_case("Roads.bin")
+        || name.eq_ignore_ascii_case("Lofts.bin")
+}
+
 fn is_scannable_relative_path(relative: &Path, ignore_scenarios: bool) -> bool {
-    let mut components = relative.components();
+    let mut components = relative
+        .components()
+        .filter(|c| !matches!(c, Component::CurDir));
+
     let Some(first) = components.next() else {
         return false;
     };
-    let in_route_root = components.next().is_none();
     let first_str = first.as_os_str().to_string_lossy();
-    let in_allowed_directory = is_allowed_route_directory(&first_str, ignore_scenarios);
-    let in_non_asset_directory = is_non_asset_directory(&first_str);
 
-    (in_route_root || in_allowed_directory) && !in_non_asset_directory
+    let Some(second) = components.next() else {
+        return is_valid_route_root_file(&first_str);
+    };
+
+    if is_non_asset_directory(&first_str)
+        || !is_allowed_route_directory(&first_str, ignore_scenarios)
+    {
+        return false;
+    }
+
+    if first_str.eq_ignore_ascii_case("Networks") && components.next().is_none() {
+        let file_name = second.as_os_str().to_string_lossy();
+        return is_valid_network_root_file(&file_name);
+    }
+    true
 }
 
-/// Префикс рабочих каталогов программы, которые создаются рядом с файлами маршрута
-/// и ассетов. Такие каталоги не должны попадать в проверку маршрута, а после аварийного
-/// завершения их легко узнать и удалить вручную.
 pub(crate) const TEMP_WORK_DIRECTORY_PREFIX: &str = ".ts-checker-tmp-";
 
 pub(crate) fn is_temporary_work_directory(name: &str) -> bool {
     name.starts_with(TEMP_WORK_DIRECTORY_PREFIX)
 }
 
-/// Создаёт рабочий каталог рядом с целевым файлом: переименование в пределах одного
-/// тома обязательно для `install_converted_asset`, поэтому системный `%TEMP%` не подходит.
 pub(crate) fn create_temporary_work_directory(parent: &Path) -> Result<tempfile::TempDir, String> {
     tempfile::Builder::new()
         .prefix(TEMP_WORK_DIRECTORY_PREFIX)
@@ -109,10 +128,6 @@ pub(crate) fn collect_route_files(
     Ok(files)
 }
 
-/// Читает записи архивов .ap маршрута.
-///
-/// Записи возвращаются как виртуальные файлы: архив не распаковывается целиком,
-/// игра читает его так, будто его нет.
 pub(crate) fn collect_archive_members(
     route_path: &Path,
     ignore_scenarios: bool,
@@ -134,8 +149,6 @@ pub(crate) fn collect_archive_members(
         let zip = zip::ZipArchive::new(file)
             .map_err(|error| format!("Failed to read archive {}: {error}", path.display()))?;
         let archive_stamp = crate::assets::FileStamp::of(&path);
-        // Индекс имён записей архива строится один раз в памяти: поиск и
-        // дедупликация имён идут через HashSet, а не через линейный обход zip.
         let mut seen_names: HashSet<String> = HashSet::new();
         for name_result in zip.file_names() {
             let Ok(raw_name) = name_result else {
@@ -202,7 +215,6 @@ pub(crate) fn unexpected_route_directories(route_path: &Path) -> Result<Vec<Stri
     Ok(unexpected)
 }
 
-/// Находит рабочие каталоги программы, оставшиеся в маршруте после аварийного завершения.
 pub(crate) fn leftover_temporary_work_directories(
     route_path: &Path,
 ) -> Result<Vec<String>, String> {
