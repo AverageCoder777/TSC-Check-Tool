@@ -800,7 +800,7 @@ pub(crate) fn validate_route_structure(
         && !leftover.is_empty()
     {
         issues.push(crate::gettext!(
-            "route folder stil have temp program folders (can be deleted): {}",
+            "route folder still have temp program folders (can be deleted): {}",
             leftover.join(", ")
         ));
     }
@@ -1033,7 +1033,7 @@ fn read_archive_member_bytes(
             })?;
             let archive = ZipArchive::new(file).map_err(|error| {
                 crate::gettext!(
-                    "Failed to read arcive {}: {}",
+                    "Failed to read archive {}: {}",
                     archive_path.display(),
                     error
                 )
@@ -1046,8 +1046,8 @@ fn read_archive_member_bytes(
     let mut member = zip.by_name(member_name).map_err(|error| {
         crate::gettext!(
             "Cannot find {} in {}: {}",
-            archive_path.display(),
             member_name,
+            archive_path.display(),
             error
         )
     })?;
@@ -1061,9 +1061,9 @@ fn read_archive_member_bytes(
     let mut bytes = Vec::with_capacity(member.size().min(64 * 1024 * 1024) as usize);
     member.read_to_end(&mut bytes).map_err(|error| {
         crate::gettext!(
-            "Failed to read {member_name} from {}: {}",
-            archive_path.display(),
+            "Failed to read {} from {}: {}",
             member_name,
+            archive_path.display(),
             error
         )
     })?;

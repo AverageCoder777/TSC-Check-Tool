@@ -2,8 +2,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-11-24 13:56+0000\n"
-"PO-Revision-Date: 2026-11-24 17:08+0300\n"
+"POT-Creation-Date: 2026-11-24 18:05+0000\n"
+"PO-Revision-Date: 2026-11-24 21:13+0300\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ru\n"
@@ -808,15 +808,14 @@ msgid "Restore .bak"
 msgstr "Восстановить из .bak"
 
 #: .\target\i18n_src\main.rs:554
-#, fuzzy, rust-format
-#| msgid "Scenario folder is open in explorer: {}."
+#, rust-format
 msgid "Folder is open in explorer: {}."
-msgstr "Папка сценария открыта в проводнике: {}"
+msgstr "Папка открыта в проводнике: {}"
 
 #: .\target\i18n_src\main.rs:596
 #, rust-format
 msgid "GUID copied into clipboard: {}"
-msgstr ""
+msgstr "GUID скопирован в буфер обмена: {}"
 
 #: .\target\i18n_src\app\app_controller.rs:126
 msgid "Set RailWorks path and scan routes."
@@ -962,158 +961,140 @@ msgid "Check completed: {}."
 msgstr "Проверка завершена: {}."
 
 #: .\target\i18n_src\app\app_controller.rs:788
-#, fuzzy, rust-format
-#| msgid "Editor error: {}"
+#, rust-format
 msgid "[{}] Structure error: {}"
-msgstr "Ошибка редактора: {}"
+msgstr "[{}] Структурная ошибка: {}"
 
 #: .\target\i18n_src\app\app_controller.rs:794
-#, fuzzy, rust-format
-#| msgid "Serz/XML errors count: {}"
+#, rust-format
 msgid "[{}] Serz/XML error: {}"
-msgstr "Количество ошибок Serz/XML: {}"
+msgstr "[{}] Количество ошибок Serz/XML: {}"
 
 #: .\target\i18n_src\app\settings.rs:54
 msgid "Incorrect config path."
-msgstr ""
+msgstr "Некорректный путь конфигурации."
 
 #: .\target\i18n_src\app\settings.rs:56
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create config folder: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать папку с конфигурацией: {}"
 
 #: .\target\i18n_src\app\settings.rs:58
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to prepare config: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось подготовить конфигурацию: {}"
 
 #: .\target\i18n_src\app\settings.rs:60
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to save config {}: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось сохранить конфигурацию {}: {}"
 
 #: .\target\i18n_src\app\settings.rs:139
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to read ignore-list {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось прочитать игнор-лист {}: {}."
 
 #: .\target\i18n_src\app\settings.rs:164
 msgid "Incorrect path to replacement log."
-msgstr ""
+msgstr "Некорректный путь к логу замен."
 
 #: .\target\i18n_src\app\settings.rs:166
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create folder for replacement log: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать папку для лога замен: {}"
 
 #: .\target\i18n_src\app\settings.rs:174
 #, rust-format
-msgid "Не удалось открыть журнал замен {}: {}"
-msgstr ""
+msgid "Failed to open replacement log {}: {}"
+msgstr "Не удалось удалить {}: {}."
 
 #: .\target\i18n_src\app\settings.rs:181
-#, fuzzy, rust-format
-#| msgid "Failed to open file in editor: {}"
+#, rust-format
 msgid "Failed to define log entry time: {}"
-msgstr "Не удалось открыть файл в редакторе: {}"
+msgstr "Не удалось установить время записи в лог: {}"
 
 #: .\target\i18n_src\app\settings.rs:184
-#, fuzzy, rust-format
-#| msgid "Failed to open asset inventory: {}"
+#, rust-format
 msgid "Failed to prepare replacement log entry: {}"
-msgstr "Не удалось открыть инвентарь объектов: {}"
+msgstr "Не удалось подготовить запись в лог замен: {}"
 
 #: .\target\i18n_src\app\settings.rs:188
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to write replacement log {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось записать лог замен {}: {}."
 
 #: .\target\i18n_src\app\settings.rs:213
 #, rust-format
 msgid "Incorrect route icon setting in {}."
-msgstr ""
+msgstr "Некорректная настройка иконок маршрутов в {}."
 
 #: .\target\i18n_src\app\settings.rs:219
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to read route icon setting {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось прочитать настройку иконок маршрутов {}: {}."
 
 #: .\target\i18n_src\app\settings.rs:230
 msgid "Incorrect path to route icon setting."
-msgstr ""
+msgstr "Некорректный путь к настройке иконок маршрутов."
 
 #: .\target\i18n_src\app\settings.rs:232 .\target\i18n_src\app\settings.rs:278
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create settings folder: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать папку настроек: {}"
 
 #: .\target\i18n_src\app\settings.rs:235
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to save route icon setting {}: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось сохранить настройку иконок маршрутов {}: {}"
 
 #: .\target\i18n_src\app\settings.rs:246
 #, rust-format
 msgid "Incorrect max Serz threads count in {}."
-msgstr ""
+msgstr "Некорректное число максимальных потоков для Serz в {}."
 
 #: .\target\i18n_src\app\settings.rs:251
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to read Serz threads setting {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось прочитать настройку потоков Serz {}: {}."
 
 #: .\target\i18n_src\app\settings.rs:259
 #, rust-format
 msgid "Serz threads in {} must be at least 1."
-msgstr ""
+msgstr "Число потоков Serz в {} должно быть хотя бы 1."
 
 #: .\target\i18n_src\app\settings.rs:270
 #, rust-format
 msgid "Serz threads must be from 1 to {}."
-msgstr ""
+msgstr "Число потоков должно быть от 1 до {}."
 
 #: .\target\i18n_src\app\settings.rs:276
 msgid "Incorrect path to Serz setting."
-msgstr ""
+msgstr "Некорректный путь к настройкe Serz."
 
 #: .\target\i18n_src\app\settings.rs:280
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to save Serz setting {}: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось сохранить настройку Serz {}: {}"
 
 #: .\target\i18n_src\app\settings_controller.rs:27
-msgid "Окно настроек недоступно"
-msgstr ""
+msgid "Settings window is unavailable"
+msgstr "Окно настроек недоступно"
 
 #: .\target\i18n_src\assets\analysis_cache.rs:202
 #: .\target\i18n_src\assets\analysis_cache.rs:208
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to write analysis cache: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось записать кэш анализа: {}"
 
 #: .\target\i18n_src\assets\analysis_cache.rs:205
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to prepare analysis cache: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось подготовить кэш анализа: {}"
 
 #: .\target\i18n_src\assets\analysis_cache.rs:216
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to save analysis cache: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось сохранить кэш анализа: {}"
 
 #: .\target\i18n_src\assets\ap_picker_controller.rs:170
 #, rust-format
@@ -1121,20 +1102,18 @@ msgid "Unpacking error: {}"
 msgstr "Ошибка распаковки: {}"
 
 #: .\target\i18n_src\assets\checker.rs:91
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "{}: failed to read file: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "{}: не удалось прочитать файл: {}"
 
 #: .\target\i18n_src\assets\checker.rs:414
 msgid "Scanning route files..."
 msgstr "Сканирование файлов маршрутов..."
 
 #: .\target\i18n_src\assets\checker.rs:456
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create file check pool: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать пул файловой проверки: {}"
 
 #: .\target\i18n_src\assets\checker.rs:463
 #, rust-format
@@ -1147,10 +1126,9 @@ msgid "Analyzing files. {0} out of {1}; threads: {2}"
 msgstr "Анализ файлов. {0} из {1}; потоков: {2}"
 
 #: .\target\i18n_src\assets\checker.rs:559
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to save check cache: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось сохранить кэш проверки: {}"
 
 #: .\target\i18n_src\assets\checker.rs:563
 #, rust-format
@@ -1162,54 +1140,46 @@ msgid "Checking for umlauts..."
 msgstr "Проверка на умляуты..."
 
 #: .\target\i18n_src\assets\checker.rs:635
-#, fuzzy, rust-format
-#| msgctxt "RoutePropertiesWarningWindow"
-#| msgid "Providers/products not declared in RouteProperties.xml"
+#, rust-format
 msgid ""
 "Provider/product «{} / {}» used on route, but not declared in "
 "RouteProperties.xml."
-msgstr "Провайдер/продукт не записан в RouteProperties.xml"
+msgstr ""
+"Разработчик/продукт \"{}/{}\" используется в маршруте, но не записан в "
+"RouteProperties.xml."
 
 #: .\target\i18n_src\assets\checker.rs:699
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "failed to read {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "не удалось прочитать {}: {}"
 
 #: .\target\i18n_src\assets\checker.rs:702
-#, fuzzy, rust-format
-#| msgid "Render failed: {}"
+#, rust-format
 msgid "Read failure {}: {}"
-msgstr "Ошибка отрисовки: : {}"
+msgstr "Ошибка чтения {}: {}"
 
 #: .\target\i18n_src\assets\checker.rs:783
-#, fuzzy
-#| msgctxt "RoutePropertiesWarningWindow"
-#| msgid "RouteProperties.xml warning"
 msgid "RouteProperties.xml not found"
-msgstr "Предупреждение RouteProperties.xml"
+msgstr "RouteProperties.xml не найден"
 
 #: .\target\i18n_src\assets\checker.rs:786
-#, fuzzy
-#| msgctxt "FolderAuditorWindow"
-#| msgid "Asset folder check"
 msgid "Assets folder not found"
-msgstr "Проверка папки объекта"
+msgstr "Папка Assets не найдена"
 
 #: .\target\i18n_src\assets\checker.rs:789
 msgid "no any .bin or .xml for check"
-msgstr ""
+msgstr "нет никаких .bin или .xml для проверки"
 
 #: .\target\i18n_src\assets\checker.rs:795
-#, fuzzy, rust-format
-#| msgid "Deleted incomplete folder: {0}."
+#, rust-format
 msgid "unexpected route folders: {}"
-msgstr "Удалено неполных папок: {0}."
+msgstr "неожиданных папок с маршрутами: {}."
 
 #: .\target\i18n_src\assets\checker.rs:803
 #, rust-format
-msgid "route folder stil have temp program folders (can be deleted): {}"
+msgid "route folder still have temp program folders (can be deleted): {}"
 msgstr ""
+"папка маршрута содержит временные файлы программы (их можно удалить): {}"
 
 #: .\target\i18n_src\assets\checker.rs:854
 #: .\target\i18n_src\common\external_editor.rs:110
@@ -1223,68 +1193,59 @@ msgstr ""
 #: .\target\i18n_src\routes\routes_main.rs:626
 #: .\target\i18n_src\routes\routes_main.rs:652
 #: .\target\i18n_src\routes\routes_main.rs:729
-#: .\target\i18n_src\routes\routes_main.rs:1057
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#: .\target\i18n_src\routes\routes_main.rs:1059
+#, rust-format
 msgid "Failed to read {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось прочитать {}: {}."
 
 #: .\target\i18n_src\assets\checker.rs:886
 #: .\target\i18n_src\assets\checker.rs:1029
 #: .\target\i18n_src\common\archive.rs:265
 #: .\target\i18n_src\routes\routes_main.rs:367
 #: .\target\i18n_src\routes\routes_main.rs:468
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
+#, rust-format
 msgid "Failed to open archive {}: {}"
-msgstr "Не удалось открыть редактор: {}"
+msgstr "Не удалось открыть архив {}: {}"
 
 #: .\target\i18n_src\assets\checker.rs:893
+#: .\target\i18n_src\assets\checker.rs:1036
 #: .\target\i18n_src\common\archive.rs:267
 #: .\target\i18n_src\routes\routes_main.rs:370
 #: .\target\i18n_src\routes\routes_main.rs:470
-#: .\target\i18n_src\routes\routes_main.rs:902
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#: .\target\i18n_src\routes\routes_main.rs:904
+#, rust-format
 msgid "Failed to read archive {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
-
-#: .\target\i18n_src\assets\checker.rs:1036
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
-msgid "Failed to read arcive {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось прочитать архив {}: {}"
 
 #: .\target\i18n_src\assets\checker.rs:1048
 #, rust-format
 msgid "Cannot find {} in {}: {}"
-msgstr ""
+msgstr "Не получилось найти {} в {}: {}"
 
 #: .\target\i18n_src\assets\checker.rs:1064
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
-msgid "Failed to read {member_name} from {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+#, rust-format
+msgid "Failed to read {} from {}: {}"
+msgstr "Не удалось прочитать {} из {}: {}"
 
 #: .\target\i18n_src\assets\inventory_controller.rs:138
 msgid "No objects with non-standard symbols were found."
-msgstr ""
+msgstr "Не найдено объектов с нестандартными символами."
 
 #: .\target\i18n_src\assets\inventory_controller.rs:141
 #, rust-format
 msgid "Found objects with non-standard symbols: {}."
-msgstr ""
+msgstr "Найдено объектов с нестандартными символами: {}."
 
 #: .\target\i18n_src\assets\inventory_controller.rs:146
 msgid "Symbol filter is disabled."
-msgstr ""
+msgstr "Фильтр символов отключен."
 
 #: .\target\i18n_src\assets\inventory_controller.rs:273
 #: .\target\i18n_src\assets\inventory_controller.rs:443
-#: .\target\i18n_src\assets\replacement.rs:35
-#: .\target\i18n_src\assets\replacement.rs:65
-#: .\target\i18n_src\assets\replacement.rs:397
-#: .\target\i18n_src\assets\replacement.rs:415
+#: .\target\i18n_src\assets\replacement.rs:37
+#: .\target\i18n_src\assets\replacement.rs:67
+#: .\target\i18n_src\assets\replacement.rs:408
+#: .\target\i18n_src\assets\replacement.rs:426
 msgid "You can't change the track infrastructure parts through the program!"
 msgstr "В программе нельзя изменять элементы путевой инфраструктуры!"
 
@@ -1354,15 +1315,12 @@ msgstr ""
 "{0} (вероятно, составной лофт, требуется ручное удаление): {1}"
 
 #: .\target\i18n_src\assets\inventory_controller.rs:456
-#, fuzzy
-#| msgctxt "AssetInventoryWindow"
-#| msgid "Replace in route"
 msgid "Replace on route..."
-msgstr "Заменить на маршруте"
+msgstr "Заменить на маршруте..."
 
 #: .\target\i18n_src\assets\inventory_controller.rs:457
 msgid "RailWorks Blueprint (*.bin)"
-msgstr ""
+msgstr "RailWorks чертежи (*.bin)"
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:178
 #, rust-format
@@ -1385,28 +1343,28 @@ msgstr "Замена путевой инфраструктуры запреще�
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:307
 msgid "Select BIN of new object or open AP archive with it"
-msgstr ""
+msgstr "Выберите BIN нового объекта или откройте AP архив с ним"
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:308
 msgid "RW Assets (*.bin, *.ap)"
-msgstr ""
+msgstr "RW объекты (*.bin, *.ap)"
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:309
 msgid "RW Blueprint (*.bin)"
-msgstr ""
+msgstr "RW чертежи (*.bin)"
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:310
 msgid "AP Archive (*.ap)"
-msgstr ""
+msgstr "AP архив (*.ap)"
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:407
-#, fuzzy
-#| msgctxt "MissingAssetsWindow"
-#| msgid "Delete from route"
+#, rust-format
 msgid ""
 "Delete object from route:\n"
-"{=}"
-msgstr "Удалить из маршрута"
+"{}"
+msgstr ""
+"Удалить объект из маршрута:\n"
+"{}"
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:433
 #, rust-format
@@ -1422,190 +1380,175 @@ msgstr ""
 "Предупреждение: не удалось удалить упоминания объекта {0} в следующих "
 "плитках: {1}"
 
-#: .\target\i18n_src\assets\replacement.rs:25
-#: .\target\i18n_src\assets\replacement.rs:59
+#: .\target\i18n_src\assets\replacement.rs:26
+#: .\target\i18n_src\assets\replacement.rs:61
 msgid "No places of use were found for the object."
-msgstr ""
+msgstr "Не найдено использований этого объекта."
 
-#: .\target\i18n_src\assets\replacement.rs:30
-#, fuzzy
-#| msgctxt "AssetInventoryWindow"
-#| msgid "⚠ Track infrastructure can be replaced only in the TSC editor!!!"
+#: .\target\i18n_src\assets\replacement.rs:32
 msgid ""
 "Deleting track infrastructure and route parameters is only available in the "
 "game editor."
-msgstr "⚠ Путевая инфраструктура меняется только в редакторе TSC!!!"
+msgstr ""
+"Удаление путевой инфраструктуры и параметров маршрута доступны только в "
+"игровом редакторе."
 
-#: .\target\i18n_src\assets\replacement.rs:70
+#: .\target\i18n_src\assets\replacement.rs:72
 #, rust-format
 msgid "Deletion working only for Loft/Road tiles: {}"
-msgstr ""
+msgstr "Удаление доступно только для плиток Лофт/Дорога: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:96
-#, fuzzy
-#| msgid "Object deletion"
+#: .\target\i18n_src\assets\replacement.rs:99
 msgid "deletions"
-msgstr "Удаление объекта"
+msgstr "удаления"
 
-#: .\target\i18n_src\assets\replacement.rs:108
+#: .\target\i18n_src\assets\replacement.rs:111
 #, rust-format
 msgid "Deletion working only for BIN-tiles {}: {}"
-msgstr ""
+msgstr "Удаление работает только для плиток BIN {}: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:118
-#: .\target\i18n_src\assets\replacement.rs:126
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
+#: .\target\i18n_src\assets\replacement.rs:121
+#: .\target\i18n_src\assets\replacement.rs:129
+#, rust-format
 msgid "Failed to read {} before deletion: {}"
-msgstr "Не удалось открыть редактор: {}"
+msgstr "Не удалось прочитать {} перед удалением: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:152
+#: .\target\i18n_src\assets\replacement.rs:155
 #, rust-format
 msgid "In tiles {} found no uses of {}. Update check and repeat."
 msgstr ""
+"В плитках {} не найдено использований {}. Обновите проверку и повторите."
 
-#: .\target\i18n_src\assets\replacement.rs:171
+#: .\target\i18n_src\assets\replacement.rs:174
 #, rust-format
 msgid "Deleted entries: {}; successful changed files: {}. Error in {}: {}."
 msgstr ""
+"Удалено записей: {}; успешно отредактировано файлов: {}. Ошибки в {}: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:191
-#, fuzzy, rust-format
-#| msgid "Couldn't delete any incomplete folders."
+#: .\target\i18n_src\assets\replacement.rs:194
+#, rust-format
 msgid "Couldn't check the route folder: {}"
-msgstr "Не удалось удалить никакую неполную папку."
+msgstr "Не удалось проверить папку маршрута: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:197
+#: .\target\i18n_src\assets\replacement.rs:200
 #, rust-format
 msgid "File for {} located off the route: {}"
-msgstr ""
+msgstr "Файл для {} находится вне маршрута: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:204
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
-msgid "Failed to check route file{}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+#: .\target\i18n_src\assets\replacement.rs:207
+#, rust-format
+msgid "Failed to check route file {}: {}"
+msgstr "Не удалось проверить файл маршрута {}: {}."
 
-#: .\target\i18n_src\assets\replacement.rs:208
+#: .\target\i18n_src\assets\replacement.rs:211
 #, rust-format
 msgid "File for {} located off the route of unavailable: {}"
-msgstr ""
+msgstr "Файл для {} находится вне маршрута и недоступен: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:239
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#: .\target\i18n_src\assets\replacement.rs:242
+#, rust-format
 msgid "Failed to prerare changed BIN {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось подготовить измененный BIN {}: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:246
+#: .\target\i18n_src\assets\replacement.rs:249
 #, rust-format
 msgid "Generation error: file size abnormally small ({} bytes). {}"
-msgstr ""
+msgstr "Ошибка генерации: размер файла ненормально мал ({} байт). {}"
 
-#: .\target\i18n_src\assets\replacement.rs:253
+#: .\target\i18n_src\assets\replacement.rs:257
 #: .\target\i18n_src\common\external_editor.rs:135
 #, rust-format
 msgid "Serialization error: generated binary is corrupted: {}"
-msgstr ""
+msgstr "Ошибка сериализации: сгенерированный бинарный файл поврежден: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:259
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#: .\target\i18n_src\assets\replacement.rs:264
+#, rust-format
 msgid "Failed to prepare changed BIN {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось подготовить измененный BIN {}: {}."
 
-#: .\target\i18n_src\assets\replacement.rs:308
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#: .\target\i18n_src\assets\replacement.rs:313
+#, rust-format
 msgid "Failed to check new asset: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось проверить новый объект: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:311
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
+#: .\target\i18n_src\assets\replacement.rs:316
+#, rust-format
 msgid "Failed to check Assets folder: {}"
-msgstr "Не удалось открыть редактор: {}"
+msgstr "Не удалось проверить папку Assets: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:314
-#, fuzzy
-#| msgid "Folder must be inside RailWorks/Assets!"
+#: .\target\i18n_src\assets\replacement.rs:319
 msgid "New object must be inside Assets folder."
-msgstr "Папка должна находиться внутри RailWorks/Assets!"
+msgstr "Новый объект должен находиться внутри папки Assets."
 
-#: .\target\i18n_src\assets\replacement.rs:320
+#: .\target\i18n_src\assets\replacement.rs:326
 msgid "To replace, select an existing asset BIN file."
-msgstr ""
+msgstr "Для замены выберите существующий BIN файл объекта."
 
-#: .\target\i18n_src\assets\replacement.rs:332
+#: .\target\i18n_src\assets\replacement.rs:340
 msgid "Path of new object must have format Provider/Product/....bin."
-msgstr ""
+msgstr "Путь нового объекта должен иметь формат Разработчик/Продукт/….bin."
 
-#: .\target\i18n_src\assets\replacement.rs:346
+#: .\target\i18n_src\assets\replacement.rs:356
 msgid "No usage locations were found for the missing asset."
-msgstr ""
+msgstr "Не найдено мест применения утерянного объекта."
 
-#: .\target\i18n_src\assets\replacement.rs:368
-#: .\target\i18n_src\assets\replacement.rs:382
-#: .\target\i18n_src\assets\replacement.rs:391
+#: .\target\i18n_src\assets\replacement.rs:379
+#: .\target\i18n_src\assets\replacement.rs:393
+#: .\target\i18n_src\assets\replacement.rs:402
 msgid "Type of selected asset mismatched with type of missing asset."
-msgstr ""
+msgstr "Тип выбранного объекта не соответствует типу утерянного."
 
-#: .\target\i18n_src\assets\replacement.rs:419
-#, fuzzy
-#| msgctxt "AssetInventoryWindow"
-#| msgid "Replace"
+#: .\target\i18n_src\assets\replacement.rs:431
 msgid "replacements"
-msgstr "Заменить"
+msgstr "замены"
 
-#: .\target\i18n_src\assets\replacement.rs:438
-#, fuzzy, rust-format
-#| msgctxt "MissingAssetsWindow"
-#| msgid "Used on tiles for: {}"
+#: .\target\i18n_src\assets\replacement.rs:450
+#, rust-format
 msgid "Unknown route file format: {}"
-msgstr "Используется на плитках для: {}"
+msgstr "Неизвестный формат файла маршрута: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:449
-#: .\target\i18n_src\assets\replacement.rs:457
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#: .\target\i18n_src\assets\replacement.rs:461
+#: .\target\i18n_src\assets\replacement.rs:469
+#, rust-format
 msgid "Failed to read {} before replace: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось прочитать {} перед заменой: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:497
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#: .\target\i18n_src\assets\replacement.rs:509
+#, rust-format
 msgid "Failed to prepare {} before replace: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось подготовить {} перед заменой: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:504
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
+#: .\target\i18n_src\assets\replacement.rs:517
+#, rust-format
 msgid "Failed to read XML for {}: {}"
-msgstr "Не удалось открыть редактор: {}"
+msgstr "Не удалось прочитать XML для {}: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:537
+#: .\target\i18n_src\assets\replacement.rs:553
 #, rust-format
 msgid "Replacement in {} created broken XML: {}"
-msgstr ""
+msgstr "Замена в {} создала сломанный XML: {}"
 
-#: .\target\i18n_src\assets\replacement.rs:544
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
-msgid "Failed to write temporal XML for {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
-
-#: .\target\i18n_src\assets\replacement.rs:557
+#: .\target\i18n_src\assets\replacement.rs:560
 #, rust-format
-msgid ""
-"No usage of {old_asset} found in the source code of the route. Update check "
-"and repeat."
-msgstr ""
+msgid "Failed to write temporal XML for {}: {}"
+msgstr "Не удалось записать временный XML для {}: {}."
 
-#: .\target\i18n_src\assets\replacement.rs:578
+#: .\target\i18n_src\assets\replacement.rs:573
+#, fuzzy, rust-format
+#| msgid "In tiles {} found no uses of {}. Update check and repeat."
+msgid ""
+"No usage of {} found in the source code of the route. Update check and "
+"repeat."
+msgstr ""
+"В плитках {} не найдено использований {}. Обновите проверку и повторите."
+
+#: .\target\i18n_src\assets\replacement.rs:595
 #, rust-format
 msgid ""
 "Replaced entries: {}; changed files: {}. Error in {}: {}. Created backups: {}"
 msgstr ""
+"Заменено записей: {}, изменено файлов: {}. Ошибка в {}: {}. Созданы "
+"резервные копии: {}"
 
 #: .\target\i18n_src\auditor\auditor_controller.rs:40
 msgid "Specified path does not exist or is not a folder!"
@@ -1645,10 +1588,9 @@ msgid "Scanning files: {} / {}..."
 msgstr "Сканирование файлов: {} / {}..."
 
 #: .\target\i18n_src\auditor\auditor_controller.rs:258
-#, fuzzy, rust-format
-#| msgid "DDS export failure: {}"
+#, rust-format
 msgid "Check failure: {}"
-msgstr "Сбой экспорта DDS: {}"
+msgstr "Сбой проверки: {}"
 
 #: .\target\i18n_src\auditor\auditor_controller.rs:305
 msgid "Check completed: no missing or corrupted files."
@@ -1662,12 +1604,12 @@ msgstr "Проверка завершена. Обнаружено проблем
 #: .\target\i18n_src\auditor\auditor_controller.rs:403
 #: .\target\i18n_src\auditor\auditor_controller.rs:421
 msgid "Not used by any blueprint (.bin) or a mesh (.GeoPcDx) in the product"
-msgstr ""
+msgstr "Ни в одном файле продукта не используется"
 
 #: .\target\i18n_src\auditor\auditor_controller.rs:413
 #: .\target\i18n_src\auditor\auditor_controller.rs:423
 msgid "No dependencies"
-msgstr ""
+msgstr "Нет зависимостей"
 
 #: .\target\i18n_src\auditor\auditor_controller.rs:482
 #, rust-format
@@ -1687,54 +1629,48 @@ msgstr "Родительская папка открыта в проводник
 
 #: .\target\i18n_src\auditor\auditor_controller.rs:604
 msgid "Select element is not .bin/.GeoPcDx/.XSec"
-msgstr ""
+msgstr "Выбранный элемент не относится к .bin/.GeoPcDx/.XSec"
 
 #: .\target\i18n_src\common\archive.rs:262
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create folder {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать папку {}: {}"
 
 #: .\target\i18n_src\common\archive.rs:288
 #, rust-format
 msgid "Can't find {} in archive {}"
-msgstr ""
+msgstr "Не удалось найти {} в архиве {}"
 
 #: .\target\i18n_src\common\archive.rs:296
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to read {} from archive: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось прочитать {} из архива: {}"
 
 #: .\target\i18n_src\common\archive.rs:299
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create file {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать файл {}: {}"
 
 #: .\target\i18n_src\common\archive.rs:302
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to unpack file {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось распаковать файл {}: {}."
 
 #: .\target\i18n_src\common\archive.rs:305
 #: .\target\i18n_src\common\external_editor.rs:202
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to write {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось записать {}: {}"
 
 #: .\target\i18n_src\common\domain.rs:160
 #, rust-format
 msgid "Incorrect path inside archive: {}"
-msgstr ""
+msgstr "Некорректный путь внутри архива: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:48
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to check deserialized TgPcDx: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось проверить десериализованный TgPcDx: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:78
 msgid "Error"
@@ -1757,7 +1693,7 @@ msgstr "Ошибка чтения"
 #: .\target\i18n_src\common\external_editor.rs:127
 #, rust-format
 msgid "Write error: binary file too short ({} bytes)."
-msgstr ""
+msgstr "Ошибка записи: бинарный файл слишком короткий ({} байт)."
 
 #: .\target\i18n_src\common\external_editor.rs:130
 #: .\target\i18n_src\common\external_editor.rs:136
@@ -1766,15 +1702,14 @@ msgid "Write error"
 msgstr "Ошибка записи"
 
 #: .\target\i18n_src\common\external_editor.rs:146
-#, fuzzy, rust-format
-#| msgid "Error replacing from DDS: {}"
+#, rust-format
 msgid "Error writing to binary: {}"
-msgstr "Ошибка импорта из DDS: {}"
+msgstr "Ошибка записи в бинарный файл: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:160
 #, rust-format
 msgid "File saved as XML ({}), binary without changes."
-msgstr ""
+msgstr "Файл сохранен как XML ({}), бинарный файл без изменений."
 
 #: .\target\i18n_src\common\external_editor.rs:170
 #, rust-format
@@ -1798,40 +1733,35 @@ msgid "XML syntax error"
 msgstr "Ошибка XML синтаксиса"
 
 #: .\target\i18n_src\common\external_editor.rs:297
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to launch VS Code: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось запустить VS Code: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:305
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
+#, rust-format
 msgid "Failed to launch Notepad: {}"
-msgstr "Не удалось открыть редактор: {}"
+msgstr "Не удалось запустить Блокнот: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:310
 #, rust-format
 msgid "Incorrect file path: {}"
-msgstr ""
+msgstr "Некорректный путь файла: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:314
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to write temp file {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось записать временный файл {}: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:317
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to install {}: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось установить {}: {}"
 
 #: .\target\i18n_src\common\external_editor.rs:338
 #: .\target\i18n_src\texture\inspect.rs:390
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create backup {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать резервную копию {}: {}"
 
 #: .\target\i18n_src\geo\viewer3d\mod.rs:194
 #: .\target\i18n_src\texture\texture_controller.rs:201
@@ -1931,150 +1861,131 @@ msgstr[1] "Всего: {0} папки, полный размер: {1}"
 msgstr[2] "Всего: {0} папок, полный размер: {1}"
 
 #: .\target\i18n_src\routes\incomplete_folders_controller.rs:261
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
+#, rust-format
 msgid "Failed to determine routes folder: {}"
-msgstr "Не удалось открыть редактор: {}"
+msgstr "Не удалось определить папку маршрутов: {}"
 
 #: .\target\i18n_src\routes\incomplete_folders_controller.rs:273
 msgid "Path to deletion is empty."
-msgstr ""
+msgstr "Путь к удалению пустой."
 
 #: .\target\i18n_src\routes\incomplete_folders_controller.rs:277
-#, fuzzy, rust-format
-#| msgid "Failed to open dependency graph: {}"
+#, rust-format
 msgid "Failed to determine target path: {}"
-msgstr "Не удалось открыть граф зависимостей: {}"
+msgstr "Не удалось определить путь к цели: {}"
 
 #: .\target\i18n_src\routes\incomplete_folders_controller.rs:279
 msgid "Deleting root folder of routes is prohibited."
-msgstr ""
+msgstr "Удаление корневой папки маршрутов запрещено."
 
 #: .\target\i18n_src\routes\incomplete_folders_controller.rs:283
 msgid "Target path is located outside routes folder. Deletion is prohibited."
-msgstr ""
+msgstr "Целевой путь находится вне папки маршрутов. Удаление запрещено."
 
 #: .\target\i18n_src\routes\routes_main.rs:170
 #, rust-format
 msgid "Routes cache is broken and will be updated: {}."
-msgstr ""
+msgstr "Кэш маршрутов сломан и будет обновлен: {}."
 
 #: .\target\i18n_src\routes\routes_main.rs:178
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to read cache {}: {}."
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось прочитать кэш {}: {}."
 
 #: .\target\i18n_src\routes\routes_main.rs:202
 #, rust-format
 msgid "Incorrect path to routes cache: {}"
-msgstr ""
+msgstr "Некорректный путь к кэшу маршрутов: {}"
 
 #: .\target\i18n_src\routes\routes_main.rs:205
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#, rust-format
 msgid "Failed to create cache folder {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать кэш папок {}: {}"
 
 #: .\target\i18n_src\routes\routes_main.rs:212
 #: .\target\i18n_src\routes\routes_main.rs:222
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to save routes cache {}: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось сохранить кэш маршрутов {}: {}"
 
 #: .\target\i18n_src\routes\routes_main.rs:219
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
+#, rust-format
 msgid "Failed to serialize routes cache: {}"
-msgstr "Не удалось сохранить имя: {}"
+msgstr "Не удалось сериализовать кэш маршрутов: {}"
 
 #: .\target\i18n_src\routes\routes_main.rs:334
 #: .\target\i18n_src\routes\routes_main.rs:594
 #: .\target\i18n_src\routes\routes_main.rs:619
-#, fuzzy, rust-format
-#| msgid "Error replacing from DDS: {}"
+#, rust-format
 msgid "Error reading content {}: {}"
-msgstr "Ошибка импорта из DDS: {}"
+msgstr "Ошибка чтения содержимого {}: {}"
 
 #: .\target\i18n_src\routes\routes_main.rs:423
-#: .\target\i18n_src\routes\routes_main.rs:895
-#, fuzzy, rust-format
-#| msgid "Security error during deletion {0}: {1}."
+#: .\target\i18n_src\routes\routes_main.rs:897
+#, rust-format
 msgid "Error during check {}: {}"
-msgstr "Ошибка безопасности во время удаления {0}: {1}."
+msgstr "Ошибка во время проверки {}: {}."
 
 #: .\target\i18n_src\routes\routes_main.rs:612
-#, fuzzy, rust-format
-#| msgid "Failed to delete {0}: {1}."
+#, rust-format
 msgid "Failed to read folder {}: {}"
-msgstr "Не удалось удалить {0}: {1}."
+msgstr "Не удалось проверить папку {}: {}"
 
 #: .\target\i18n_src\routes\routes_main.rs:650
 #: .\target\i18n_src\routes\routes_main.rs:727
-#: .\target\i18n_src\routes\routes_main.rs:900
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
+#: .\target\i18n_src\routes\routes_main.rs:902
+#, rust-format
 msgid "Failed to open {}: {}"
-msgstr "Не удалось открыть редактор: {}"
+msgstr "Не удалось открыть {}: {}"
 
 #: .\target\i18n_src\routes\routes_main.rs:732
-#, fuzzy, rust-format
-#| msgid "Failed to find asset blueprint in route: {}/{}."
-msgid "Failed to find {member_name} in {}: {}"
-msgstr "Не удалось найти чертежи объекта в маршруте: {}/{}."
+#, rust-format
+msgid "Failed to find {} in {}: {}"
+msgstr "Не удалось найти {} в {}: {}"
 
-#: .\target\i18n_src\routes\routes_main.rs:745
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#: .\target\i18n_src\routes\routes_main.rs:746
+#, rust-format
 msgid "Failed to create icon cache {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать кэш иконок {}: {}"
 
-#: .\target\i18n_src\routes\routes_main.rs:758
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
+#: .\target\i18n_src\routes\routes_main.rs:759
+#, rust-format
 msgid "Failed to create icon file {}: {}"
-msgstr "Не удалось создать резервную копию: {}"
+msgstr "Не удалось создать файл иконки {}: {}"
 
-#: .\target\i18n_src\routes\routes_main.rs:765
-#, fuzzy, rust-format
-#| msgid "Failed to save name: {}"
-msgid "Failed to extract {member_name} from {}: {}"
-msgstr "Не удалось сохранить имя: {}"
+#: .\target\i18n_src\routes\routes_main.rs:766
+#, rust-format
+msgid "Failed to extract {} from {}: {}"
+msgstr "Не удалось извлечь {} из {}: {}"
 
-#: .\target\i18n_src\routes\routes_main.rs:906
+#: .\target\i18n_src\routes\routes_main.rs:908
 #, rust-format
 msgid "Error in archive {}: {}"
-msgstr ""
+msgstr "Ошибка в архиве {}: {}"
 
-#: .\target\i18n_src\routes\routes_main.rs:992
-#, fuzzy, rust-format
-#| msgid "Failed to open editor: {}"
-msgid "Failed to open archive: {}"
-msgstr "Не удалось открыть редактор: {}"
-
-#: .\target\i18n_src\routes\routes_main.rs:1003
-#, fuzzy, rust-format
-#| msgid "Failed to create backup: {}"
-msgid "Failed to read archive: {}"
-msgstr "Не удалось создать резервную копию: {}"
-
-#: .\target\i18n_src\routes\routes_main.rs:1036
-msgid "Error while reading archive element"
-msgstr ""
-
-#: .\target\i18n_src\routes\routes_main.rs:1049
-#, fuzzy
-#| msgctxt "RoutePropertiesWarningWindow"
-#| msgid "Providers/products not declared in RouteProperties.xml"
-msgid "Tag RouteName not found in RouteProperties.xml"
-msgstr "Провайдер/продукт не записан в RouteProperties.xml"
-
-#: .\target\i18n_src\routes\routes_main.rs:1053
-#: .\target\i18n_src\routes\routes_main.rs:1066
+#: .\target\i18n_src\routes\routes_main.rs:994
 #, rust-format
-msgid "Untitled — {}"
-msgstr ""
+msgid "Failed to open archive: {}"
+msgstr "Не удалось открыть архив: {}"
+
+#: .\target\i18n_src\routes\routes_main.rs:1005
+#, rust-format
+msgid "Failed to read archive: {}"
+msgstr "Не удалось прочитать архив: {}"
+
+#: .\target\i18n_src\routes\routes_main.rs:1038
+msgid "Error while reading archive element"
+msgstr "Ошибка во время чтения элемента архива"
+
+#: .\target\i18n_src\routes\routes_main.rs:1051
+msgid "Tag RouteName not found in RouteProperties.xml"
+msgstr "Тэг RouteName не найден в RouteProperties.xml"
+
+#: .\target\i18n_src\routes\routes_main.rs:1055
+#: .\target\i18n_src\routes\routes_main.rs:1068
+#, rust-format
+msgid "Untitled - {}"
+msgstr "Неизвестно - {}"
 
 #: .\target\i18n_src\scenarios\scenario.rs:70
 #: .\target\i18n_src\scenarios\scenario.rs:78
@@ -2087,52 +1998,52 @@ msgstr "Безымянный состав"
 #: .\target\i18n_src\scenarios\scenario.rs:239
 #: .\target\i18n_src\scenarios\scenario.rs:306
 msgid "Spring"
-msgstr ""
+msgstr "Весна"
 
 #: .\target\i18n_src\scenarios\scenario.rs:240
 #: .\target\i18n_src\scenarios\scenario.rs:307
 msgid "Summer"
-msgstr ""
+msgstr "Лето"
 
 #: .\target\i18n_src\scenarios\scenario.rs:241
 #: .\target\i18n_src\scenarios\scenario.rs:308
 msgid "Autumn"
-msgstr ""
+msgstr "Осень"
 
 #: .\target\i18n_src\scenarios\scenario.rs:242
 #: .\target\i18n_src\scenarios\scenario.rs:309
 msgid "Winter"
-msgstr ""
+msgstr "Зима"
 
 #: .\target\i18n_src\scenarios\scenario.rs:279
 #: .\target\i18n_src\scenarios\scenario.rs:347
 #: .\target\i18n_src\scenarios\scenario.rs:708
 #: .\target\i18n_src\scenarios\scenario.rs:720
 msgid "Standard"
-msgstr ""
+msgstr "Стандартный"
 
 #: .\target\i18n_src\scenarios\scenario.rs:682
 #: .\target\i18n_src\scenarios\scenario.rs:696
 #: .\target\i18n_src\scenarios\scenario.rs:716
 #: .\target\i18n_src\scenarios\scenario.rs:724
 msgid "Quick Drive"
-msgstr ""
+msgstr "Быстрая игра"
 
 #: .\target\i18n_src\scenarios\scenario.rs:688
 #: .\target\i18n_src\scenarios\scenario.rs:714
 msgid "Free Roam"
-msgstr ""
+msgstr "Свободная игра"
 
 #: .\target\i18n_src\scenarios\scenario.rs:700
 #: .\target\i18n_src\scenarios\scenario.rs:722
 msgid "Timetable (Standard)"
-msgstr ""
+msgstr "Расписание (стандартный)"
 
 #: .\target\i18n_src\scenarios\scenario.rs:703
 #: .\target\i18n_src\scenarios\scenario.rs:706
 #: .\target\i18n_src\scenarios\scenario.rs:718
 msgid "Career"
-msgstr ""
+msgstr "Карьерный"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:220
 #, rust-format
@@ -2142,27 +2053,27 @@ msgid ""
 "File: {}\n"
 "number: {}"
 msgstr ""
+"Разработчик: {}\n"
+"Продукт: {}\n"
+"Файл: {}\n"
+"Номер: {}"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:227
-#, fuzzy
-#| msgid "Select folder(s) to check."
 msgid "Select rolling stock"
-msgstr "Выберите папку (папки) для проверки."
+msgstr "Выберите подвижной состав"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:234
 msgid "No name"
-msgstr ""
+msgstr "Без названия"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:232
-#, fuzzy, rust-format
-#| msgctxt "MainWindow"
-#| msgid "Scenarios: {}"
+#, rust-format
 msgid "Scenario: {}"
-msgstr "Сценарии: {}"
+msgstr "Сценарий: {}"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:241
 msgid "Not specified"
-msgstr ""
+msgstr "Не описано"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:354
 #, rust-format
@@ -2191,6 +2102,10 @@ msgid ""
 "File: {}\n"
 "Number: {}"
 msgstr ""
+"Разработчик: {}\n"
+"Продукт: {}\n"
+"Файл: {}\n"
+"Номер: {}"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:603
 #, rust-format
@@ -2214,34 +2129,35 @@ msgstr "Не удалось найти чертеж подвижного сос�
 
 #: .\target\i18n_src\texture\dds.rs:27
 msgid "incorrect DDS size"
-msgstr ""
+msgstr "Некорректный размер DDS"
 
 #: .\target\i18n_src\texture\dds.rs:31
 msgid "DDS sizes exceeding boundaries of TgPcDx sUInt16"
-msgstr ""
+msgstr "Размеры DDS превышают рамки типа sUInt16 в TgPcDx"
 
 #: .\target\i18n_src\texture\dds.rs:36
 #, rust-format
 msgid "DDS sizes is not powers of two: {}×{}"
-msgstr ""
+msgstr "DDS размеры не являются степенями двоек: {}×{}"
 
 #: .\target\i18n_src\texture\dds.rs:57
 msgid "TgPcDx import requires a binary SERZ target"
-msgstr ""
+msgstr "TgPcDx импорт требует бинарную SERZ цель"
 
 #: .\target\i18n_src\texture\dds.rs:81 .\target\i18n_src\texture\dds.rs:84
 #: .\target\i18n_src\texture\dds.rs:231
 msgid "mip data size overflow"
-msgstr ""
+msgstr "переполнение данных размера мип-уровней"
 
 #: .\target\i18n_src\texture\dds.rs:87
 msgid "DDS mip data is shorter than its declared mip chain"
-msgstr ""
+msgstr "объем данных мип-уровней в DDS меньше заявленной цепочки мип-уровней"
 
 #: .\target\i18n_src\texture\dds.rs:97
 #, rust-format
 msgid "DDS mip data size mismatch: consumed {} bytes, found {}"
 msgstr ""
+"объем данных мип-уровней не совпадает в DDS: обработано {} байт, найдено {}"
 
 #: .\target\i18n_src\texture\dds.rs:121 .\target\i18n_src\texture\inspect.rs:68
 #: .\target\i18n_src\texture\inspect.rs:86
@@ -2249,29 +2165,29 @@ msgstr ""
 #: .\target\i18n_src\texture\serz_parse.rs:20
 #, rust-format
 msgid "serz parse: {}"
-msgstr ""
+msgstr "разбор serz: {}"
 
 #: .\target\i18n_src\texture\dds.rs:146 .\target\i18n_src\texture\inspect.rs:93
 msgid "no image blocks"
-msgstr ""
+msgstr "нет блоков изображений"
 
 #: .\target\i18n_src\texture\dds.rs:155
 #: .\target\i18n_src\texture\serz_parse.rs:30
 msgid "invalid mip dimensions"
-msgstr ""
+msgstr "неправильные разрешения мип-уровней"
 
 #: .\target\i18n_src\texture\dds.rs:158
 msgid "empty mip blob"
-msgstr ""
+msgstr "блок данных (blob) мип-уровней пуст"
 
 #: .\target\i18n_src\texture\dds.rs:187
 msgid "it is impossible to calculate size of the mipmap level"
-msgstr ""
+msgstr "Невозможно посчитать размер мип-уровней"
 
 #: .\target\i18n_src\texture\dds.rs:207
 #, rust-format
 msgid "mip {}x{} size mismatch: got {}, expected {}"
-msgstr ""
+msgstr "мип-уровень {}x{} расходится по размеру: получено {}, ожидается {}"
 
 #: .\target\i18n_src\texture\dds.rs:233
 msgid "mip data exceeds dds buffer"
@@ -2298,7 +2214,7 @@ msgstr ""
 
 #: .\target\i18n_src\texture\decode.rs:174
 msgid "A8 texture data too small"
-msgstr "Данные по каналу A8 слишком малы "
+msgstr "Данные канала A8 слишком малы"
 
 #: .\target\i18n_src\texture\decode.rs:208
 msgid "uncompressed texture data too small"
@@ -2635,6 +2551,23 @@ msgstr "Внутреннее имя текстуры сохранено: {}"
 #, rust-format
 msgid "Failed to save name: {}"
 msgstr "Не удалось сохранить имя: {}"
+
+#, fuzzy, rust-format
+#~| msgid "Failed to save name: {}"
+#~ msgid "Failed to extract {member_name} from {}: {}"
+#~ msgstr "Не удалось сохранить имя: {}"
+
+#, rust-format
+#~ msgid "Failed to read arcive {}: {}"
+#~ msgstr "Не удалось прочитать архив {}: {}"
+
+#, rust-format
+#~ msgid "Failed to read {member_name} from {}: {}"
+#~ msgstr "Не удалось прочитать {} из {}: {}"
+
+#, rust-format
+#~ msgid "Не удалось открыть журнал замен {}: {}"
+#~ msgstr "Не удалось открыть журнал замен {}: {}"
 
 #, rust-format
 #~ msgid "TgPcDx internal name updated: path={}, new_name={}"

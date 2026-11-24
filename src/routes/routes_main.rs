@@ -729,7 +729,8 @@ fn extract_archived_route_icon(
         .map_err(|error| crate::gettext!("Failed to read {}: {}", archive_path.display(), error))?;
     let member = archive.by_name(member_name).map_err(|error| {
         crate::gettext!(
-            "Failed to find {member_name} in {}: {}",
+            "Failed to find {} in {}: {}",
+            member_name,
             archive_path.display(),
             error
         )
@@ -762,7 +763,8 @@ fn extract_archived_route_icon(
     })?;
     io::copy(&mut member.take(MAX_ICON_MEMBER_BYTES), &mut output).map_err(|error| {
         crate::gettext!(
-            "Failed to extract {member_name} from {}: {}",
+            "Failed to extract {} from {}: {}",
+            member_name,
             archive_path.display(),
             error
         )
@@ -1050,7 +1052,7 @@ pub(crate) fn read_route_name(
                     );
                 }
             }
-            return Ok(crate::gettext!("Untitled — {}", fallback));
+            return Ok(crate::gettext!("Untitled - {}", fallback));
         }
         Err(error) => {
             return Err(crate::gettext!(
@@ -1063,7 +1065,7 @@ pub(crate) fn read_route_name(
 
     let text = decode_xml_bytes(&data);
     let Some(name) = parse_route_name(&text).or_else(|| parse_route_name_tag(&text)) else {
-        return Ok(crate::gettext!("Untitled — {}", fallback));
+        return Ok(crate::gettext!("Untitled - {}", fallback));
     };
     Ok(name)
 }

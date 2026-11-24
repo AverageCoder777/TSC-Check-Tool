@@ -171,7 +171,7 @@ pub(crate) fn append_asset_replacement_log(
         .open(path)
         .map_err(|error| {
             crate::gettext!(
-                "Не удалось открыть журнал замен {}: {}",
+                "Failed to open replacement log {}: {}",
                 path.display(),
                 error
             )

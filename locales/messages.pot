@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-11-24 13:56+0000\n"
+"POT-Creation-Date: 2026-11-24 18:05+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -990,7 +990,7 @@ msgstr ""
 
 #: .\target\i18n_src\app\settings.rs:174
 #, rust-format
-msgid "Не удалось открыть журнал замен {}: {}"
+msgid "Failed to open replacement log {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\app\settings.rs:181
@@ -1062,7 +1062,7 @@ msgid "Failed to save Serz setting {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\app\settings_controller.rs:27
-msgid "Окно настроек недоступно"
+msgid "Settings window is unavailable"
 msgstr ""
 
 #: .\target\i18n_src\assets\analysis_cache.rs:202
@@ -1160,7 +1160,7 @@ msgstr ""
 
 #: .\target\i18n_src\assets\checker.rs:803
 #, rust-format
-msgid "route folder stil have temp program folders (can be deleted): {}"
+msgid "route folder still have temp program folders (can be deleted): {}"
 msgstr ""
 
 #: .\target\i18n_src\assets\checker.rs:854
@@ -1175,7 +1175,7 @@ msgstr ""
 #: .\target\i18n_src\routes\routes_main.rs:626
 #: .\target\i18n_src\routes\routes_main.rs:652
 #: .\target\i18n_src\routes\routes_main.rs:729
-#: .\target\i18n_src\routes\routes_main.rs:1057
+#: .\target\i18n_src\routes\routes_main.rs:1059
 #, rust-format
 msgid "Failed to read {}: {}"
 msgstr ""
@@ -1190,17 +1190,13 @@ msgid "Failed to open archive {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\assets\checker.rs:893
+#: .\target\i18n_src\assets\checker.rs:1036
 #: .\target\i18n_src\common\archive.rs:267
 #: .\target\i18n_src\routes\routes_main.rs:370
 #: .\target\i18n_src\routes\routes_main.rs:470
-#: .\target\i18n_src\routes\routes_main.rs:902
+#: .\target\i18n_src\routes\routes_main.rs:904
 #, rust-format
 msgid "Failed to read archive {}: {}"
-msgstr ""
-
-#: .\target\i18n_src\assets\checker.rs:1036
-#, rust-format
-msgid "Failed to read arcive {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\assets\checker.rs:1048
@@ -1210,7 +1206,7 @@ msgstr ""
 
 #: .\target\i18n_src\assets\checker.rs:1064
 #, rust-format
-msgid "Failed to read {member_name} from {}: {}"
+msgid "Failed to read {} from {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\assets\inventory_controller.rs:138
@@ -1228,10 +1224,10 @@ msgstr ""
 
 #: .\target\i18n_src\assets\inventory_controller.rs:273
 #: .\target\i18n_src\assets\inventory_controller.rs:443
-#: .\target\i18n_src\assets\replacement.rs:35
-#: .\target\i18n_src\assets\replacement.rs:65
-#: .\target\i18n_src\assets\replacement.rs:397
-#: .\target\i18n_src\assets\replacement.rs:415
+#: .\target\i18n_src\assets\replacement.rs:37
+#: .\target\i18n_src\assets\replacement.rs:67
+#: .\target\i18n_src\assets\replacement.rs:408
+#: .\target\i18n_src\assets\replacement.rs:426
 msgid "You can't change the track infrastructure parts through the program!"
 msgstr ""
 
@@ -1327,9 +1323,10 @@ msgid "AP Archive (*.ap)"
 msgstr ""
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:407
+#, rust-format
 msgid ""
 "Delete object from route:\n"
-"{=}"
+"{}"
 msgstr ""
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:433
@@ -1344,163 +1341,163 @@ msgid ""
 "following tiles: {1}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:25
-#: .\target\i18n_src\assets\replacement.rs:59
+#: .\target\i18n_src\assets\replacement.rs:26
+#: .\target\i18n_src\assets\replacement.rs:61
 msgid "No places of use were found for the object."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:30
+#: .\target\i18n_src\assets\replacement.rs:32
 msgid ""
 "Deleting track infrastructure and route parameters is only available in the "
 "game editor."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:70
+#: .\target\i18n_src\assets\replacement.rs:72
 #, rust-format
 msgid "Deletion working only for Loft/Road tiles: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:96
+#: .\target\i18n_src\assets\replacement.rs:99
 msgid "deletions"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:108
+#: .\target\i18n_src\assets\replacement.rs:111
 #, rust-format
 msgid "Deletion working only for BIN-tiles {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:118
-#: .\target\i18n_src\assets\replacement.rs:126
+#: .\target\i18n_src\assets\replacement.rs:121
+#: .\target\i18n_src\assets\replacement.rs:129
 #, rust-format
 msgid "Failed to read {} before deletion: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:152
+#: .\target\i18n_src\assets\replacement.rs:155
 #, rust-format
 msgid "In tiles {} found no uses of {}. Update check and repeat."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:171
+#: .\target\i18n_src\assets\replacement.rs:174
 #, rust-format
 msgid "Deleted entries: {}; successful changed files: {}. Error in {}: {}."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:191
+#: .\target\i18n_src\assets\replacement.rs:194
 #, rust-format
 msgid "Couldn't check the route folder: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:197
+#: .\target\i18n_src\assets\replacement.rs:200
 #, rust-format
 msgid "File for {} located off the route: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:204
+#: .\target\i18n_src\assets\replacement.rs:207
 #, rust-format
-msgid "Failed to check route file{}: {}"
+msgid "Failed to check route file {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:208
+#: .\target\i18n_src\assets\replacement.rs:211
 #, rust-format
 msgid "File for {} located off the route of unavailable: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:239
+#: .\target\i18n_src\assets\replacement.rs:242
 #, rust-format
 msgid "Failed to prerare changed BIN {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:246
+#: .\target\i18n_src\assets\replacement.rs:249
 #, rust-format
 msgid "Generation error: file size abnormally small ({} bytes). {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:253
+#: .\target\i18n_src\assets\replacement.rs:257
 #: .\target\i18n_src\common\external_editor.rs:135
 #, rust-format
 msgid "Serialization error: generated binary is corrupted: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:259
+#: .\target\i18n_src\assets\replacement.rs:264
 #, rust-format
 msgid "Failed to prepare changed BIN {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:308
+#: .\target\i18n_src\assets\replacement.rs:313
 #, rust-format
 msgid "Failed to check new asset: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:311
+#: .\target\i18n_src\assets\replacement.rs:316
 #, rust-format
 msgid "Failed to check Assets folder: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:314
+#: .\target\i18n_src\assets\replacement.rs:319
 msgid "New object must be inside Assets folder."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:320
+#: .\target\i18n_src\assets\replacement.rs:326
 msgid "To replace, select an existing asset BIN file."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:332
+#: .\target\i18n_src\assets\replacement.rs:340
 msgid "Path of new object must have format Provider/Product/....bin."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:346
+#: .\target\i18n_src\assets\replacement.rs:356
 msgid "No usage locations were found for the missing asset."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:368
-#: .\target\i18n_src\assets\replacement.rs:382
-#: .\target\i18n_src\assets\replacement.rs:391
+#: .\target\i18n_src\assets\replacement.rs:379
+#: .\target\i18n_src\assets\replacement.rs:393
+#: .\target\i18n_src\assets\replacement.rs:402
 msgid "Type of selected asset mismatched with type of missing asset."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:419
+#: .\target\i18n_src\assets\replacement.rs:431
 msgid "replacements"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:438
+#: .\target\i18n_src\assets\replacement.rs:450
 #, rust-format
 msgid "Unknown route file format: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:449
-#: .\target\i18n_src\assets\replacement.rs:457
+#: .\target\i18n_src\assets\replacement.rs:461
+#: .\target\i18n_src\assets\replacement.rs:469
 #, rust-format
 msgid "Failed to read {} before replace: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:497
+#: .\target\i18n_src\assets\replacement.rs:509
 #, rust-format
 msgid "Failed to prepare {} before replace: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:504
+#: .\target\i18n_src\assets\replacement.rs:517
 #, rust-format
 msgid "Failed to read XML for {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:537
+#: .\target\i18n_src\assets\replacement.rs:553
 #, rust-format
 msgid "Replacement in {} created broken XML: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:544
+#: .\target\i18n_src\assets\replacement.rs:560
 #, rust-format
 msgid "Failed to write temporal XML for {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:557
+#: .\target\i18n_src\assets\replacement.rs:573
 #, rust-format
 msgid ""
-"No usage of {old_asset} found in the source code of the route. Update check "
-"and repeat."
+"No usage of {} found in the source code of the route. Update check and "
+"repeat."
 msgstr ""
 
-#: .\target\i18n_src\assets\replacement.rs:578
+#: .\target\i18n_src\assets\replacement.rs:595
 #, rust-format
 msgid ""
 "Replaced entries: {}; changed files: {}. Error in {}: {}. Created backups: {}"
@@ -1865,7 +1862,7 @@ msgid "Error reading content {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\routes\routes_main.rs:423
-#: .\target\i18n_src\routes\routes_main.rs:895
+#: .\target\i18n_src\routes\routes_main.rs:897
 #, rust-format
 msgid "Error during check {}: {}"
 msgstr ""
@@ -1877,58 +1874,58 @@ msgstr ""
 
 #: .\target\i18n_src\routes\routes_main.rs:650
 #: .\target\i18n_src\routes\routes_main.rs:727
-#: .\target\i18n_src\routes\routes_main.rs:900
+#: .\target\i18n_src\routes\routes_main.rs:902
 #, rust-format
 msgid "Failed to open {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\routes\routes_main.rs:732
 #, rust-format
-msgid "Failed to find {member_name} in {}: {}"
+msgid "Failed to find {} in {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:745
+#: .\target\i18n_src\routes\routes_main.rs:746
 #, rust-format
 msgid "Failed to create icon cache {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:758
+#: .\target\i18n_src\routes\routes_main.rs:759
 #, rust-format
 msgid "Failed to create icon file {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:765
+#: .\target\i18n_src\routes\routes_main.rs:766
 #, rust-format
-msgid "Failed to extract {member_name} from {}: {}"
+msgid "Failed to extract {} from {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:906
+#: .\target\i18n_src\routes\routes_main.rs:908
 #, rust-format
 msgid "Error in archive {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:992
+#: .\target\i18n_src\routes\routes_main.rs:994
 #, rust-format
 msgid "Failed to open archive: {}"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:1003
+#: .\target\i18n_src\routes\routes_main.rs:1005
 #, rust-format
 msgid "Failed to read archive: {}"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:1036
+#: .\target\i18n_src\routes\routes_main.rs:1038
 msgid "Error while reading archive element"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:1049
+#: .\target\i18n_src\routes\routes_main.rs:1051
 msgid "Tag RouteName not found in RouteProperties.xml"
 msgstr ""
 
-#: .\target\i18n_src\routes\routes_main.rs:1053
-#: .\target\i18n_src\routes\routes_main.rs:1066
+#: .\target\i18n_src\routes\routes_main.rs:1055
+#: .\target\i18n_src\routes\routes_main.rs:1068
 #, rust-format
-msgid "Untitled — {}"
+msgid "Untitled - {}"
 msgstr ""
 
 #: .\target\i18n_src\scenarios\scenario.rs:70

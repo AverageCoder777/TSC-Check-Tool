@@ -22,7 +22,9 @@ pub fn delete_scenery_asset(
     uses: &[AssetUse],
 ) -> Result<(usize, usize, Vec<String>), String> {
     if uses.is_empty() {
-        return Err(crate::gettext!("No places of use were found for the object."));
+        return Err(crate::gettext!(
+            "No places of use were found for the object."
+        ));
     }
     for usage in uses {
         if usage.tile_kind != TileKind::Scenery {
@@ -93,7 +95,8 @@ where
     F: FnMut(&mut SerzNode, &str, &str, &str) -> usize,
 {
     let (provider, product, blueprint) = asset_blueprint_ref(asset_path);
-    let source_files = collect_and_validate_source_files(route_path, uses, &crate::gettext!("deletions"))?;
+    let source_files =
+        collect_and_validate_source_files(route_path, uses, &crate::gettext!("deletions"))?;
 
     let mut staged = Vec::new();
     let mut removed_instances = 0usize;
@@ -201,7 +204,7 @@ fn collect_and_validate_source_files(
         }
         if let RouteFile::Path(path) = &source {
             let canonical_source = path.canonicalize().map_err(|error| {
-                crate::gettext!("Failed to check route file{}: {}", source.display(), error)
+                crate::gettext!("Failed to check route file {}: {}", source.display(), error)
             })?;
             if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
                 return Err(crate::gettext!(
@@ -244,13 +247,15 @@ fn stage_modified_bin(
     if bytes.len() < 1024 {
         return Err(crate::gettext!(
             "Generation error: file size abnormally small ({} bytes). {}",
-            bytes.len(), abort_suffix
+            bytes.len(),
+            abort_suffix
         ));
     }
     let mut validation_reader = SerzReader::new(&bytes);
     if let Err(error) = validation_reader.parse() {
         return Err(crate::gettext!(
-            "Serialization error: generated binary is corrupted: {}", error
+            "Serialization error: generated binary is corrupted: {}",
+            error
         ));
     }
     let converted_path = temp_dir.join(output_name);
@@ -317,7 +322,9 @@ pub(crate) fn replace_missing_asset(
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"))
     {
-        return Err(crate::gettext!("To replace, select an existing asset BIN file."));
+        return Err(crate::gettext!(
+            "To replace, select an existing asset BIN file."
+        ));
     }
 
     let replacement_parts: Vec<String> = replacement_relative
@@ -329,7 +336,9 @@ pub(crate) fn replace_missing_asset(
             .iter()
             .any(|component| component == "." || component == "..")
     {
-        return Err(crate::gettext!("Path of new object must have format Provider/Product/....bin."));
+        return Err(crate::gettext!(
+            "Path of new object must have format Provider/Product/....bin."
+        ));
     }
     let replacement_provider = replacement_parts[0].clone();
     let replacement_product = replacement_parts[1].clone();
@@ -343,7 +352,9 @@ pub(crate) fn replace_missing_asset(
         .replace('/', "\\");
     let new_asset = replacement_relative.to_string_lossy().replace('\\', "/");
     if uses.is_empty() {
-        return Err(crate::gettext!("No usage locations were found for the missing asset."));
+        return Err(crate::gettext!(
+            "No usage locations were found for the missing asset."
+        ));
     }
 
     let asset_type = classify_route_asset_type(old_asset, uses);
@@ -416,7 +427,8 @@ pub(crate) fn replace_missing_asset(
         ));
     }
 
-    let source_files = collect_and_validate_source_files(route_path, uses, &crate::gettext!("replacements"))?;
+    let source_files =
+        collect_and_validate_source_files(route_path, uses, &crate::gettext!("replacements"))?;
 
     println!("[Replacement] Asset replaced: {old_asset} -> {new_asset}");
 
@@ -501,7 +513,11 @@ pub(crate) fn replace_missing_asset(
             })?;
 
             let mut xml = fs::read_to_string(&xml_path).map_err(|error| {
-                crate::gettext!("Failed to read XML for {}: {}", source_file.display(), error)
+                crate::gettext!(
+                    "Failed to read XML for {}: {}",
+                    source_file.display(),
+                    error
+                )
             })?;
             let references = extract_asset_references_with_locations(&xml);
             let mut edits: Vec<_> = references
@@ -554,7 +570,8 @@ pub(crate) fn replace_missing_asset(
 
     if staged.is_empty() {
         return Err(crate::gettext!(
-            "No usage of {old_asset} found in the source code of the route. Update check and repeat."
+            "No usage of {} found in the source code of the route. Update check and repeat.",
+            old_asset
         ));
     }
 

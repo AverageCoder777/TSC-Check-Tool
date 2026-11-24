@@ -217,7 +217,7 @@ impl ScenarioController {
                     .and_then(|cc| cc.vehicles.first())
                 {
                     crate::gettext!(
-                        "Provider: {}\nProduct: {}\nFile: {}\nnumber: {}",
+                        "Provider: {}\nProduct: {}\nFile: {}\nNumber: {}",
                         v.provider,
                         v.product,
                         v.blueprint,

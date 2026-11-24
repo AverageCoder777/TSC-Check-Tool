@@ -404,7 +404,7 @@ impl MissingAssetsController {
 
             let confirmed = rfd::MessageDialog::new()
                 .set_title(crate::gettext!("Object deletion"))
-                .set_description(crate::gettext!("Delete object from route:\n{=}", selected_path))
+                .set_description(crate::gettext!("Delete object from route:\n{}", selected_path))
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
             if confirmed != rfd::MessageDialogResult::Ok {
