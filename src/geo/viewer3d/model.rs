@@ -96,7 +96,7 @@ impl LoadedModel {
         }
 
         if statuses.is_empty() {
-            statuses.push(crate::gettext!("No texture references found").into());
+            statuses.push(crate::gettext!("No texture references found"));
             textures.push(Arc::clone(&fallback));
         }
 
