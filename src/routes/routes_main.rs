@@ -166,16 +166,18 @@ pub(crate) fn scan_routes_with_cache(
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    notice = Some(format!(
-                        "Routes cache is broken and will be updated: {error}."
+                    notice = Some(crate::gettext!(
+                        "Routes cache is broken and will be updated: {}.",
+                        error
                     ));
                 }
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
-                notice = Some(format!(
-                    "Failed to read cache {}: {error}.",
-                    cache_file.display()
+                notice = Some(crate::gettext!(
+                    "Failed to read cache {}: {}.",
+                    cache_file.display(),
+                    error
                 ));
             }
         }
@@ -197,26 +199,29 @@ pub(crate) fn scan_routes_with_cache(
     let save_result = (|| {
         let parent = cache_file
             .parent()
-            .ok_or_else(|| format!("Incorrect path to routes cache: {}", cache_file.display()))?;
+            .ok_or_else(|| crate::gettext!("Incorrect path to routes cache: {}", cache_file.display()))?;
         fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "Failed to create cache folder {}: {error}",
-                parent.display()
+            crate::gettext!(
+                "Failed to create cache folder {}: {}",
+                parent.display(),
+                error
             )
         })?;
         let file = fs::File::create(&cache_file).map_err(|error| {
-            format!(
-                "Failed to save routes cache {}: {error}",
-                cache_file.display()
+            crate::gettext!(
+                "Failed to save routes cache {}: {}",
+                cache_file.display(),
+                error
             )
         })?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &cache)
-            .map_err(|error| format!("Failed to serialize routes cache: {error}"))?;
+            .map_err(|error| crate::gettext!("Failed to serialize routes cache: {}", error))?;
         writer.flush().map_err(|error| {
-            format!(
-                "Failed to save routes cache {}: {error}",
-                cache_file.display()
+            crate::gettext!(
+                "Failed to save routes cache {}: {}",
+                cache_file.display(),
+                error
             )
         })
     })();
@@ -323,13 +328,13 @@ pub(crate) fn inspect_route_folder(
     log: Option<&RouteScanLog>,
 ) -> Result<Option<IncompleteRouteFolder>, String> {
     let children: Vec<(PathBuf, String, bool)> = fs::read_dir(path)
-        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?
+        .map_err(|error| crate::gettext!("Failed to read {}: {}", path.display(), error))?
         .map(|entry| {
             let entry = entry
-                .map_err(|error| format!("Error reading content {}: {error}", path.display()))?;
+                .map_err(|error| crate::gettext!("Error reading content {}: {}", path.display(), error))?;
             let is_directory = entry
                 .file_type()
-                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?
+                .map_err(|error| crate::gettext!("Failed to read {}: {}", entry.path().display(), error))?
                 .is_dir();
             Ok((
                 entry.path(),
@@ -359,10 +364,10 @@ pub(crate) fn inspect_route_folder(
                 continue;
             }
             let archive_file = fs::File::open(child_path).map_err(|error| {
-                format!("Failed to open archive {}: {error}", child_path.display())
+                crate::gettext!("Failed to open archive {}: {}", child_path.display(), error)
             })?;
             let archive = ZipArchive::new(archive_file).map_err(|error| {
-                format!("Failed to read archive {}: {error}", child_path.display())
+                crate::gettext!("Failed to read archive {}: {}", child_path.display(), error)
             })?;
             for name_res in archive.file_names() {
                 let Ok(raw_name) = name_res else {
@@ -415,7 +420,7 @@ pub(crate) fn inspect_route_folder(
 
     for entry in WalkDir::new(path).follow_links(false) {
         let entry =
-            entry.map_err(|error| format!("Error during check {}: {error}", path.display()))?;
+            entry.map_err(|error| crate::gettext!("Error during check {}: {}", path.display(), error))?;
         if entry.file_type().is_file()
             && entry
                 .file_name()
@@ -423,7 +428,7 @@ pub(crate) fn inspect_route_folder(
                 .eq_ignore_ascii_case("ScenarioProperties.xml")
         {
             let bytes = fs::read(entry.path())
-                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?;
+                .map_err(|error| crate::gettext!("Failed to read {}: {}", entry.path().display(), error))?;
             let contents = decode_xml_bytes(&bytes);
             let relative = entry
                 .path()
@@ -445,7 +450,7 @@ pub(crate) fn inspect_route_folder(
             file_count += 1;
             let size = entry
                 .metadata()
-                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?
+                .map_err(|error| crate::gettext!("Failed to read {}: {}", entry.path().display(), error))?
                 .len();
             total_size_bytes += size;
             inventory.push(format!("[file, {size} bytes] {}", relative.display()));
@@ -460,9 +465,9 @@ pub(crate) fn inspect_route_folder(
             continue;
         }
         let archive_file = fs::File::open(child_path)
-            .map_err(|error| format!("Failed to open archive {}: {error}", child_path.display()))?;
+            .map_err(|error| crate::gettext!("Failed to open archive {}: {}", child_path.display(), error))?;
         let mut archive = ZipArchive::new(archive_file)
-            .map_err(|error| format!("Failed to read archive {}: {error}", child_path.display()))?;
+            .map_err(|error| crate::gettext!("Failed to read archive {}: {}", child_path.display(), error))?;
 
         // Читаем оглавление архива в памяти без seek, а через by_name открываем только нужные XML.
         let mut xml_to_read: Vec<(String, String, bool)> = Vec::new();
@@ -583,10 +588,10 @@ pub(crate) fn find_route_icon_with_cache(
     let mut route_information = None;
     let mut ap_archives = Vec::new();
     for entry in fs::read_dir(route_path)
-        .map_err(|error| format!("Failed to read {}: {error}", route_path.display()))?
+        .map_err(|error| crate::gettext!("Failed to read {}: {}", route_path.display(), error))?
     {
         let entry = entry
-            .map_err(|error| format!("Error reading content {}: {error}", route_path.display()))?;
+            .map_err(|error| crate::gettext!("Error reading content {}: {}", route_path.display(), error))?;
         let path = entry.path();
         if route_information.is_none()
             && entry
@@ -603,20 +608,22 @@ pub(crate) fn find_route_icon_with_cache(
     let mut disk_images = Vec::new();
     if let Some(route_information) = route_information.filter(|path| path.is_dir()) {
         for entry in fs::read_dir(&route_information).map_err(|error| {
-            format!(
-                "Failed to read folder {}: {error}",
-                route_information.display()
+            crate::gettext!(
+                "Failed to read folder {}: {}",
+                route_information.display(),
+                error
             )
         })? {
             let entry = entry.map_err(|error| {
-                format!(
-                    "Error reading content {}: {error}",
-                    route_information.display()
+                crate::gettext!(
+                    "Error reading content {}: {}",
+                    route_information.display(),
+                    error
                 )
             })?;
             if !entry
                 .file_type()
-                .map_err(|error| format!("Failed to read {}: {error}", entry.path().display()))?
+                .map_err(|error| crate::gettext!("Failed to read {}: {}", entry.path().display(), error))?
                 .is_file()
             {
                 continue;
@@ -640,9 +647,9 @@ pub(crate) fn find_route_icon_with_cache(
     let mut archived_images = Vec::new();
     for archive_path in ap_archives {
         let archive_file = fs::File::open(&archive_path)
-            .map_err(|error| format!("Failed to open {}: {error}", archive_path.display()))?;
+            .map_err(|error| crate::gettext!("Failed to open {}: {}", archive_path.display(), error))?;
         let archive = ZipArchive::new(archive_file)
-            .map_err(|error| format!("Failed to read {}: {error}", archive_path.display()))?;
+            .map_err(|error| crate::gettext!("Failed to read {}: {}", archive_path.display(), error))?;
         for name_res in archive.file_names() {
             let Ok(raw_name) = name_res else {
                 continue;
@@ -717,13 +724,14 @@ fn extract_archived_route_icon(
     cache_directory: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let file = fs::File::open(archive_path)
-        .map_err(|error| format!("Failed to open {}: {error}", archive_path.display()))?;
+        .map_err(|error| crate::gettext!("Failed to open {}: {}", archive_path.display(), error))?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|error| format!("Failed to read {}: {error}", archive_path.display()))?;
+        .map_err(|error| crate::gettext!("Failed to read {}: {}", archive_path.display(), error))?;
     let member = archive.by_name(member_name).map_err(|error| {
-        format!(
-            "Failed to find {member_name} in {}: {error}",
-            archive_path.display()
+        crate::gettext!(
+            "Failed to find {member_name} in {}: {}",
+            archive_path.display(),
+            error
         )
     })?;
     if member.size() > MAX_ICON_MEMBER_BYTES
@@ -733,9 +741,10 @@ fn extract_archived_route_icon(
     }
 
     fs::create_dir_all(cache_directory).map_err(|error| {
-        format!(
-            "Failed to create icon cache {}: {error}",
-            cache_directory.display()
+        crate::gettext!(
+            "Failed to create icon cache {}: {}",
+            cache_directory.display(),
+            error
         )
     })?;
     let cache_key = stable_icon_cache_key(archive_path, member_name);
@@ -745,15 +754,17 @@ fn extract_archived_route_icon(
         .unwrap_or("img");
     let output_path = cache_directory.join(format!("{cache_key}.{extension}"));
     let mut output = fs::File::create(&output_path).map_err(|error| {
-        format!(
-            "Failed to create icon file {}: {error}",
-            output_path.display()
+        crate::gettext!(
+            "Failed to create icon file {}: {}",
+            output_path.display(),
+            error
         )
     })?;
     io::copy(&mut member.take(MAX_ICON_MEMBER_BYTES), &mut output).map_err(|error| {
-        format!(
-            "Failed to extract {member_name} from {}: {error}",
-            archive_path.display()
+        crate::gettext!(
+            "Failed to extract {member_name} from {}: {}",
+            archive_path.display(),
+            error
         )
     })?;
     Ok(Some(output_path))
@@ -881,18 +892,18 @@ pub(crate) fn parse_route_name_tag(xml: &str) -> Option<String> {
 pub(crate) fn directory_contains_files(path: &Path) -> Result<bool, String> {
     for entry in WalkDir::new(path).follow_links(false).min_depth(1) {
         let entry =
-            entry.map_err(|error| format!("Error during check {}: {error}", path.display()))?;
+            entry.map_err(|error| crate::gettext!("Error during check {}: {}", path.display(), error))?;
         if entry.file_type().is_file() {
             let file_path = entry.path();
             if is_ap_archive(file_path) {
                 let file = fs::File::open(file_path)
-                    .map_err(|error| format!("Failed to open {}: {error}", file_path.display()))?;
+                    .map_err(|error| crate::gettext!("Failed to open {}: {}", file_path.display(), error))?;
                 let archive = ZipArchive::new(file).map_err(|error| {
-                    format!("Failed to read archive {}: {error}", file_path.display())
+                    crate::gettext!("Failed to read archive {}: {}", file_path.display(), error)
                 })?;
                 for name_res in archive.file_names() {
                     let name = name_res.map_err(|error| {
-                        format!("Error in archive {}: {error}", file_path.display())
+                        crate::gettext!("Error in archive {}: {}", file_path.display(), error)
                     })?;
                     if !name.ends_with(['/', '\\']) {
                         return Ok(true);
@@ -978,7 +989,7 @@ pub(crate) fn read_route_name(
                         log_route_warning(
                             log,
                             &archive_path,
-                            &format!("failed to open archive: {error}"),
+                            &crate::gettext!("Failed to open archive: {}", error),
                         );
                         continue;
                     }
@@ -989,7 +1000,7 @@ pub(crate) fn read_route_name(
                         log_route_warning(
                             log,
                             &archive_path,
-                            &format!("failed to read archive: {error}"),
+                            &crate::gettext!("Failed to read archive: {}", error),
                         );
                         continue;
                     }
@@ -1022,7 +1033,7 @@ pub(crate) fn read_route_name(
                         log_route_warning(
                             log,
                             &archive_path,
-                            "error while reading archive element",
+                            &crate::gettext!("Error while reading archive element"),
                         );
                         continue;
                     }
@@ -1035,23 +1046,24 @@ pub(crate) fn read_route_name(
                     log_route_warning(
                         log,
                         &archive_path,
-                        "Tag RouteName not found in RouteProperties.xml",
+                        &crate::gettext!("Tag RouteName not found in RouteProperties.xml"),
                     );
                 }
             }
-            return Ok(format!("Untitled — {fallback}"));
+            return Ok(crate::gettext!("Untitled — {}", fallback));
         }
         Err(error) => {
-            return Err(format!(
-                "Failed to read {}: {error}",
-                properties_path.display()
+            return Err(crate::gettext!(
+                "Failed to read {}: {}",
+                properties_path.display(),
+                error
             ));
         }
     };
 
     let text = decode_xml_bytes(&data);
     let Some(name) = parse_route_name(&text).or_else(|| parse_route_name_tag(&text)) else {
-        return Ok(format!("Untitled — {fallback}"));
+        return Ok(crate::gettext!("Untitled — {}", fallback));
     };
     Ok(name)
 }

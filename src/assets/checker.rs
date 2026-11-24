@@ -780,13 +780,13 @@ pub(crate) fn validate_route_structure(
 ) -> Vec<String> {
     let mut issues = Vec::new();
     if !route_properties_exists(route_path) {
-        issues.push("RouteProperties.xml not found".to_owned());
+        issues.push(crate::gettext!("RouteProperties.xml not found"));
     }
     if !assets_path.is_dir() {
-        issues.push("Assets folder not found".to_owned());
+        issues.push(crate::gettext!("Assets folder not found"));
     }
     if files.is_empty() {
-        issues.push("no any .bin или .xml for check".to_owned());
+        issues.push(crate::gettext!("no any .bin or .xml for check"));
     }
     if let Ok(directories) = unexpected_route_directories(route_path)
         && !directories.is_empty()

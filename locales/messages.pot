@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-11-24 11:49+0000\n"
+"POT-Creation-Date: 2026-11-24 13:37+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -62,37 +62,37 @@ msgctxt "MainWindow"
 msgid "No scenarios were found in Scenarios folder of selected route."
 msgstr ""
 
-#: ui\app.slint:383
+#: ui\app.slint:386
 msgctxt "MainWindow"
 msgid "Check route"
 msgstr ""
 
-#: ui\app.slint:394
+#: ui\app.slint:397
 msgctxt "MainWindow"
 msgid "Show all assets"
 msgstr ""
 
-#: ui\app.slint:401
+#: ui\app.slint:404
 msgctxt "MainWindow"
 msgid "Hide log"
 msgstr ""
 
-#: ui\app.slint:401
+#: ui\app.slint:404
 msgctxt "MainWindow"
 msgid "Show log"
 msgstr ""
 
-#: ui\app.slint:423
+#: ui\app.slint:426
 msgctxt "MainWindow"
 msgid "Log"
 msgstr ""
 
-#: ui\app.slint:487
+#: ui\app.slint:490
 msgctxt "MainWindow"
 msgid "Corrupted folders found ({})"
 msgstr ""
 
-#: ui\app.slint:496
+#: ui\app.slint:499
 msgctxt "MainWindow"
 msgid ""
 "Incomplete route folders were found in the Content/Routes folder. These "
@@ -100,507 +100,507 @@ msgid ""
 "permanently, or view the list."
 msgstr ""
 
-#: ui\app.slint:507
+#: ui\app.slint:510
 msgctxt "MainWindow"
 msgid "Ignore"
 msgstr ""
 
-#: ui\app.slint:512
+#: ui\app.slint:515
 msgctxt "MainWindow"
 msgid "Don't show anymore"
 msgstr ""
 
-#: ui\app.slint:517
+#: ui\app.slint:520
 msgctxt "MainWindow"
 msgid "Show list"
 msgstr ""
 
-#: ui\app.slint:530
+#: ui\app.slint:533
 msgctxt "AssetInventoryWindow"
 msgid "Route assets list"
 msgstr ""
 
-#: ui\app.slint:555
+#: ui\app.slint:558
 msgctxt "AssetInventoryWindow"
 msgid "Search by path, tile, or source file"
 msgstr ""
 
-#: ui\app.slint:561
+#: ui\app.slint:564
 msgctxt "AssetInventoryWindow"
 msgid "Show all"
 msgstr ""
 
-#: ui\app.slint:561
+#: ui\app.slint:564
 msgctxt "AssetInventoryWindow"
 msgid "Only missing"
 msgstr ""
 
-#: ui\app.slint:566
+#: ui\app.slint:569
 msgctxt "AssetInventoryWindow"
 msgid "Open in editor"
 msgstr ""
 
-#: ui\app.slint:583
+#: ui\app.slint:586
 msgctxt "AssetInventoryWindow"
 msgid "Replace"
 msgstr ""
 
-#: ui\app.slint:605
+#: ui\app.slint:608
 msgctxt "AssetInventoryWindow"
 msgid "Delete"
 msgstr ""
 
-#: ui\app.slint:615
+#: ui\app.slint:618
 msgctxt "AssetInventoryWindow"
 msgid "Check symbols"
 msgstr ""
 
-#: ui\app.slint:621
+#: ui\app.slint:624
 msgctxt "AssetInventoryWindow"
 msgid "⚠ Track infrastructure can be replaced only in the TSC editor!!!"
 msgstr ""
 
-#: ui\app.slint:631
+#: ui\app.slint:634
 msgctxt "AssetInventoryWindow"
 msgid "Asset path"
 msgstr ""
 
-#: ui\app.slint:636
+#: ui\app.slint:639
 msgctxt "AssetInventoryWindow"
 msgid "Uses count"
 msgstr ""
 
-#: ui\app.slint:637
+#: ui\app.slint:640
 msgctxt "AssetInventoryWindow"
 msgid "Tiles"
 msgstr ""
 
-#: ui\app.slint:648
+#: ui\app.slint:651
 msgctxt "IgnoreListWindow"
 msgid "Ignore-list of routes"
 msgstr ""
 
-#: ui\app.slint:662
+#: ui\app.slint:665
 msgctxt "IgnoreListWindow"
 msgid "Add selected to ignore-list"
 msgstr ""
 
-#: ui\app.slint:676 ui\app.slint:698
+#: ui\app.slint:679 ui\app.slint:701
 msgctxt "IncompleteFoldersWindow"
 msgid "Incomplete and corrupted routes"
 msgstr ""
 
-#: ui\app.slint:750
+#: ui\app.slint:753
 msgctxt "IncompleteFoldersWindow"
 msgid "No incomplete folders found"
 msgstr ""
 
-#: ui\app.slint:791
+#: ui\app.slint:794
 msgctxt "IncompleteFoldersWindow"
 msgid "{} files"
 msgstr ""
 
-#: ui\app.slint:804
+#: ui\app.slint:807
 msgctxt "IncompleteFoldersWindow"
 msgid "Missing: "
 msgstr ""
 
-#: ui\app.slint:828
+#: ui\app.slint:831
 msgctxt "IncompleteFoldersWindow"
 msgid "📁 explorer"
 msgstr ""
 
-#: ui\app.slint:863
+#: ui\app.slint:866
 msgctxt "IncompleteFoldersWindow"
 msgid "Delete selected"
 msgstr ""
 
-#: ui\app.slint:884
+#: ui\app.slint:887
 msgctxt "IncompleteFoldersWindow"
 msgid "Delete all"
 msgstr ""
 
-#: ui\app.slint:898
+#: ui\app.slint:901
 msgctxt "IncompleteFoldersWindow"
 msgid "Close"
 msgstr ""
 
-#: ui\app.slint:973
+#: ui\app.slint:976
 msgctxt "ScenarioWindow"
 msgid "Time: {}"
 msgstr ""
 
-#: ui\app.slint:991
+#: ui\app.slint:994
 msgctxt "ScenarioWindow"
 msgid "Author: {}"
 msgstr ""
 
-#: ui\app.slint:1009
+#: ui\app.slint:1012
 msgctxt "ScenarioWindow"
 msgid "Weather: {}"
 msgstr ""
 
-#: ui\app.slint:1027
+#: ui\app.slint:1030
 msgctxt "ScenarioWindow"
 msgid "Season: {}"
 msgstr ""
 
-#: ui\app.slint:1059
+#: ui\app.slint:1062
 msgctxt "ScenarioWindow"
 msgid "Consists ({})"
 msgstr ""
 
-#: ui\app.slint:1095
+#: ui\app.slint:1098
 msgctxt "ScenarioWindow"
 msgid "Player"
 msgstr ""
 
-#: ui\app.slint:1137
+#: ui\app.slint:1140
 msgctxt "ScenarioWindow"
 msgid "Wagons ({})"
 msgstr ""
 
-#: ui\app.slint:1188
+#: ui\app.slint:1191
 msgctxt "ScenarioWindow"
 msgid "Wagon properties"
 msgstr ""
 
-#: ui\app.slint:1250
+#: ui\app.slint:1253
 msgctxt "ScenarioWindow"
 msgid "Open folder"
 msgstr ""
 
-#: ui\app.slint:1270
+#: ui\app.slint:1273
 msgctxt "ScenarioWindow"
 msgid "Open in LocoSwap"
 msgstr ""
 
-#: ui\app.slint:1280
+#: ui\app.slint:1283
 msgctxt "ScenarioWindow"
 msgid "Close"
 msgstr ""
 
-#: ui\app.slint:1293 ui\app.slint:1331
+#: ui\app.slint:1296 ui\app.slint:1334
 msgctxt "MissingAssetsWindow"
 msgid "Missing objects"
 msgstr ""
 
-#: ui\app.slint:1338
+#: ui\app.slint:1341
 msgctxt "MissingAssetsWindow"
 msgid "Search by path or file"
 msgstr ""
 
-#: ui\app.slint:1416
+#: ui\app.slint:1419
 msgctxt "MissingAssetsWindow"
 msgid "Scenery"
 msgstr ""
 
-#: ui\app.slint:1416
+#: ui\app.slint:1419
 msgctxt "MissingAssetsWindow"
 msgid "Loft"
 msgstr ""
 
-#: ui\app.slint:1416
+#: ui\app.slint:1419
 msgctxt "MissingAssetsWindow"
 msgid "Road"
 msgstr ""
 
-#: ui\app.slint:1416
+#: ui\app.slint:1419
 msgctxt "MissingAssetsWindow"
 msgid "Track infrastructure"
 msgstr ""
 
-#: ui\app.slint:1416
+#: ui\app.slint:1419
 msgctxt "MissingAssetsWindow"
 msgid "Track rules"
 msgstr ""
 
-#: ui\app.slint:1445
+#: ui\app.slint:1448
 msgctxt "MissingAssetsWindow"
 msgid "Path corrupted"
 msgstr ""
 
-#: ui\app.slint:1535
+#: ui\app.slint:1538
 msgctxt "MissingAssetsWindow"
 msgid "Used on tiles for: {}"
 msgstr ""
 
-#: ui\app.slint:1612
+#: ui\app.slint:1615
 msgctxt "MissingAssetsWindow"
 msgid "Copy all list"
 msgstr ""
 
-#: ui\app.slint:1637
+#: ui\app.slint:1640
 msgctxt "MissingAssetsWindow"
 msgid "Delete from route"
 msgstr ""
 
-#: ui\app.slint:1659
+#: ui\app.slint:1662
 msgctxt "MissingAssetsWindow"
 msgid "Fix all broken paths"
 msgstr ""
 
-#: ui\app.slint:1685
+#: ui\app.slint:1688
 msgctxt "MissingAssetsWindow"
 msgid "Replace"
 msgstr ""
 
-#: ui\app.slint:1698
+#: ui\app.slint:1701
 msgctxt "RoutePropertiesWarningWindow"
 msgid "RouteProperties.xml warning"
 msgstr ""
 
-#: ui\app.slint:1713
+#: ui\app.slint:1716
 msgctxt "RoutePropertiesWarningWindow"
 msgid "Providers/products not declared in RouteProperties.xml"
 msgstr ""
 
-#: ui\app.slint:1780
+#: ui\app.slint:1783
 msgctxt "RoutePropertiesWarningWindow"
 msgid "Close"
 msgstr ""
 
-#: ui\app.slint:1788
+#: ui\app.slint:1791
 msgctxt "ApAssetPickerWindow"
 msgid "Asset selection from archive"
 msgstr ""
 
-#: ui\app.slint:1809
+#: ui\app.slint:1812
 msgctxt "ApAssetPickerWindow"
 msgid "Asset selection from archive: {}"
 msgstr ""
 
-#: ui\app.slint:1815
+#: ui\app.slint:1818
 msgctxt "ApAssetPickerWindow"
 msgid "Search"
 msgstr ""
 
-#: ui\app.slint:1862
+#: ui\app.slint:1865
 msgctxt "ApAssetPickerWindow"
 msgid "Extracting..."
 msgstr ""
 
-#: ui\app.slint:1868
+#: ui\app.slint:1871
 msgctxt "ApAssetPickerWindow"
 msgid "Cancel"
 msgstr ""
 
-#: ui\app.slint:1886
+#: ui\app.slint:1889
 msgctxt "ApAssetPickerWindow"
 msgid "Select"
 msgstr ""
 
-#: ui\app.slint:1899
+#: ui\app.slint:1902
 msgctxt "SettingsWindow"
 msgid "Settings"
 msgstr ""
 
-#: ui\app.slint:1935
+#: ui\app.slint:1938
 msgctxt "SettingsWindow"
 msgid "CPU threads:"
 msgstr ""
 
-#: ui\app.slint:1960
+#: ui\app.slint:1963
 msgctxt "SettingsWindow"
 msgid "LocoSwap path:"
 msgstr ""
 
-#: ui\app.slint:1978 ui\app.slint:2012
+#: ui\app.slint:1981 ui\app.slint:2015
 msgctxt "SettingsWindow"
 msgid "Review"
 msgstr ""
 
-#: ui\app.slint:1994
+#: ui\app.slint:1997
 msgctxt "SettingsWindow"
 msgid "Game root folder:"
 msgstr ""
 
-#: ui\app.slint:2019
+#: ui\app.slint:2022
 msgctxt "SettingsWindow"
 msgid "Route icons"
 msgstr ""
 
-#: ui\app.slint:2026
+#: ui\app.slint:2029
 msgctxt "SettingsWindow"
 msgid "Game installed on HDD"
 msgstr ""
 
-#: ui\app.slint:2033
+#: ui\app.slint:2036
 msgctxt "SettingsWindow"
 msgid "Hide Quick-Drive and Free-Roam scenario types"
 msgstr ""
 
-#: ui\app.slint:2046
+#: ui\app.slint:2049
 msgctxt "SettingsWindow"
 msgid "UI Language:"
 msgstr ""
 
-#: ui\app.slint:2146
+#: ui\app.slint:2149
 msgctxt "FolderAuditorWindow"
 msgid "Asset folder check"
 msgstr ""
 
-#: ui\app.slint:2166
+#: ui\app.slint:2169
 msgctxt "FolderAuditorWindow"
 msgid "Ready for check"
 msgstr ""
 
-#: ui\app.slint:2203
+#: ui\app.slint:2206
 msgctxt "FolderAuditorWindow"
 msgid "Folder to check..."
 msgstr ""
 
-#: ui\app.slint:2208
+#: ui\app.slint:2211
 msgctxt "FolderAuditorWindow"
 msgid "Review"
 msgstr ""
 
-#: ui\app.slint:2214
+#: ui\app.slint:2217
 msgctxt "FolderAuditorWindow"
 msgid "Checking..."
 msgstr ""
 
-#: ui\app.slint:2214
+#: ui\app.slint:2217
 msgctxt "FolderAuditorWindow"
 msgid "Start check"
 msgstr ""
 
-#: ui\app.slint:2252
+#: ui\app.slint:2255
 msgctxt "FolderAuditorWindow"
 msgid "All"
 msgstr ""
 
-#: ui\app.slint:2263
+#: ui\app.slint:2266
 msgctxt "FolderAuditorWindow"
 msgid "Geometry"
 msgstr ""
 
-#: ui\app.slint:2274
+#: ui\app.slint:2277
 msgctxt "FolderAuditorWindow"
 msgid "Textures"
 msgstr ""
 
-#: ui\app.slint:2285
+#: ui\app.slint:2288
 msgctxt "FolderAuditorWindow"
 msgid "Scripts"
 msgstr ""
 
-#: ui\app.slint:2296
+#: ui\app.slint:2299
 msgctxt "FolderAuditorWindow"
 msgid "Sounds"
 msgstr ""
 
-#: ui\app.slint:2307
+#: ui\app.slint:2310
 msgctxt "FolderAuditorWindow"
 msgid "Child objects"
 msgstr ""
 
-#: ui\app.slint:2318
+#: ui\app.slint:2321
 msgctxt "FolderAuditorWindow"
 msgid "Unused"
 msgstr ""
 
-#: ui\app.slint:2342
+#: ui\app.slint:2345
 msgctxt "FolderAuditorWindow"
 msgid "Full graph"
 msgstr ""
 
-#: ui\app.slint:2357
+#: ui\app.slint:2360
 msgctxt "FolderAuditorWindow"
 msgid "Type ↑"
 msgstr ""
 
-#: ui\app.slint:2357
+#: ui\app.slint:2360
 msgctxt "FolderAuditorWindow"
 msgid "Type ↓"
 msgstr ""
 
-#: ui\app.slint:2357
+#: ui\app.slint:2360
 msgctxt "FolderAuditorWindow"
 msgid "Type"
 msgstr ""
 
-#: ui\app.slint:2378
+#: ui\app.slint:2381
 msgctxt "FolderAuditorWindow"
 msgid "Missing file ↑"
 msgstr ""
 
-#: ui\app.slint:2378
+#: ui\app.slint:2381
 msgctxt "FolderAuditorWindow"
 msgid "Missing file ↓"
 msgstr ""
 
-#: ui\app.slint:2378
+#: ui\app.slint:2381
 msgctxt "FolderAuditorWindow"
 msgid "Missing file"
 msgstr ""
 
-#: ui\app.slint:2398
+#: ui\app.slint:2401
 msgctxt "FolderAuditorWindow"
 msgid "Unused file ↑"
 msgstr ""
 
-#: ui\app.slint:2398
+#: ui\app.slint:2401
 msgctxt "FolderAuditorWindow"
 msgid "Unused file ↓"
 msgstr ""
 
-#: ui\app.slint:2398
+#: ui\app.slint:2401
 msgctxt "FolderAuditorWindow"
 msgid "Unused file"
 msgstr ""
 
-#: ui\app.slint:2398
+#: ui\app.slint:2401
 msgctxt "FolderAuditorWindow"
 msgid "Source file ↑"
 msgstr ""
 
-#: ui\app.slint:2398
+#: ui\app.slint:2401
 msgctxt "FolderAuditorWindow"
 msgid "Source file ↓"
 msgstr ""
 
-#: ui\app.slint:2398
+#: ui\app.slint:2401
 msgctxt "FolderAuditorWindow"
 msgid "Source file"
 msgstr ""
 
-#: ui\app.slint:2422
+#: ui\app.slint:2425
 msgctxt "FolderAuditorWindow"
 msgid "No problems found"
 msgstr ""
 
-#: ui\app.slint:2494
+#: ui\app.slint:2497
 msgctxt "FolderAuditorWindow"
 msgid "Incoming links: "
 msgstr ""
 
-#: ui\app.slint:2501
+#: ui\app.slint:2504
 msgctxt "FolderAuditorWindow"
 msgid "Outgoing links: "
 msgstr ""
 
-#: ui\app.slint:2513
+#: ui\app.slint:2516
 msgctxt "FolderAuditorWindow"
 msgid "Open folder of source file"
 msgstr ""
 
-#: ui\app.slint:2519
+#: ui\app.slint:2522
 msgctxt "FolderAuditorWindow"
 msgid "Open source file"
 msgstr ""
 
-#: ui\app.slint:2525
+#: ui\app.slint:2528
 msgctxt "FolderAuditorWindow"
 msgid "Open folder of missing file"
 msgstr ""
 
-#: ui\app.slint:2530
+#: ui\app.slint:2533
 msgctxt "FolderAuditorWindow"
 msgid "View texture"
 msgstr ""
 
-#: ui\app.slint:2535
+#: ui\app.slint:2538
 msgctxt "FolderAuditorWindow"
 msgid "Dependency graph"
 msgstr ""
@@ -799,140 +799,286 @@ msgctxt "TextureViewerWindow"
 msgid "Restore .bak"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:127
+#: .\target\i18n_src\main.rs:554
+#, rust-format
+msgid "Folder is open in explorer: {}."
+msgstr ""
+
+#: .\target\i18n_src\main.rs:596
+#, rust-format
+msgid "GUID copied into clipboard: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\app_controller.rs:126
 msgid "Set RailWorks path and scan routes."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:212
+#: .\target\i18n_src\app\app_controller.rs:211
 #, rust-format
 msgid "Failed to open asset inventory: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:241
+#: .\target\i18n_src\app\app_controller.rs:240
 #, rust-format
 msgid "Preparing asset replacement {}..."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:259
+#: .\target\i18n_src\app\app_controller.rs:258
 #, rust-format
 msgid "Couldn't rename new asset to English names: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:407
+#: .\target\i18n_src\app\app_controller.rs:406
 #, rust-format
 msgid "Checking route «{}»"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:511
+#: .\target\i18n_src\app\app_controller.rs:510
 msgid "Failed to obtain umlauts check result."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:542
+#: .\target\i18n_src\app\app_controller.rs:541
 #, rust-format
 msgid "Umlauts check completed. Found: {}."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:548
+#: .\target\i18n_src\app\app_controller.rs:547
 #, rust-format
 msgid "Check completed. Found: {}, analysis errors: {}."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:558
+#: .\target\i18n_src\app\app_controller.rs:557
 #, rust-format
 msgid "Failed to update inventory window status: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:582
+#: .\target\i18n_src\app\app_controller.rs:581
 msgid "Failed to obtain asset replacement result."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:594
+#: .\target\i18n_src\app\app_controller.rs:593
 msgid "Replacement log is unavailable."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:595
+#: .\target\i18n_src\app\app_controller.rs:594
 #, rust-format
 msgid "LOG IS NOT RECORDED: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:598
+#: .\target\i18n_src\app\app_controller.rs:597
 #, rust-format
 msgid "Log: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:619
+#: .\target\i18n_src\app\app_controller.rs:618
 #, rust-format
 msgid "Replaced placements: {}; edited tiles: {}. {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:626
+#: .\target\i18n_src\app\app_controller.rs:625
 #, rust-format
 msgid "Replacing object {} -> {} on route ({} in total)"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:637
+#: .\target\i18n_src\app\app_controller.rs:636
 #, rust-format
 msgid "Created {0} backup."
 msgid_plural "Created {0} backups."
 msgstr[0] ""
 msgstr[1] ""
 
-#: .\target\i18n_src\app\app_controller.rs:648
+#: .\target\i18n_src\app\app_controller.rs:647
 msgid ""
 "All missing assets have been processed. The final route check is being "
 "performed..."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:657
+#: .\target\i18n_src\app\app_controller.rs:656
 #, rust-format
 msgid ""
 "Replacement completed. Missing assets remaining: {0}; assets with umlauts: "
 "{1}."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:686
+#: .\target\i18n_src\app\app_controller.rs:685
 msgid "Failed to obtain scanning routes result"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:694
+#: .\target\i18n_src\app\app_controller.rs:693
 msgid " (loaded from cache)"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:696
+#: .\target\i18n_src\app\app_controller.rs:695
 msgid " (full scan)"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:700
+#: .\target\i18n_src\app\app_controller.rs:699
 #, rust-format
 msgid "Routes found: {}; incomplete routes: {}."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:729
+#: .\target\i18n_src\app\app_controller.rs:728
 msgid "Failed to obtain route checking result."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:756
+#: .\target\i18n_src\app\app_controller.rs:755
 #, rust-format
 msgid "missing assets count: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:768
+#: .\target\i18n_src\app\app_controller.rs:767
 #, rust-format
 msgid "Serz/XML errors count: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:774
+#: .\target\i18n_src\app\app_controller.rs:773
 #, rust-format
 msgid "structural problems: {}"
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:780
+#: .\target\i18n_src\app\app_controller.rs:779
 msgid "Check completed: no errors."
 msgstr ""
 
-#: .\target\i18n_src\app\app_controller.rs:782
+#: .\target\i18n_src\app\app_controller.rs:781
 #, rust-format
 msgid "Check completed: {}."
+msgstr ""
+
+#: .\target\i18n_src\app\app_controller.rs:788
+#, rust-format
+msgid "[{}] Structure error: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\app_controller.rs:794
+#, rust-format
+msgid "[{}] Serz/XML error: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:54
+msgid "Incorrect config path."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:56
+#, rust-format
+msgid "Failed to create config folder: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:58
+#, rust-format
+msgid "Failed to prepare config: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:60
+#, rust-format
+msgid "Failed to save config {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:139
+#, rust-format
+msgid "Failed to read ignore-list {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:164
+msgid "Incorrect path to replacement log."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:166
+#, rust-format
+msgid "Failed to create folder for replacement log: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:174
+#, rust-format
+msgid "Не удалось открыть журнал замен {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:181
+#, rust-format
+msgid "Failed to define log entry time: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:184
+#, rust-format
+msgid "Failed to prepare replacement log entry: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:188
+#, rust-format
+msgid "Failed to write replacement log {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:213
+#, rust-format
+msgid "Incorrect route icon setting in {}."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:219
+#, rust-format
+msgid "Failed to read route icon setting {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:230
+msgid "Incorrect path to route icon setting."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:232 .\target\i18n_src\app\settings.rs:278
+#, rust-format
+msgid "Failed to create settings folder: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:235
+#, rust-format
+msgid "Failed to save route icon setting {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:246
+#, rust-format
+msgid "Incorrect max Serz threads count in {}."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:251
+#, rust-format
+msgid "Failed to read Serz threads setting {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:259
+#, rust-format
+msgid "Serz threads in {} must be at least 1."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:270
+#, rust-format
+msgid "Serz threads must be from 1 to {}."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:276
+msgid "Incorrect path to Serz setting."
+msgstr ""
+
+#: .\target\i18n_src\app\settings.rs:280
+#, rust-format
+msgid "Failed to save Serz setting {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\settings_controller.rs:27
+msgid "Окно настроек недоступно"
+msgstr ""
+
+#: .\target\i18n_src\assets\analysis_cache.rs:202
+#: .\target\i18n_src\assets\analysis_cache.rs:208
+#, rust-format
+msgid "Failed to write analysis cache: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\analysis_cache.rs:205
+#, rust-format
+msgid "Failed to prepare analysis cache: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\analysis_cache.rs:216
+#, rust-format
+msgid "Failed to save analysis cache: {}"
 msgstr ""
 
 #: .\target\i18n_src\assets\ap_picker_controller.rs:170
@@ -940,31 +1086,152 @@ msgstr ""
 msgid "Unpacking error: {}"
 msgstr ""
 
-#: .\target\i18n_src\assets\checker.rs:413
+#: .\target\i18n_src\assets\checker.rs:91
+#, rust-format
+msgid "{}: failed to read file: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:414
 msgid "Scanning route files..."
 msgstr ""
 
-#: .\target\i18n_src\assets\checker.rs:462
+#: .\target\i18n_src\assets\checker.rs:456
+#, rust-format
+msgid "Failed to create file check pool: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:463
 #, rust-format
 msgid "Analyzing files. 1 out of {0}; threads: {1}"
 msgstr ""
 
-#: .\target\i18n_src\assets\checker.rs:475
+#: .\target\i18n_src\assets\checker.rs:476
 #, rust-format
 msgid "Analyzing files. {0} out of {1}; threads: {2}"
 msgstr ""
 
-#: .\target\i18n_src\assets\checker.rs:562
+#: .\target\i18n_src\assets\checker.rs:559
+#, rust-format
+msgid "Failed to save check cache: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:563
 #, rust-format
 msgid "Unique links: {0}. Searching for .ap archives..."
 msgstr ""
 
-#: .\target\i18n_src\assets\checker.rs:585
+#: .\target\i18n_src\assets\checker.rs:586
 msgid "Checking for umlauts..."
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:635
+#, rust-format
+msgid ""
+"Provider/product «{} / {}» used on route, but not declared in "
+"RouteProperties.xml."
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:699
+#, rust-format
+msgid "failed to read {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:702
+#, rust-format
+msgid "Read failure {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:783
+msgid "RouteProperties.xml not found"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:786
+msgid "Assets folder not found"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:789
+msgid "no any .bin or .xml for check"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:795
+#, rust-format
+msgid "unexpected route folders: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:803
+#, rust-format
+msgid "route folder stil have temp program folders (can be deleted): {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:854
+#: .\target\i18n_src\common\external_editor.rs:110
+#: .\target\i18n_src\common\external_editor.rs:196
+#: .\target\i18n_src\common\external_editor.rs:206
+#: .\target\i18n_src\routes\routes_main.rs:331
+#: .\target\i18n_src\routes\routes_main.rs:337
+#: .\target\i18n_src\routes\routes_main.rs:431
+#: .\target\i18n_src\routes\routes_main.rs:453
+#: .\target\i18n_src\routes\routes_main.rs:591
+#: .\target\i18n_src\routes\routes_main.rs:626
+#: .\target\i18n_src\routes\routes_main.rs:652
+#: .\target\i18n_src\routes\routes_main.rs:729
+#: .\target\i18n_src\routes\routes_main.rs:1057
+#, rust-format
+msgid "Failed to read {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:886
+#: .\target\i18n_src\assets\checker.rs:1029
+#: .\target\i18n_src\common\archive.rs:265
+#: .\target\i18n_src\routes\routes_main.rs:367
+#: .\target\i18n_src\routes\routes_main.rs:468
+#, rust-format
+msgid "Failed to open archive {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:893
+#: .\target\i18n_src\common\archive.rs:267
+#: .\target\i18n_src\routes\routes_main.rs:370
+#: .\target\i18n_src\routes\routes_main.rs:470
+#: .\target\i18n_src\routes\routes_main.rs:902
+#, rust-format
+msgid "Failed to read archive {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:1036
+#, rust-format
+msgid "Failed to read arcive {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:1048
+#, rust-format
+msgid "Cannot find {} in {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\checker.rs:1064
+#, rust-format
+msgid "Failed to read {member_name} from {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\inventory_controller.rs:138
+msgid "No objects with non-standard symbols were found."
+msgstr ""
+
+#: .\target\i18n_src\assets\inventory_controller.rs:141
+#, rust-format
+msgid "Found objects with non-standard symbols: {}."
+msgstr ""
+
+#: .\target\i18n_src\assets\inventory_controller.rs:146
+msgid "Symbol filter is disabled."
 msgstr ""
 
 #: .\target\i18n_src\assets\inventory_controller.rs:273
 #: .\target\i18n_src\assets\inventory_controller.rs:443
+#: .\target\i18n_src\assets\replacement.rs:35
+#: .\target\i18n_src\assets\replacement.rs:65
+#: .\target\i18n_src\assets\replacement.rs:397
+#: .\target\i18n_src\assets\replacement.rs:415
 msgid "You can't change the track infrastructure parts through the program!"
 msgstr ""
 
@@ -1001,6 +1268,7 @@ msgid "No suitable tiles for object {0} were found to delete."
 msgstr ""
 
 #: .\target\i18n_src\assets\inventory_controller.rs:343
+#: .\target\i18n_src\assets\missing_assets_controller.rs:406
 msgid "Object deletion"
 msgstr ""
 
@@ -1014,6 +1282,14 @@ msgstr ""
 msgid ""
 "Warning: it was not possible to delete uses of the object in the following "
 "tiles {0} (probably a composite loft, manual removal is required): {1}"
+msgstr ""
+
+#: .\target\i18n_src\assets\inventory_controller.rs:456
+msgid "Replace on route..."
+msgstr ""
+
+#: .\target\i18n_src\assets\inventory_controller.rs:457
+msgid "RailWorks Blueprint (*.bin)"
 msgstr ""
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:178
@@ -1034,6 +1310,28 @@ msgid ""
 "route."
 msgstr ""
 
+#: .\target\i18n_src\assets\missing_assets_controller.rs:307
+msgid "Select BIN of new object or open AP archive with it"
+msgstr ""
+
+#: .\target\i18n_src\assets\missing_assets_controller.rs:308
+msgid "RW Assets (*.bin, *.ap)"
+msgstr ""
+
+#: .\target\i18n_src\assets\missing_assets_controller.rs:309
+msgid "RW Blueprint (*.bin)"
+msgstr ""
+
+#: .\target\i18n_src\assets\missing_assets_controller.rs:310
+msgid "AP Archive (*.ap)"
+msgstr ""
+
+#: .\target\i18n_src\assets\missing_assets_controller.rs:407
+msgid ""
+"Delete object from route:\n"
+"{=}"
+msgstr ""
+
 #: .\target\i18n_src\assets\missing_assets_controller.rs:433
 #, rust-format
 msgid "Object {0} deleted (tiles: {1}, uses: {2})."
@@ -1046,6 +1344,168 @@ msgid ""
 "following tiles: {1}"
 msgstr ""
 
+#: .\target\i18n_src\assets\replacement.rs:25
+#: .\target\i18n_src\assets\replacement.rs:59
+msgid "No places of use were found for the object."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:30
+msgid ""
+"Deleting track infrastructure and route parameters is only available in the "
+"game editor."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:70
+#, rust-format
+msgid "Deletion working only for Loft/Road tiles: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:96
+msgid "deletions"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:108
+#, rust-format
+msgid "Deletion working only for BIN-tiles {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:118
+#: .\target\i18n_src\assets\replacement.rs:126
+#, rust-format
+msgid "Failed to read {} before deletion: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:152
+#, rust-format
+msgid "In tiles {} found no uses of {}. Update check and repeat."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:171
+#, rust-format
+msgid "Deleted entries: {}; successful changed files: {}. Error in {}: {}."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:191
+#, rust-format
+msgid "Couldn't check the route folder: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:197
+#, rust-format
+msgid "File for {} located off the route: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:204
+#, rust-format
+msgid "Failed to check route file{}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:208
+#, rust-format
+msgid "File for {} located off the route of unavailable: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:239
+#, rust-format
+msgid "Failed to prerare changed BIN {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:246
+#, rust-format
+msgid "Generation error: file size abnormally small ({} bytes). {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:253
+#: .\target\i18n_src\common\external_editor.rs:135
+#, rust-format
+msgid "Serialization error: generated binary is corrupted: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:259
+#, rust-format
+msgid "Failed to prepare changed BIN {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:308
+#, rust-format
+msgid "Failed to check new asset: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:311
+#, rust-format
+msgid "Failed to check Assets folder: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:314
+msgid "New object must be inside Assets folder."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:320
+msgid "To replace, select an existing asset BIN file."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:332
+msgid "Path of new object must have format Provider/Product/....bin."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:346
+msgid "No usage locations were found for the missing asset."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:368
+#: .\target\i18n_src\assets\replacement.rs:382
+#: .\target\i18n_src\assets\replacement.rs:391
+msgid "Type of selected asset mismatched with type of missing asset."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:419
+msgid "replacements"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:438
+#, rust-format
+msgid "Unknown route file format: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:449
+#: .\target\i18n_src\assets\replacement.rs:457
+#, rust-format
+msgid "Failed to read {} before replace: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:497
+#, rust-format
+msgid "Failed to prepare {} before replace: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:504
+#, rust-format
+msgid "Failed to read XML for {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:537
+#, rust-format
+msgid "Replacement in {} created broken XML: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:544
+#, rust-format
+msgid "Failed to write temporal XML for {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:557
+#, rust-format
+msgid ""
+"No usage of {old_asset} found in the source code of the route. Update check "
+"and repeat."
+msgstr ""
+
+#: .\target\i18n_src\assets\replacement.rs:578
+#, rust-format
+msgid ""
+"Replaced entries: {}; changed files: {}. Error in {}: {}. Created backups: {}"
+msgstr ""
+
 #: .\target\i18n_src\auditor\auditor_controller.rs:40
 msgid "Specified path does not exist or is not a folder!"
 msgstr ""
@@ -1054,58 +1514,124 @@ msgstr ""
 msgid "Folder must be inside RailWorks/Assets!"
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:52
+#: .\target\i18n_src\auditor\auditor_controller.rs:53
 msgid ""
 "You can't scan the entire Assets catalog! Select the provider or product "
 "folder (for example, Assets/Kuju)."
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:96
+#: .\target\i18n_src\auditor\auditor_controller.rs:98
 msgid "Select folder(s) to check."
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:110
+#: .\target\i18n_src\auditor\auditor_controller.rs:112
 msgid ""
 "Error: selected folders must be located inside Assets directory and not be "
 "Assets directory itself!"
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:161
+#: .\target\i18n_src\auditor\auditor_controller.rs:163
 msgid "Preparing to check..."
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:220
+#: .\target\i18n_src\auditor\auditor_controller.rs:222
 #, rust-format
 msgid "Scanning files: {} / {}..."
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:301
+#: .\target\i18n_src\auditor\auditor_controller.rs:258
+#, rust-format
+msgid "Check failure: {}"
+msgstr ""
+
+#: .\target\i18n_src\auditor\auditor_controller.rs:305
 msgid "Check completed: no missing or corrupted files."
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:304
+#: .\target\i18n_src\auditor\auditor_controller.rs:307
 #, rust-format
 msgid "Check completed. Found problems: {}."
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:478
+#: .\target\i18n_src\auditor\auditor_controller.rs:403
+#: .\target\i18n_src\auditor\auditor_controller.rs:421
+msgid "Not used by any blueprint (.bin) or a mesh (.GeoPcDx) in the product"
+msgstr ""
+
+#: .\target\i18n_src\auditor\auditor_controller.rs:413
+#: .\target\i18n_src\auditor\auditor_controller.rs:423
+msgid "No dependencies"
+msgstr ""
+
+#: .\target\i18n_src\auditor\auditor_controller.rs:482
 #, rust-format
 msgid "Failed to open dependency graph: {}"
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:506
+#: .\target\i18n_src\auditor\auditor_controller.rs:509
 #, rust-format
 msgid "Failed to build full graph: {}"
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:536
-#: .\target\i18n_src\auditor\auditor_controller.rs:567
+#: .\target\i18n_src\auditor\auditor_controller.rs:538
+#: .\target\i18n_src\auditor\auditor_controller.rs:569
 #, rust-format
 msgid "Parent folder opened in explorer: {}."
 msgstr ""
 
+#: .\target\i18n_src\auditor\auditor_controller.rs:604
+msgid "Select element is not .bin/.GeoPcDx/.XSec"
+msgstr ""
+
+#: .\target\i18n_src\common\archive.rs:262
+#, rust-format
+msgid "Failed to create folder {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\archive.rs:288
+#, rust-format
+msgid "Can't find {} in archive {}"
+msgstr ""
+
+#: .\target\i18n_src\common\archive.rs:296
+#, rust-format
+msgid "Failed to read {} from archive: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\archive.rs:299
+#, rust-format
+msgid "Failed to create file {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\archive.rs:302
+#, rust-format
+msgid "Failed to unpack file {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\archive.rs:305
+#: .\target\i18n_src\common\external_editor.rs:202
+#, rust-format
+msgid "Failed to write {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\domain.rs:160
+#, rust-format
+msgid "Incorrect path inside archive: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:48
+#, rust-format
+msgid "Failed to check deserialized TgPcDx: {}"
+msgstr ""
+
 #: .\target\i18n_src\common\external_editor.rs:78
 msgid "Error"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:95
+#: .\target\i18n_src\geo\viewer3d\mod.rs:201
+#, rust-format
+msgid "Failed to open editor: {}"
 msgstr ""
 
 #: .\target\i18n_src\common\external_editor.rs:96
@@ -1116,10 +1642,25 @@ msgstr ""
 msgid "Read error"
 msgstr ""
 
+#: .\target\i18n_src\common\external_editor.rs:127
+#, rust-format
+msgid "Write error: binary file too short ({} bytes)."
+msgstr ""
+
 #: .\target\i18n_src\common\external_editor.rs:130
 #: .\target\i18n_src\common\external_editor.rs:136
 #: .\target\i18n_src\common\external_editor.rs:147
 msgid "Write error"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:146
+#, rust-format
+msgid "Error writing to binary: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:160
+#, rust-format
+msgid "File saved as XML ({}), binary without changes."
 msgstr ""
 
 #: .\target\i18n_src\common\external_editor.rs:170
@@ -1137,15 +1678,41 @@ msgstr ""
 msgid "XML syntax error"
 msgstr ""
 
+#: .\target\i18n_src\common\external_editor.rs:297
+#, rust-format
+msgid "Failed to launch VS Code: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:305
+#, rust-format
+msgid "Failed to launch Notepad: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:310
+#, rust-format
+msgid "Incorrect file path: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:314
+#, rust-format
+msgid "Failed to write temp file {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:317
+#, rust-format
+msgid "Failed to install {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\common\external_editor.rs:338
+#: .\target\i18n_src\texture\inspect.rs:388
+#, rust-format
+msgid "Failed to create backup {}: {}"
+msgstr ""
+
 #: .\target\i18n_src\geo\viewer3d\mod.rs:194
 #: .\target\i18n_src\texture\texture_controller.rs:201
 #, rust-format
 msgid "Editor error: {}"
-msgstr ""
-
-#: .\target\i18n_src\geo\viewer3d\mod.rs:201
-#, rust-format
-msgid "Failed to open editor: {}"
 msgstr ""
 
 #: .\target\i18n_src\geo\viewer3d\mod.rs:289
@@ -1237,12 +1804,215 @@ msgid_plural "All: {0} folders, total size: {1}"
 msgstr[0] ""
 msgstr[1] ""
 
+#: .\target\i18n_src\routes\incomplete_folders_controller.rs:261
+#, rust-format
+msgid "Failed to determine routes folder: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\incomplete_folders_controller.rs:273
+msgid "Path to deletion is empty."
+msgstr ""
+
+#: .\target\i18n_src\routes\incomplete_folders_controller.rs:277
+#, rust-format
+msgid "Failed to determine target path: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\incomplete_folders_controller.rs:279
+msgid "Deleting root folder of routes is prohibited."
+msgstr ""
+
+#: .\target\i18n_src\routes\incomplete_folders_controller.rs:283
+msgid "Target path is located outside routes folder. Deletion is prohibited."
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:170
+#, rust-format
+msgid "Routes cache is broken and will be updated: {}."
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:178
+#, rust-format
+msgid "Failed to read cache {}: {}."
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:202
+#, rust-format
+msgid "Incorrect path to routes cache: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:205
+#, rust-format
+msgid "Failed to create cache folder {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:212
+#: .\target\i18n_src\routes\routes_main.rs:222
+#, rust-format
+msgid "Failed to save routes cache {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:219
+#, rust-format
+msgid "Failed to serialize routes cache: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:334
+#: .\target\i18n_src\routes\routes_main.rs:594
+#: .\target\i18n_src\routes\routes_main.rs:619
+#, rust-format
+msgid "Error reading content {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:423
+#: .\target\i18n_src\routes\routes_main.rs:895
+#, rust-format
+msgid "Error during check {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:612
+#, rust-format
+msgid "Failed to read folder {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:650
+#: .\target\i18n_src\routes\routes_main.rs:727
+#: .\target\i18n_src\routes\routes_main.rs:900
+#, rust-format
+msgid "Failed to open {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:732
+#, rust-format
+msgid "Failed to find {member_name} in {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:745
+#, rust-format
+msgid "Failed to create icon cache {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:758
+#, rust-format
+msgid "Failed to create icon file {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:765
+#, rust-format
+msgid "Failed to extract {member_name} from {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:906
+#, rust-format
+msgid "Error in archive {}: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:992
+#, rust-format
+msgid "Failed to open archive: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:1003
+#, rust-format
+msgid "Failed to read archive: {}"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:1036
+msgid "Error while reading archive element"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:1049
+msgid "Tag RouteName not found in RouteProperties.xml"
+msgstr ""
+
+#: .\target\i18n_src\routes\routes_main.rs:1053
+#: .\target\i18n_src\routes\routes_main.rs:1066
+#, rust-format
+msgid "Untitled — {}"
+msgstr ""
+
 #: .\target\i18n_src\scenarios\scenario.rs:70
 #: .\target\i18n_src\scenarios\scenario.rs:78
 #: .\target\i18n_src\scenarios\scenario.rs:88
 #: .\target\i18n_src\scenarios\scenario.rs:96
 #: .\target\i18n_src\scenarios\scenario.rs:149
 msgid "Unnamed consist"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:239
+#: .\target\i18n_src\scenarios\scenario.rs:306
+msgid "Spring"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:240
+#: .\target\i18n_src\scenarios\scenario.rs:307
+msgid "Summer"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:241
+#: .\target\i18n_src\scenarios\scenario.rs:308
+msgid "Autumn"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:242
+#: .\target\i18n_src\scenarios\scenario.rs:309
+msgid "Winter"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:279
+#: .\target\i18n_src\scenarios\scenario.rs:347
+#: .\target\i18n_src\scenarios\scenario.rs:708
+#: .\target\i18n_src\scenarios\scenario.rs:720
+msgid "Standard"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:682
+#: .\target\i18n_src\scenarios\scenario.rs:696
+#: .\target\i18n_src\scenarios\scenario.rs:716
+#: .\target\i18n_src\scenarios\scenario.rs:724
+msgid "Quick Drive"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:688
+#: .\target\i18n_src\scenarios\scenario.rs:714
+msgid "Free Roam"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:700
+#: .\target\i18n_src\scenarios\scenario.rs:722
+msgid "Timetable (Standard)"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario.rs:703
+#: .\target\i18n_src\scenarios\scenario.rs:706
+#: .\target\i18n_src\scenarios\scenario.rs:718
+msgid "Career"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario_controller.rs:220
+#, rust-format
+msgid ""
+"Provider: {}\n"
+"Product: {}\n"
+"File: {}\n"
+"number: {}"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario_controller.rs:227
+msgid "Select rolling stock"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario_controller.rs:234
+msgid "No name"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario_controller.rs:232
+#, rust-format
+msgid "Scenario: {}"
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario_controller.rs:241
+msgid "Not specified"
 msgstr ""
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:354
@@ -1262,6 +2032,15 @@ msgstr ""
 #: .\target\i18n_src\scenarios\scenario_controller.rs:428
 #, rust-format
 msgid "Locoswap is launched for scenario: {}."
+msgstr ""
+
+#: .\target\i18n_src\scenarios\scenario_controller.rs:547
+#, rust-format
+msgid ""
+"Provider: {}\n"
+"Product: {}\n"
+"File: {}\n"
+"Number: {}"
 msgstr ""
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:603
@@ -1284,6 +2063,321 @@ msgstr ""
 msgid "Failed to find stock blueprint: {}/{}."
 msgstr ""
 
+#: .\target\i18n_src\texture\dds.rs:27
+msgid "incorrect DDS size"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:31
+msgid "DDS sizes exceeding boundaries of TgPcDx sUInt16"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:36
+#, rust-format
+msgid "DDS sizes is not powers of two: {}×{}"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:57
+msgid "TgPcDx import requires a binary SERZ target"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:81 .\target\i18n_src\texture\dds.rs:84
+#: .\target\i18n_src\texture\dds.rs:229
+msgid "mip data size overflow"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:87
+msgid "DDS mip data is shorter than its declared mip chain"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:97
+#, rust-format
+msgid "DDS mip data size mismatch: consumed {} bytes, found {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:121 .\target\i18n_src\texture\inspect.rs:68
+#: .\target\i18n_src\texture\inspect.rs:86
+#: .\target\i18n_src\texture\inspect.rs:374
+#: .\target\i18n_src\texture\serz_parse.rs:20
+#, rust-format
+msgid "serz parse: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:146 .\target\i18n_src\texture\inspect.rs:93
+msgid "no image blocks"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:155
+#: .\target\i18n_src\texture\serz_parse.rs:30
+msgid "invalid mip dimensions"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:158
+msgid "empty mip blob"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:187
+msgid "it is impossible to calculate size of the mipmap level"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:207
+#, rust-format
+msgid "mip {w}x{h} size mismatch: got {}, expected {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:231
+msgid "mip data exceeds dds buffer"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:426
+#, rust-format
+msgid "SERZ validation: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:429
+msgid "serialized TgPcDx dimensions do not match the DDS"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:436
+msgid "serialized TgPcDx mip count does not match the DDS"
+msgstr ""
+
+#: .\target\i18n_src\texture\dds.rs:448
+msgid "serialized TgPcDx mip metadata or Blob does not match the DDS"
+msgstr ""
+
+#: .\target\i18n_src\texture\decode.rs:174
+msgid "A8 texture data too small"
+msgstr ""
+
+#: .\target\i18n_src\texture\decode.rs:208
+msgid "uncompressed texture data too small"
+msgstr ""
+
+#: .\target\i18n_src\texture\decode.rs:244
+#: .\target\i18n_src\texture\decode.rs:342
+msgid "no image block"
+msgstr ""
+
+#: .\target\i18n_src\texture\decode.rs:310
+#: .\target\i18n_src\texture\decode.rs:311
+#: .\target\i18n_src\texture\decode.rs:351
+msgid "texture dimensions overflow"
+msgstr ""
+
+#: .\target\i18n_src\texture\decode.rs:345
+#: .\target\i18n_src\texture\inspect.rs:244
+msgid "invalid dimensions"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:124
+msgid "DXT5 (BC3, interpolated alpha)"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:127
+msgid "DXT3 (BC2, explicit alpha)"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:129
+msgid "DXT1 (BC1, no / 1-bit alpha)"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:133
+msgid "RGBA8888 (uncompressed)"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:135
+msgid "L8 (8-bit grayscale)"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:136
+msgid "A8 (8-bit alpha)"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:227
+msgid "unknown compression format of DDS"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:233
+msgid "no mipmap levels in DDS"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:244
+#, rust-format
+msgid ""
+"DDS file has {} mipmap {}, expected {}. Enable mipmap generation when saving "
+"DDS."
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:255
+msgid "failed to compute mipmap level size"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:258
+msgid "overflow when summing mipmap levels"
+msgstr ""
+
+#: .\target\i18n_src\texture\format.rs:264
+#, rust-format
+msgid ""
+"DDS file is truncated or has extra data: expected {} bytes of mipmaps, found "
+"{}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:90
+#: .\target\i18n_src\texture\serz_parse.rs:26
+#, rust-format
+msgid "invalid text: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:277
+#, rust-format
+msgid "Separate nodes ({}× cHcImageDx)"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:322
+msgid "Internal texture name cannot be empty"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:326
+msgid "Internal name must contain only ASCII symbols (without Cyrillic)"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:335
+#, rust-format
+msgid ""
+"Internal name must not contain a file extension (.tgpcdx, .dds, .ace): "
+"{trimmed}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:344
+msgid "Internal name contains invalid characters."
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:352
+#, rust-format
+msgid "update_tgpcdx_internal_name: path={}, new_name={new_name}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:361
+#, rust-format
+msgid ""
+"File is read-only (possibly inside a .ap archive): {}. Unpack it before "
+"editing."
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:368
+msgid "TgPcDx save requires a binary SERZ file"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:380
+#, rust-format
+msgid "serz encode: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:382
+msgid "Serialization result is empty"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:390
+#, rust-format
+msgid "Backup created: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:396
+#, rust-format
+msgid "Internal texture name updated {}: {normalized}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:407
+#, rust-format
+msgid "Backup file not found: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:411
+#, rust-format
+msgid "Failed to read backup: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:414
+#, rust-format
+msgid "Restored from backup: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:427
+msgid "cHcTexture node with a child Name (cDeltaString) was not found in file."
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:570
+msgid "empty staged file"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:621
+msgid "⚠ file name is different"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:626
+#, rust-format
+msgid "Internal name (Name): {0} {1}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:633
+#, rust-format
+msgid ""
+"Resolution: {0}×{1} px | Textures in group: {2} | Mipmaps: {3} ({0}×{1} → {4}"
+"×{5}) [{6}]"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:647
+#, rust-format
+msgid "Format: {0} [{1}] | DDS: {2} | IsSwizzled: {3} | Flags(u16): {4}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:656
+msgid "yes"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:658
+msgid "no"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:664
+#, rust-format
+msgid ""
+"File size: {0} ({1} B) | Pixels (blob): {2} B | Header: {3} B | Backup "
+"(.bak): {4}"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:676
+#, rust-format
+msgid ""
+"View: {0} | Active mip: #{1} ({2}×{3} px) | Import requires: DDS {4} (power "
+"of two, with mipmaps)"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:691
+#, rust-format
+msgid "{} MiB"
+msgstr ""
+
+#: .\target\i18n_src\texture\inspect.rs:694
+#, rust-format
+msgid "{} KiB"
+msgstr ""
+
+#: .\target\i18n_src\texture\serz_parse.rs:36
+msgid "XML mip blob size does not match its declared size"
+msgstr ""
+
+#: .\target\i18n_src\texture\serz_parse.rs:377
+#, rust-format
+msgid "cannot set {} on a non-element node"
+msgstr ""
+
+#: .\target\i18n_src\texture\texture_controller.rs:125
+#, rust-format
+msgid "Failed to open texture {}: {}"
+msgstr ""
+
 #: .\target\i18n_src\texture\texture_controller.rs:160
 msgid "There is no loaded texture to open in editor."
 msgstr ""
@@ -1296,6 +2390,11 @@ msgstr ""
 #: .\target\i18n_src\texture\texture_controller.rs:206
 #, rust-format
 msgid "Failed to open file in editor: {}"
+msgstr ""
+
+#: .\target\i18n_src\texture\texture_controller.rs:304
+#, rust-format
+msgid "Failed to decode mip #{}: {}"
 msgstr ""
 
 #: .\target\i18n_src\texture\texture_controller.rs:377

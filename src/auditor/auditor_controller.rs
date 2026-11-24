@@ -36,20 +36,22 @@ fn find_assets_root(path: &Path) -> Option<PathBuf> {
 
 pub fn validate_audit_folder(path: &Path) -> Result<PathBuf, String> {
     if !path.is_dir() {
-        return Err(
-            crate::gettext!("Specified path does not exist or is not a folder!").to_string(),
-        );
+        return Err(crate::gettext!(
+            "Specified path does not exist or is not a folder!"
+        ));
     }
     let normalized = normalize_path(path);
     let Some(assets_root) = find_assets_root(&normalized) else {
-        return Err(crate::gettext!("Folder must be inside RailWorks/Assets!").to_string());
+        return Err(crate::gettext!("Folder must be inside RailWorks/Assets!"));
     };
     if normalized == assets_root
         || normalized
             .file_name()
             .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Assets"))
     {
-        return Err(crate::gettext!("You can't scan the entire Assets catalog! Select the provider or product folder (for example, Assets/Kuju).").to_string());
+        return Err(crate::gettext!(
+            "You can't scan the entire Assets catalog! Select the provider or product folder (for example, Assets/Kuju)."
+        ));
     }
     Ok(path.to_path_buf())
 }
@@ -252,7 +254,9 @@ impl AuditorController {
                         let h = thread_handle.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = h.upgrade() {
-                                w.set_scan_status_text(format!("Check failure: {msg}").into());
+                                w.set_scan_status_text(
+                                    crate::gettext!("Check failure: {}", msg).into(),
+                                );
                                 w.set_is_scanning(false);
                             }
                         });
@@ -299,10 +303,8 @@ impl AuditorController {
                         w.set_scan_progress(1.0);
                         let final_msg = if total_issues == 0 {
                             crate::gettext!("Check completed: no missing or corrupted files.")
-                                .to_string()
                         } else {
-                            crate::gettext!("Check completed. Found problems: {}.")
-                                .replace("{}", &total_issues.to_string())
+                            crate::gettext!("Check completed. Found problems: {}.", total_issues)
                         };
                         w.set_scan_status_text(final_msg.into());
                         clear_selection(&w);
@@ -383,9 +385,6 @@ impl AuditorController {
                 return;
             }
 
-            const NO_PARENTS_MSG: &str =
-                "Not used by any blueprint (.bin) or a mesh (.GeoPcDx) in the product";
-
             let (is_tex, has_missing, incoming, outgoing) = state
                 .lock()
                 .ok()
@@ -400,7 +399,9 @@ impl AuditorController {
                     let outgoing_set = s.dependency_graph.outgoing.get(&key);
 
                     let incoming_str = if item.all_parents.is_empty() {
-                        NO_PARENTS_MSG.to_string()
+                        crate::gettext!(
+                            "Not used by any blueprint (.bin) or a mesh (.GeoPcDx) in the product"
+                        )
                     } else {
                         item.all_parents
                             .iter()
@@ -408,15 +409,18 @@ impl AuditorController {
                             .collect::<Vec<_>>()
                             .join("\n")
                     };
-                    let outgoing_str = format_refs_preview(outgoing_set, "No dependencies");
+                    let outgoing_str =
+                        format_refs_preview(outgoing_set, &crate::gettext!("No dependencies"));
                     Some((is_tex, has_missing, incoming_str, outgoing_str))
                 })
                 .unwrap_or_else(|| {
                     (
                         false,
                         false,
-                        NO_PARENTS_MSG.to_string(),
-                        "No dependencies".to_string(),
+                        crate::gettext!(
+                            "Not used by any blueprint (.bin) or a mesh (.GeoPcDx) in the product"
+                        ),
+                        crate::gettext!("No dependencies"),
                     )
                 });
 
@@ -475,8 +479,7 @@ impl AuditorController {
                         &outgoing,
                         &missing_refs,
                     ) {
-                        let template = crate::gettext!("Failed to open dependency graph: {}");
-                        let msg = template.replace("{}", &e.to_string());
+                        let msg = crate::gettext!("Failed to open dependency graph: {}", e);
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
                                 w.set_editor_status(msg.into());
@@ -503,8 +506,7 @@ impl AuditorController {
                         return;
                     };
                     if let Err(e) = generate_full_directory_graph(&full_graph, Path::new("")) {
-                        let template = crate::gettext!("Failed to build full graph: {}");
-                        let msg = template.replace("{}", &e.to_string());
+                        let msg = crate::gettext!("Failed to build full graph: {}", e);
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = thread_handle.upgrade() {
                                 w.set_editor_status(msg.into());
@@ -598,7 +600,9 @@ impl AuditorController {
                     expected_path
                 } else {
                     if let Some(win) = handle.upgrade() {
-                        win.set_editor_status("Select element is not .bin/.GeoPcDx/.XSec".into());
+                        win.set_editor_status(
+                            crate::gettext!("Select element is not .bin/.GeoPcDx/.XSec").into(),
+                        );
                     }
                     return;
                 };

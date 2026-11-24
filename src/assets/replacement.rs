@@ -22,7 +22,7 @@ pub fn delete_scenery_asset(
     uses: &[AssetUse],
 ) -> Result<(usize, usize, Vec<String>), String> {
     if uses.is_empty() {
-        return Err("No places of use were found for the object.".to_owned());
+        return Err(crate::gettext!("No places of use were found for the object."));
     }
     for usage in uses {
         if usage.tile_kind != TileKind::Scenery {
@@ -93,7 +93,7 @@ where
     F: FnMut(&mut SerzNode, &str, &str, &str) -> usize,
 {
     let (provider, product, blueprint) = asset_blueprint_ref(asset_path);
-    let source_files = collect_and_validate_source_files(route_path, uses, "deletions")?;
+    let source_files = collect_and_validate_source_files(route_path, uses, &crate::gettext!("deletions"))?;
 
     let mut staged = Vec::new();
     let mut removed_instances = 0usize;
@@ -255,9 +255,10 @@ fn stage_modified_bin(
     }
     let converted_path = temp_dir.join(output_name);
     fs::write(&converted_path, &bytes).map_err(|error| {
-        format!(
-            "Failed to prepare changed BIN {}: {error}",
-            source_file.display()
+        crate::gettext!(
+            "Failed to prepare changed BIN {}: {}",
+            source_file.display(),
+            error
         )
     })?;
     Ok((converted_path, bytes.len()))
@@ -304,19 +305,19 @@ pub(crate) fn replace_missing_asset(
 ) -> Result<AssetReplacementReport, String> {
     let replacement_path = replacement_path
         .canonicalize()
-        .map_err(|error| format!("Failed to check new asset: {error}"))?;
+        .map_err(|error| crate::gettext!("Failed to check new asset: {}", error))?;
     let assets_root = assets_path
         .canonicalize()
-        .map_err(|error| format!("Failed to check Assets folder: {error}"))?;
+        .map_err(|error| crate::gettext!("Failed to check Assets folder: {}", error))?;
     let replacement_relative = replacement_path
         .strip_prefix(&assets_root)
-        .map_err(|_| "New object must be inside Assets folder.".to_owned())?;
+        .map_err(|_| crate::gettext!("New object must be inside Assets folder."))?;
     if !replacement_path.is_file()
         || !replacement_path
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"))
     {
-        return Err("To replace, select an existing asset BIN file.".to_owned());
+        return Err(crate::gettext!("To replace, select an existing asset BIN file."));
     }
 
     let replacement_parts: Vec<String> = replacement_relative
@@ -328,7 +329,7 @@ pub(crate) fn replace_missing_asset(
             .iter()
             .any(|component| component == "." || component == "..")
     {
-        return Err("Path of new object must have format Provider/Product/....bin.".to_owned());
+        return Err(crate::gettext!("Path of new object must have format Provider/Product/....bin."));
     }
     let replacement_provider = replacement_parts[0].clone();
     let replacement_product = replacement_parts[1].clone();
@@ -342,7 +343,7 @@ pub(crate) fn replace_missing_asset(
         .replace('/', "\\");
     let new_asset = replacement_relative.to_string_lossy().replace('\\', "/");
     if uses.is_empty() {
-        return Err("No usage locations were found for the missing asset.".to_owned());
+        return Err(crate::gettext!("No usage locations were found for the missing asset."));
     }
 
     let asset_type = classify_route_asset_type(old_asset, uses);
@@ -363,9 +364,9 @@ pub(crate) fn replace_missing_asset(
                 ]
                 .contains(&tag.as_str())
             {
-                return Err(
-                    "Type of selected asset mismatched with type of missing asset.".to_owned(),
-                );
+                return Err(crate::gettext!(
+                    "Type of selected asset mismatched with type of missing asset."
+                ));
             }
         }
         RouteAssetType::Loft => {
@@ -377,24 +378,24 @@ pub(crate) fn replace_missing_asset(
                 ]
                 .contains(&tag.as_str())
             {
-                return Err(
-                    "Type of selected asset mismatched with type of missing asset.".to_owned(),
-                );
+                return Err(crate::gettext!(
+                    "Type of selected asset mismatched with type of missing asset."
+                ));
             }
         }
         RouteAssetType::Road => {
             if let Some(tag) = &root_tag
                 && tag != "cRoadSectionBlueprint"
             {
-                return Err(
-                    "Type of selected asset mismatched with type of missing asset.".to_owned(),
-                );
+                return Err(crate::gettext!(
+                    "Type of selected asset mismatched with type of missing asset."
+                ));
             }
         }
         RouteAssetType::TrackRules => {
-            return Err(
-                "You can't change the track infrastructure parts through the program!".to_owned(),
-            );
+            return Err(crate::gettext!(
+                "You can't change the track infrastructure parts through the program!"
+            ));
         }
         _ => {}
     }
@@ -410,10 +411,12 @@ pub(crate) fn replace_missing_asset(
                 || contains_ignore_ascii_case(&path, "junctions")
         })
     {
-        return Err("You can't change the track infrastructure parts through the program!".into());
+        return Err(crate::gettext!(
+            "You can't change the track infrastructure parts through the program!"
+        ));
     }
 
-    let source_files = collect_and_validate_source_files(route_path, uses, "замены")?;
+    let source_files = collect_and_validate_source_files(route_path, uses, &crate::gettext!("replacements"))?;
 
     println!("[Replacement] Asset replaced: {old_asset} -> {new_asset}");
 
@@ -431,7 +434,7 @@ pub(crate) fn replace_missing_asset(
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
         {
-            return Err(format!(
+            return Err(crate::gettext!(
                 "Unknown route file format: {}",
                 source_file.display()
             ));
@@ -442,16 +445,18 @@ pub(crate) fn replace_missing_asset(
 
         if is_binary {
             let bytes = fs::read(&file_path).map_err(|error| {
-                format!(
-                    "Failed to read {} before replace: {error}",
-                    source_file.display()
+                crate::gettext!(
+                    "Failed to read {} before replace: {}",
+                    source_file.display(),
+                    error
                 )
             })?;
             let mut reader = SerzReader::new(&bytes);
             let mut root = reader.parse().map_err(|error| {
-                format!(
-                    "Failed to read {} before replace: {error}",
-                    source_file.display()
+                crate::gettext!(
+                    "Failed to read {} before replace: {}",
+                    source_file.display(),
+                    error
                 )
             })?;
             println!(
@@ -488,14 +493,15 @@ pub(crate) fn replace_missing_asset(
         } else {
             let xml_path = temp.path().join("source.xml");
             fs::copy(&file_path, &xml_path).map_err(|error| {
-                format!(
-                    "Failed to prepare {} before replace: {error}",
-                    source_file.display()
+                crate::gettext!(
+                    "Failed to prepare {} before replace: {}",
+                    source_file.display(),
+                    error
                 )
             })?;
 
             let mut xml = fs::read_to_string(&xml_path).map_err(|error| {
-                format!("Failed to read XML for {}: {error}", source_file.display())
+                crate::gettext!("Failed to read XML for {}: {}", source_file.display(), error)
             })?;
             let references = extract_asset_references_with_locations(&xml);
             let mut edits: Vec<_> = references
@@ -527,15 +533,17 @@ pub(crate) fn replace_missing_asset(
                 xml.replace_range(range, &value);
             }
             validate_xml_document(&xml).map_err(|error| {
-                format!(
-                    "Replacement in {} created broken XML: {error}",
-                    source_file.display()
+                crate::gettext!(
+                    "Replacement in {} created broken XML: {}",
+                    source_file.display(),
+                    error
                 )
             })?;
             fs::write(&xml_path, xml).map_err(|error| {
-                format!(
-                    "Failed to write temporal XML for {}: {error}",
-                    source_file.display()
+                crate::gettext!(
+                    "Failed to write temporal XML for {}: {}",
+                    source_file.display(),
+                    error
                 )
             })?;
 
@@ -545,8 +553,8 @@ pub(crate) fn replace_missing_asset(
     }
 
     if staged.is_empty() {
-        return Err(format!(
-            "No usage of {old_asset} found in the source code of the route. Update chech and repeat."
+        return Err(crate::gettext!(
+            "No usage of {old_asset} found in the source code of the route. Update check and repeat."
         ));
     }
 
@@ -566,9 +574,12 @@ pub(crate) fn replace_missing_asset(
             }
             Err(error) => {
                 transaction.rollback();
-                return Err(format!(
-                    "Replaced entries: {replaced_instances}; changed files: {replaced_files}. Error in {}: {error}. Created backups: {}",
+                return Err(crate::gettext!(
+                    "Replaced entries: {}; changed files: {}. Error in {}: {}. Created backups: {}",
+                    replaced_instances,
+                    replaced_files,
                     source_file.display(),
+                    error,
                     backups
                         .iter()
                         .map(|path| path.display().to_string())

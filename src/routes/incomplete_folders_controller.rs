@@ -258,7 +258,7 @@ fn canonical_routes_dir(app: &CheckerApp) -> Result<PathBuf, String> {
     let routes_dir = app.clean_rw_path().join("Content").join("Routes");
     routes_dir
         .canonicalize()
-        .map_err(|e| format!("Failed to determine routes folder: {e}"))
+        .map_err(|e| crate::gettext!("Failed to determine routes folder: {}", e))
 }
 
 /// Проверяет, безопасно ли удалять директорию: путь должен находиться
@@ -270,18 +270,18 @@ fn validate_delete_path(path: &Path, app: &CheckerApp) -> Result<(), String> {
 
 fn validate_delete_path_against(path: &Path, canon_routes: &Path) -> Result<(), String> {
     if path.as_os_str().is_empty() {
-        return Err("Path to deletion is empty.".to_owned());
+        return Err(crate::gettext!("Path to deletion is empty."));
     }
     let canon_target = path
         .canonicalize()
-        .map_err(|e| format!("Failed to determine target path: {e}"))?;
+        .map_err(|e| crate::gettext!("Failed to determine target path: {}", e))?;
     if canon_target == canon_routes {
-        return Err("Deleting root folder of routes is prohibited.".to_owned());
+        return Err(crate::gettext!("Deleting root folder of routes is prohibited."));
     }
     if !canon_target.starts_with(canon_routes) {
-        return Err(
-            "Target path is located outside routes folder. Deletion is prohibited.".to_owned(),
-        );
+        return Err(crate::gettext!(
+            "Target path is located outside routes folder. Deletion is prohibited."
+        ));
     }
     Ok(())
 }

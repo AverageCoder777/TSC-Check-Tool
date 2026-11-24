@@ -304,10 +304,10 @@ impl MissingAssetsController {
             let start_dir = existing_directory_upwards(&asset_directory(&assets_path, &missing.path))
                 .unwrap_or_else(|| assets_path.clone());
             let Some(replacement) = rfd::FileDialog::new()
-                .set_title("Select BIN of new object or open AP archive with it")
-                .add_filter("RW Assets (*.bin, *.ap)", &["bin", "ap"])
-                .add_filter("RW Blueprint (*.bin)", &["bin"])
-                .add_filter("AP Archive (*.ap)", &["ap"])
+                .set_title(crate::gettext!("Select BIN of new object or open AP archive with it"))
+                .add_filter(crate::gettext!("RW Assets (*.bin, *.ap)"), &["bin", "ap"])
+                .add_filter(crate::gettext!("RW Blueprint (*.bin)"), &["bin"])
+                .add_filter(crate::gettext!("AP Archive (*.ap)"), &["ap"])
                 .set_directory(&start_dir)
                 .pick_file()
             else {

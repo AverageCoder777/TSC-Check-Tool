@@ -236,10 +236,10 @@ pub(crate) fn read_route_scenarios(route_path: &Path) -> Vec<RouteScenario> {
                 }
                 scenario.author = element_text(&xml, "Author");
                 scenario.season = match element_text(&xml, "Season").as_str() {
-                    "SEASON_SPRING" => "Spring".to_owned(),
-                    "SEASON_SUMMER" => "Summer".to_owned(),
-                    "SEASON_AUTUMN" => "Autumn".to_owned(),
-                    "SEASON_WINTER" => "Winter".to_owned(),
+                    "SEASON_SPRING" => crate::gettext!("Spring"),
+                    "SEASON_SUMMER" => crate::gettext!("Summer"),
+                    "SEASON_AUTUMN" => crate::gettext!("Autumn"),
+                    "SEASON_WINTER" => crate::gettext!("Winter"),
                     other => other.to_owned(),
                 };
                 scenario.weather = element_text(&xml, "WeatherBlueprint");
@@ -276,7 +276,7 @@ pub(crate) fn read_route_scenarios(route_path: &Path) -> Vec<RouteScenario> {
                 }
             }
             if scenario.scenario_type.is_empty() {
-                scenario.scenario_type = "Standard".to_owned();
+                scenario.scenario_type = crate::gettext!("Standard");
             }
             scenario
         })
@@ -303,10 +303,10 @@ pub(crate) fn load_scenario_metadata(scenario: &mut RouteScenario) {
         }
         scenario.author = element_text(&xml, "Author");
         scenario.season = match element_text(&xml, "Season").as_str() {
-            "SEASON_SPRING" => "Spring".to_owned(),
-            "SEASON_SUMMER" => "Summer".to_owned(),
-            "SEASON_AUTUMN" => "Autumn".to_owned(),
-            "SEASON_WINTER" => "Winter".to_owned(),
+            "SEASON_SPRING" => crate::gettext!("Spring"),
+            "SEASON_SUMMER" => crate::gettext!("Summer"),
+            "SEASON_AUTUMN" => crate::gettext!("Autumn"),
+            "SEASON_WINTER" => crate::gettext!("Winter"),
             other => other.to_owned(),
         };
         scenario.duration = element_text(&xml, "DurationMins");
@@ -344,7 +344,7 @@ pub(crate) fn load_scenario_metadata(scenario: &mut RouteScenario) {
             .into_owned();
     }
     if scenario.scenario_type.is_empty() {
-        scenario.scenario_type = "Standard".to_owned();
+        scenario.scenario_type = crate::gettext!("Standard");
     }
     scenario.metadata_loaded = true;
 }
@@ -679,13 +679,13 @@ pub(crate) fn scenario_type_from_xml(xml: &str) -> String {
 
     // Быстрые выводы по структуре.
     if !element_text(xml, "QuickDrivePlayerConsistName").is_empty() {
-        return "Quick Drive".to_owned();
+        return crate::gettext!("Quick Drive");
     }
     if contains_ignore_ascii_case(xml, "freeroam")
         || contains_ignore_ascii_case(xml, "free roam")
         || contains_ignore_ascii_case(xml, "free_roam")
     {
-        return "Free Roam".to_owned();
+        return crate::gettext!("Free Roam");
     }
     if contains_ignore_ascii_case(xml, "quickdrive")
         || contains_ignore_ascii_case(xml, "quick drive")
@@ -693,35 +693,35 @@ pub(crate) fn scenario_type_from_xml(xml: &str) -> String {
         || contains_ignore_ascii_case(xml, "etemplate")
         || contains_ignore_ascii_case(xml, "template scenario")
     {
-        return "Quick Drive".to_owned();
+        return crate::gettext!("Quick Drive");
     }
     if contains_ignore_ascii_case(xml, "timetable") || contains_ignore_ascii_case(xml, "etimetable")
     {
-        return "Timetable (Standard)".to_owned();
+        return crate::gettext!("Timetable (Standard)");
     }
     if contains_ignore_ascii_case(xml, "<careerrules") {
-        return "Career".to_owned();
+        return crate::gettext!("Career");
     }
     if contains_ignore_ascii_case(xml, "career") {
-        return "Career".to_owned();
+        return crate::gettext!("Career");
     }
-    "Standard".to_owned()
+    crate::gettext!("Standard")
 }
 
 fn normalize_scenario_type(value: &str) -> String {
     let v = value.trim().to_lowercase().replace(['_', '-'], " ");
     if v.contains("free") && v.contains("roam") {
-        "Free Roam".to_owned()
+        crate::gettext!("Free Roam")
     } else if v.contains("quick") && v.contains("drive") {
-        "Quick Drive".to_owned()
+        crate::gettext!("Quick Drive")
     } else if v.contains("career") {
-        "Career".to_owned()
+        crate::gettext!("Career")
     } else if v.contains("standard") || v.contains("normal") {
-        "Standard".to_owned()
+        crate::gettext!("Standard")
     } else if v.contains("timetable") {
-        "Timetable (Standard)".to_owned()
+        crate::gettext!("Timetable (Standard)")
     } else if v.contains("template") {
-        "Quick Drive".to_owned()
+        crate::gettext!("Quick Drive")
     } else if v.is_empty() {
         String::new()
     } else {

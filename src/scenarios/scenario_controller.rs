@@ -216,7 +216,7 @@ impl ScenarioController {
                     .and_then(|c| c.first())
                     .and_then(|cc| cc.vehicles.first())
                 {
-                    format!(
+                    crate::gettext!(
                         "Provider: {}\nProduct: {}\nFile: {}\nnumber: {}",
                         v.provider,
                         v.product,
@@ -224,21 +224,21 @@ impl ScenarioController {
                         v.number.clone().unwrap_or_else(|| "—".to_owned())
                     )
                 } else {
-                    "Select rolling stock".to_owned()
+                    crate::gettext!("Select rolling stock")
                 };
 
                 let scenario_name = scenario.name.clone();
-                let scenario_title = format!(
+                let scenario_title = crate::gettext!(
                     "Scenario: {}",
                     if scenario.name.trim().is_empty() {
-                        "No name"
+                        crate::gettext!("No name")
                     } else {
-                        scenario.name.as_str()
+                        scenario.name.as_str().to_string()
                     }
                 );
                 let fallback = |value: &str| -> String {
                     if value.trim().is_empty() {
-                        "Not specified".to_owned()
+                        crate::gettext!("Not specified")
                     } else {
                         value.to_owned()
                     }
@@ -543,7 +543,7 @@ impl ScenarioController {
                         sw.set_selected_vehicle_path(path_text.into());
                     }
                     sw.set_selected_vehicle_image(image);
-                    let details = format!(
+                    let details = crate::gettext!(
                         "Provider: {}\nProduct: {}\nFile: {}\nNumber: {}",
                         provider,
                         product,
