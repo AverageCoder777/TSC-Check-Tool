@@ -399,7 +399,7 @@ impl InventoryController {
                         if !untouched_files.is_empty() {
                             app_guard.log_event(
                                 crate::gettext!(
-                                    "Warning: it was not possible to delete uses of the object in the following tiles {0} (probably a composite lot, manual removal is required): {1}",
+                                    "Warning: it was not possible to delete uses of the object in the following tiles {0} (probably a composite loft, manual removal is required): {1}",
                                     asset.path,
                                     untouched_files.join(", ")
                                 ),
