@@ -551,7 +551,7 @@ fn main() {
             if let Some(ui) = ui_weak_open.upgrade() {
                 log_event(
                     &ui,
-                    &format!("Folder is open in explorer: {}.", path.display()),
+                    &crate::gettext!("Folder is open in explorer: {}.", path.display()),
                     app::LogLevel::Info,
                 );
             }
@@ -593,7 +593,7 @@ fn main() {
         if let Some(ui) = ui_handle_copy_guid.upgrade() {
             log_event(
                 &ui,
-                &format!("GUID copied into clipboard: {guid}"),
+                &crate::gettext!("GUID copied into clipboard: {}", guid),
                 app::LogLevel::Info,
             );
         }

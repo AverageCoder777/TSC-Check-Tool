@@ -259,12 +259,12 @@ pub fn extract_archive_member(
 ) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create folder {}: {e}", parent.display()))?;
+            .map_err(|e| crate::gettext!("Failed to create folder {}: {}", parent.display(), e))?;
     }
     let file = File::open(archive_path)
-        .map_err(|e| format!("Failed to open archive {}: {e}", archive_path.display()))?;
+        .map_err(|e| crate::gettext!("Failed to open archive {}: {}", archive_path.display(), e))?;
     let mut zip = ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read archive {}: {e}", archive_path.display()))?;
+        .map_err(|e| crate::gettext!("Failed to read archive {}: {}", archive_path.display(), e))?;
 
     let target = normalize_member(member);
     let mut idx = None;
@@ -283,20 +283,26 @@ pub fn extract_archive_member(
             break;
         }
     }
-    let idx =
-        idx.ok_or_else(|| format!("Can't find {member} in archive {}", archive_path.display()))?;
+    let idx = idx.ok_or_else(|| {
+        crate::gettext!(
+            "Can't find {} in archive {}",
+            member,
+            archive_path.display()
+        )
+    })?;
 
     let mut entry = zip
         .by_index(idx)
-        .map_err(|e| format!("Failed to read {member} from archive: {e}"))?;
+        .map_err(|e| crate::gettext!("Failed to read {} from archive: {}", member, e))?;
     let mut output = BufWriter::new(
-        File::create(dest).map_err(|e| format!("Failed to create file {}: {e}", dest.display()))?,
+        File::create(dest)
+            .map_err(|e| crate::gettext!("Failed to create file {}: {}", dest.display(), e))?,
     );
     std::io::copy(&mut entry, &mut output)
-        .map_err(|e| format!("Failed to unpack file {member}: {e}"))?;
+        .map_err(|e| crate::gettext!("Failed to unpack file {}: {}", member, e))?;
     output
         .flush()
-        .map_err(|e| format!("Failed to write {}: {e}", dest.display()))?;
+        .map_err(|e| crate::gettext!("Failed to write {}: {}", dest.display(), e))?;
     Ok(())
 }
 

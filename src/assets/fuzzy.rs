@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 
 use crate::common::translit::BROKEN_CHARACTERS;
 
-/// Являются ли две буквы похожими начертанием.
 pub(crate) fn is_homoglyph(left: char, right: char) -> bool {
     let (cyrillic, ascii) = match (left.is_ascii(), right.is_ascii()) {
         (false, true) => (left, right),
@@ -13,10 +12,6 @@ pub(crate) fn is_homoglyph(left: char, right: char) -> bool {
     homoglyph_ascii(cyrillic) == Some(ascii)
 }
 
-/// Совпадают ли имена, если считать похожие буквы одинаковыми.
-///
-/// Отличаться могут только буквы-«двойники» и испорченные символы: любые другие
-/// различия означают, что это другой файл.
 pub(crate) fn names_match(expected: &str, candidate: &str) -> bool {
     let mut left_chars = expected.chars();
     let mut right_chars = candidate.chars();
@@ -44,12 +39,6 @@ pub(crate) fn has_corrupted_or_nonascii(value: &str) -> bool {
         .any(|byte| !byte.is_ascii() || byte == b'?' || byte.is_ascii_control())
 }
 
-/// Ищет файл ассета по ссылке из маршрута.
-///
-/// Ссылка может содержать испорченные символы: сначала проверяются имена с
-/// транслитерацией, затем — с настоящим умляутом. Так ассет, который на диске
-/// называется с умляутом, не считается утерянным, а попадает в список на
-/// переименование.
 pub(crate) const GLITCH_WILDCARD: char = '\u{E000}';
 
 pub(crate) fn normalize_fuzzy_segment(value: &str) -> String {

@@ -63,7 +63,9 @@ pub(super) fn load_tgpcdx_bundle(
 ) -> Result<(Vec<ImageMip>, Option<TextureInfo>), String> {
     if data.starts_with(b"SERZ") {
         let mut reader = SerzReader::new(data);
-        let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let mut root = reader
+            .parse()
+            .map_err(|e| crate::gettext!("serz parse: {}", e))?;
         let info = inspect_serz_node(&root, data.len() as u64, path).ok();
         let mut mips = Vec::new();
         collect_serz_image_mips_owned(&mut root, &mut mips)?;
@@ -79,14 +81,16 @@ pub(super) fn load_tgpcdx_bundle(
 pub fn inspect_tgpcdx_with_path(data: &[u8], path: Option<&Path>) -> Result<TextureInfo, String> {
     if data.starts_with(b"SERZ") {
         let mut reader = SerzReader::new(data);
-        let root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let root = reader
+            .parse()
+            .map_err(|e| crate::gettext!("serz parse: {}", e))?;
         return inspect_serz_node(&root, data.len() as u64, path);
     }
 
-    let xml = std::str::from_utf8(data).map_err(|e| format!("invalid text: {e}"))?;
+    let xml = std::str::from_utf8(data).map_err(|e| crate::gettext!("invalid text: {}", e))?;
     let blocks = all_image_blocks(xml);
     if blocks.is_empty() {
-        return Err("no image blocks".into());
+        return Err(crate::gettext!("no image blocks"));
     }
 
     let mut stats = RawInspectStats {
@@ -237,7 +241,7 @@ fn finalize_texture_info(
     path: Option<&Path>,
 ) -> Result<TextureInfo, String> {
     if stats.width == 0 || stats.height == 0 {
-        return Err("invalid dimensions".into());
+        return Err(crate::gettext!("invalid dimensions"));
     }
     if stats.min_width == u32::MAX {
         stats.min_width = stats.width;
@@ -270,7 +274,7 @@ fn finalize_texture_info(
             stats.block_count as u32,
             stats.min_width,
             stats.min_height,
-            format!("Separate nodes ({}× cHcImageDx)", stats.block_count),
+            crate::gettext!("Separate nodes ({}× cHcImageDx)", stats.block_count),
         )
     };
 
@@ -315,17 +319,19 @@ fn finalize_texture_info(
 pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err("Internal texture name cannot be empty".into());
+        return Err(crate::gettext!("Internal texture name cannot be empty"));
     }
     if !trimmed.is_ascii() {
-        return Err("Internal name must contain only ASCII symbols (without Cyrillic)".into());
+        return Err(crate::gettext!(
+            "Internal name must contain only ASCII symbols (without Cyrillic)"
+        ));
     }
 
     const FORBIDDEN_EXTS: [&str; 4] = [".tgpcdx", ".dds", ".ace", ".tgpc"];
     if FORBIDDEN_EXTS.iter().any(|ext| {
         trimmed.len() >= ext.len() && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
     }) {
-        return Err(format!(
+        return Err(crate::gettext!(
             "Internal name must not contain a file extension (.tgpcdx, .dds, .ace): {trimmed}"
         ));
     }
@@ -334,13 +340,15 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
         .bytes()
         .any(|b| b.is_ascii_control() || matches!(b, b'"' | b'<' | b'>'))
     {
-        return Err("Internal name contains invalid characters.".into());
+        return Err(crate::gettext!(
+            "Internal name contains invalid characters."
+        ));
     }
     Ok(trimmed.replace('/', "\\"))
 }
 
 pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result<(), String> {
-    append_tgpcdx_log(&format!(
+    append_tgpcdx_log(&crate::gettext!(
         "update_tgpcdx_internal_name: path={}, new_name={new_name}",
         tgpcdx_path.display()
     ));
@@ -349,7 +357,7 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
 
     let meta = fs::metadata(tgpcdx_path).map_err(|e| e.to_string())?;
     if meta.permissions().readonly() {
-        return Err(format!(
+        return Err(crate::gettext!(
             "File is read-only (possibly inside a .ap archive): {}. Unpack it before editing.",
             tgpcdx_path.display()
         ));
@@ -357,31 +365,34 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
 
     let data = fs::read(tgpcdx_path).map_err(|e| e.to_string())?;
     if !data.starts_with(b"SERZ") {
-        return Err("TgPcDx save requires a binary SERZ file".into());
+        return Err(crate::gettext!("TgPcDx save requires a binary SERZ file"));
     }
 
     let mut reader = SerzReader::new(&data);
-    let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+    let mut root = reader
+        .parse()
+        .map_err(|e| crate::gettext!("serz parse: {}", e))?;
     let preamble = reader.preamble.clone();
 
     update_tgpcdx_internal_names(&mut root, &normalized)?;
 
-    let out_bytes =
-        encode_tgpcdx_to_vec(&root, preamble.as_ref()).map_err(|e| format!("serz encode: {e}"))?;
+    let out_bytes = encode_tgpcdx_to_vec(&root, preamble.as_ref())
+        .map_err(|e| crate::gettext!("serz encode: {}", e))?;
     if out_bytes.is_empty() {
-        return Err("Serialization result is empty".into());
+        return Err(crate::gettext!("Serialization result is empty"));
     }
 
     let bak_path = append_path_suffix(tgpcdx_path, ".bak");
     if !bak_path.exists() {
-        fs::copy(tgpcdx_path, &bak_path)
-            .map_err(|e| format!("Failed to create backup {}: {e}", bak_path.display()))?;
-        append_tgpcdx_log(&format!("Backup created: {}", bak_path.display()));
+        fs::copy(tgpcdx_path, &bak_path).map_err(|e| {
+            crate::gettext!("Failed to create backup {}: {}", bak_path.display(), e)
+        })?;
+        append_tgpcdx_log(&crate::gettext!("Backup created: {}", bak_path.display()));
     }
 
     write_output_bytes(tgpcdx_path, &out_bytes)?;
 
-    append_tgpcdx_log(&format!(
+    append_tgpcdx_log(&crate::gettext!(
         "Internal texture name updated {}: {normalized}",
         tgpcdx_path.display()
     ));
@@ -392,11 +403,17 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
 pub(crate) fn restore_tgpcdx_from_backup(tgpcdx_path: &Path) -> Result<(), String> {
     let bak_path = append_path_suffix(tgpcdx_path, ".bak");
     if !bak_path.is_file() {
-        return Err(format!("Backup file not found: {}", bak_path.display()));
+        return Err(crate::gettext!(
+            "Backup file not found: {}",
+            bak_path.display()
+        ));
     }
-    let bytes = fs::read(&bak_path).map_err(|e| format!("Failed to read backup: {e}"))?;
+    let bytes = fs::read(&bak_path).map_err(|e| crate::gettext!("Failed to read backup: {}", e))?;
     write_output_bytes(tgpcdx_path, &bytes)?;
-    append_tgpcdx_log(&format!("Restored from backup: {}", tgpcdx_path.display()));
+    append_tgpcdx_log(&crate::gettext!(
+        "Restored from backup: {}",
+        tgpcdx_path.display()
+    ));
     Ok(())
 }
 
@@ -406,9 +423,9 @@ pub fn update_tgpcdx_internal_names(root: &mut SerzNode, new_name: &str) -> Resu
     collect_c_hc_texture_names(root, &mut current_names);
 
     if current_names.is_empty() {
-        return Err(
-            "cHcTexture node with a child Name (cDeltaString) was not found in file.".into(),
-        );
+        return Err(crate::gettext!(
+            "cHcTexture node with a child Name (cDeltaString) was not found in file."
+        ));
     }
 
     if current_names.len() == 1 {
@@ -550,7 +567,7 @@ pub fn write_output_bytes(output: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
     if fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) == 0 {
         let _ = fs::remove_file(&tmp);
-        return Err("empty staged file".into());
+        return Err(crate::gettext!("empty staged file"));
     }
     let old = append_path_suffix(output, ".old");
     if output.exists() {
@@ -599,46 +616,70 @@ pub(crate) fn texture_info_text_with_view(
     let mut s = String::with_capacity(512);
     if !info.name.is_empty() {
         let mark = if info.name_matches_filename {
-            "✓"
+            "✓".to_owned()
         } else {
-            "⚠ file name is different"
+            crate::gettext!("⚠ file name is different")
         };
-        let _ = writeln!(s, "Internal name (Name): {} {mark}", info.name);
+        let _ = writeln!(
+            s,
+            "{}",
+            crate::gettext!("Internal name (Name): {0} {1}", info.name, mark)
+        );
     }
     let _ = writeln!(
         s,
-        "Resolution: {}×{} px | Textures in group: {} | Mipmaps: {} ({}×{} → {}×{}) [{}]",
-        info.width,
-        info.height,
-        info.texture_count,
-        info.mip_count,
-        info.width,
-        info.height,
-        info.min_width,
-        info.min_height,
-        info.mip_storage_mode,
+        "{}",
+        crate::gettext!(
+            "Resolution: {0}×{1} px | Textures in group: {2} | Mipmaps: {3} ({0}×{1} → {4}×{5}) [{6}]",
+            info.width,
+            info.height,
+            info.texture_count,
+            info.mip_count,
+            info.min_width,
+            info.min_height,
+            info.mip_storage_mode,
+        )
     );
     let _ = writeln!(
         s,
-        "Format: {} [{}] | DDS: {dds_name} | IsSwizzled: {} | Flags(u16): {}",
-        info.format_label,
-        info.raw_format,
-        u8::from(info.is_swizzled),
-        info.flags_u16,
+        "{}",
+        crate::gettext!(
+            "Format: {0} [{1}] | DDS: {2} | IsSwizzled: {3} | Flags(u16): {4}",
+            info.format_label,
+            info.raw_format,
+            dds_name,
+            u8::from(info.is_swizzled),
+            info.flags_u16,
+        )
     );
-    let bak = if info.has_bak { "yes" } else { "no" };
+    let bak = if info.has_bak {
+        crate::gettext!("yes")
+    } else {
+        crate::gettext!("no")
+    };
     let _ = writeln!(
         s,
-        "File size: {} ({} B) | Pixels (blob): {} B | Header: {} B | Backup (.bak): {bak}",
-        format_size_bytes(info.file_size_bytes),
-        format_bytes_spaces(info.file_size_bytes),
-        format_bytes_spaces(info.total_blob_bytes),
-        format_bytes_spaces(info.header_bytes),
+        "{}",
+        crate::gettext!(
+            "File size: {0} ({1} B) | Pixels (blob): {2} B | Header: {3} B | Backup (.bak): {4}",
+            format_size_bytes(info.file_size_bytes),
+            format_bytes_spaces(info.file_size_bytes),
+            format_bytes_spaces(info.total_blob_bytes),
+            format_bytes_spaces(info.header_bytes),
+            bak,
+        )
     );
     let _ = writeln!(
         s,
-        "View: {} | Active mip: #{mip_index} ({mip_w}×{mip_h} px) | Import requires: DDS {dds_name} (power of two, with mipmaps)",
-        mode.label(),
+        "{}",
+        crate::gettext!(
+            "View: {0} | Active mip: #{1} ({2}×{3} px) | Import requires: DDS {4} (power of two, with mipmaps)",
+            mode.label(),
+            mip_index,
+            mip_w,
+            mip_h,
+            dds_name,
+        )
     );
     let _ = write!(s, "TGPCDX  {}", path.display());
     s
@@ -646,9 +687,11 @@ pub(crate) fn texture_info_text_with_view(
 
 fn format_size_bytes(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
-        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+        let value = format!("{:.1}", bytes as f64 / (1024.0 * 1024.0));
+        crate::gettext!("{} MiB", value)
     } else {
-        format!("{:.1} KiB", bytes as f64 / 1024.0)
+        let value = format!("{:.1}", bytes as f64 / 1024.0);
+        crate::gettext!("{} KiB", value)
     }
 }
 

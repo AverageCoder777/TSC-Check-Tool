@@ -1,9 +1,3 @@
-//! Разбор ссылок на ассеты внутри XML RailWorks.
-//!
-//! Ссылка выглядит так: `<Provider>/<Product>/<путь>`. В маршрутах она может
-//! быть без расширения и с суффиксом варианта `[00]`, а в файлах сценарных
-//! поездов — с указанием на объект поезда.
-
 use std::ops::Range;
 use std::path::{Component, Path};
 
@@ -15,14 +9,11 @@ pub(crate) struct AssetReference {
     pub(crate) provider_range: Range<usize>,
     pub(crate) product_range: Range<usize>,
     pub(crate) blueprint_range: Range<usize>,
-    /// Что за объект стоит по ссылке: объект маршрута или файл состава.
     pub(crate) kind: AssetKind,
 }
 
-/// Позиции значений «голой» ссылки: провайдер, продукт, блюпринт и конец.
 type BlueprintRanges = (Range<usize>, Range<usize>, Range<usize>, usize);
 
-/// Возвращает байтовый диапазон значения совпадения без окружающих пробелов.
 pub(crate) fn capture_value_range(capture: &regex::Match<'_>) -> Range<usize> {
     let value = capture.as_str();
     let leading = value.len() - value.trim_start().len();
@@ -30,11 +21,6 @@ pub(crate) fn capture_value_range(capture: &regex::Match<'_>) -> Range<usize> {
     capture.start() + leading..capture.start() + leading + trimmed.len()
 }
 
-/// Ищет первое вхождение подстроки без учёта регистра ASCII.
-///
-/// Нужен для ручного разбора XML: регулярное выражение с ленивым `.*?` заново
-/// просматривает остаток файла для каждого найденного блока, из-за чего разбор
-/// маршрута дорожает квадратично.
 pub(crate) fn find_ignore_ascii_case(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
@@ -55,11 +41,6 @@ pub(crate) fn find_ignore_ascii_case(haystack: &[u8], needle: &[u8], from: usize
     None
 }
 
-/// Ищет элемент `<Тег ...>значение</Тег>` начиная с заданного места.
-///
-/// Возвращает диапазон значения без окружающих пробелов и позицию сразу за
-/// закрывающим тегом. Значение не может содержать `<`, как и в исходном
-/// шаблоне `([^<]*)`.
 pub(crate) fn parse_tagged_value(
     haystack: &[u8],
     tag: &str,
@@ -121,7 +102,6 @@ pub(crate) fn parse_tagged_value(
     Some((value_start + leading..value_start + trimmed, close_end + 1))
 }
 
-/// Позиция следующего открывающего тега после заданного места.
 pub(crate) fn next_tag_start(haystack: &[u8], from: usize) -> Option<usize> {
     haystack
         .get(from..)?
@@ -130,7 +110,6 @@ pub(crate) fn next_tag_start(haystack: &[u8], from: usize) -> Option<usize> {
         .map(|offset| from + offset)
 }
 
-/// Ищет элемент по имени в заданном диапазоне файла.
 pub(crate) fn find_tagged_value(
     haystack: &[u8],
     tag: &str,
@@ -153,7 +132,6 @@ pub(crate) fn find_tagged_value(
     None
 }
 
-/// Блоки `iBlueprintLibrary-cAbsoluteBlueprintID` с границами разметки.
 pub(crate) fn absolute_blueprint_blocks(haystack: &[u8]) -> Vec<(usize, usize, usize, usize)> {
     const OPEN: &[u8] = b"<iBlueprintLibrary-cAbsoluteBlueprintID>";
     const CLOSE: &[u8] = b"</iBlueprintLibrary-cAbsoluteBlueprintID>";
@@ -224,24 +202,11 @@ pub(crate) fn build_asset_reference(
     })
 }
 
-/// Собирает все ссылки на ассеты маршрута.
-///
-/// Основной источник — блоки `iBlueprintLibrary-cAbsoluteBlueprintID`, внутри которых
-/// Provider, Product и путь к блюпринту принадлежат одной ссылке. Такой разбор не даёт
-/// пустым заготовкам `ReskinBlueprintID` «съесть» ссылку следующего за ними объекта.
-///
-/// Разбор идёт вручную, без регулярных выражений с ленивым `.*?`: такие шаблоны
-/// просматривают остаток файла заново для каждого блока и делают проверку маршрута
-/// квадратичной по размеру XML.
 pub(crate) fn extract_asset_references_with_locations(xml: &str) -> Vec<AssetReference> {
     let haystack = xml.as_bytes();
     let blocks = absolute_blueprint_blocks(haystack);
     let mut references: Vec<(usize, AssetReference)> = Vec::with_capacity(blocks.len());
     let mut covered: Vec<Range<usize>> = Vec::with_capacity(blocks.len());
-
-    // Контекст (scenery/loft/vehicle) определяется ближайшим предыдущим тегом.
-    // Чтобы не делать O(N) rfind для каждого блока на гигантском Tracks.bin,
-    // поддерживаем индексы последних тегов инкрементально.
     let mut context_cursor = 0usize;
     let mut vehicle_ctx: Option<usize> = None;
     let mut scenery_ctx: Option<usize> = None;
@@ -285,9 +250,6 @@ pub(crate) fn extract_asset_references_with_locations(xml: &str) -> Vec<AssetRef
         };
         references.push((open_at, reference));
     }
-
-    // Запасной вариант для файлов без обёртки `iBlueprintLibrary-cAbsoluteBlueprintID`.
-    // Сбрасываем состояние контекста, так как второй проход идёт с начала файла.
     context_cursor = 0;
     vehicle_ctx = None;
     scenery_ctx = None;
@@ -343,9 +305,6 @@ pub(crate) fn extract_asset_references_with_locations(xml: &str) -> Vec<AssetRef
         .collect()
 }
 
-/// Разбирает «голую» ссылку `<Provider>…</Provider><Product>…</Product><BlueprintID>…</BlueprintID>`.
-/// Между элементами допускается только текст: как и в исходном шаблоне
-/// `[^<]*`, никакой другой тег между ними стоять не может.
 pub(crate) fn match_bare_blueprint(haystack: &[u8], start: usize) -> Option<BlueprintRanges> {
     let (provider_range, after_provider) = parse_tagged_value(haystack, "Provider", start)?;
     let product_start = next_tag_start(haystack, after_provider)?;
@@ -355,8 +314,6 @@ pub(crate) fn match_bare_blueprint(haystack: &[u8], start: usize) -> Option<Blue
     Some((provider_range, product_range, blueprint_range, end))
 }
 
-/// Извлекает метку тайла вида `+000001-000002` из имени файла маршрута
-/// или возвращает имя файла/маршрута, если координаты не найдены.
 pub(crate) fn route_tile_label(route_path: &Path, source_file: &RouteFile) -> String {
     let file_name = source_file.file_name_str();
     let stem = Path::new(file_name)
@@ -370,7 +327,6 @@ pub(crate) fn route_tile_label(route_path: &Path, source_file: &RouteFile) -> St
             && matches!(tile[7], b'+' | b'-')
             && tile[8..14].iter().all(u8::is_ascii_digit)
     }) {
-        // Все 14 байт гарантированно валидный ASCII.
         return String::from_utf8(tile.to_vec()).unwrap_or_default();
     }
     source_file

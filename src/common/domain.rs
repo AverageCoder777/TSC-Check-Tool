@@ -157,7 +157,7 @@ impl RouteFile {
                 Component::ParentDir | Component::Prefix(_) | Component::RootDir
             )
         }) {
-            return Err(format!("Incorrect path inside archive: {name}"));
+            return Err(crate::gettext!("Incorrect path inside archive: {}", name));
         }
 
         let target = temp_dir.join(relative);

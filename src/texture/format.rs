@@ -1,8 +1,5 @@
-//! Texture format handling and mip size calculations.
-
 use ddsfile::{D3DFormat, Dds, DxgiFormat, FourCC};
 
-/// Сжатие DDS, которое движок TS Classic ожидает от импортируемого файла.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DdsCompression {
     Dxt1,
@@ -40,7 +37,6 @@ pub(super) fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
         .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
-/// Распознаёт формат сжатия по заголовку DDS_HEADER файла .dds.
 pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
     if let Some(dxgi) = dds.get_dxgi_format() {
         return match dxgi {
@@ -74,7 +70,6 @@ pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
             _ => DdsCompression::Unknown,
         };
     }
-
     if let Some(d3d) = dds.get_d3d_format() {
         return match d3d {
             D3DFormat::DXT5 | D3DFormat::DXT4 => DdsCompression::Dxt5,
@@ -87,7 +82,6 @@ pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
             _ => DdsCompression::Unknown,
         };
     }
-
     if let Some(fourcc) = &dds.header.spf.fourcc {
         return match fourcc.0 {
             FourCC::DXT5 | FourCC::DXT4 => DdsCompression::Dxt5,
@@ -96,7 +90,6 @@ pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
             _ => DdsCompression::Unknown,
         };
     }
-
     if dds.header.spf.rgb_bit_count == Some(32) {
         return DdsCompression::Rgba8888;
     }
@@ -104,7 +97,6 @@ pub fn dds_compression_of(dds: &Dds) -> DdsCompression {
     DdsCompression::Unknown
 }
 
-/// DdsCompression from TgPcDx format string (zero allocations).
 pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
     let has = |needle| contains_ignore_ascii_case(fmt, needle);
     if has("INTERP_ALPHA") || has("DXT5") || has("BC3") {
@@ -126,22 +118,26 @@ pub fn tgpcdx_dds_compression(fmt: &str) -> DdsCompression {
     }
 }
 
-/// (человекочитаемая метка, эквивалент в DDS) для тега `Format` из .TgPcDx.
 pub fn format_label_and_dds_name(fmt: &str) -> (String, Option<&'static str>) {
     match tgpcdx_dds_compression(fmt) {
-        DdsCompression::Dxt5 => ("DXT5 (BC3, interpolated alpha)".into(), Some("DXT5")),
-        DdsCompression::Dxt3 => ("DXT3 (BC2, explicit alpha)".into(), Some("DXT3")),
-        DdsCompression::Dxt1 => ("DXT1 (BC1, no / 1-bit alpha)".into(), Some("DXT1")),
+        DdsCompression::Dxt5 => (
+            crate::gettext!("DXT5 (BC3, interpolated alpha)"),
+            Some("DXT5"),
+        ),
+        DdsCompression::Dxt3 => (crate::gettext!("DXT3 (BC2, explicit alpha)"), Some("DXT3")),
+        DdsCompression::Dxt1 => (
+            crate::gettext!("DXT1 (BC1, no / 1-bit alpha)"),
+            Some("DXT1"),
+        ),
         DdsCompression::Rgba8888 | DdsCompression::Bgra8888 => {
-            ("RGBA8888 (uncompressed)".into(), Some("RGBA8888"))
+            (crate::gettext!("RGBA8888 (uncompressed)"), Some("RGBA8888"))
         }
-        DdsCompression::L8 => ("L8 (8-bit grayscale)".into(), Some("L8")),
-        DdsCompression::A8 => ("A8 (8-bit alpha)".into(), Some("A8")),
+        DdsCompression::L8 => (crate::gettext!("L8 (8-bit grayscale)"), Some("L8")),
+        DdsCompression::A8 => (crate::gettext!("A8 (8-bit alpha)"), Some("A8")),
         DdsCompression::Unknown => (fmt.to_owned(), None),
     }
 }
 
-/// Ожидаемый размер одного уровня мипмапа в байтах.
 pub fn mip_level_bytes(w: u32, h: u32, fmt: DdsCompression) -> Option<usize> {
     if w == 0 || h == 0 {
         return None;
@@ -159,7 +155,6 @@ pub fn mip_level_bytes(w: u32, h: u32, fmt: DdsCompression) -> Option<usize> {
     }
 }
 
-/// DDS format to TgPcDx format string.
 pub fn dds_format_to_tgpcdx(dds: &Dds) -> String {
     match dds_compression_of(dds) {
         DdsCompression::Dxt5 => "HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA",
@@ -172,7 +167,6 @@ pub fn dds_format_to_tgpcdx(dds: &Dds) -> String {
     .into()
 }
 
-/// TgPcDx format string to D3D format for DDS export.
 pub fn tgpcdx_format_to_d3d(fmt: &str) -> D3DFormat {
     match tgpcdx_dds_compression(fmt) {
         DdsCompression::Dxt5 => D3DFormat::DXT5,
@@ -185,7 +179,6 @@ pub fn tgpcdx_format_to_d3d(fmt: &str) -> D3DFormat {
     }
 }
 
-/// Expected mip size for validation during DDS export.
 pub fn expected_mip_size(w: u32, h: u32, fmt: D3DFormat) -> usize {
     if w == 0 || h == 0 {
         return 0;
@@ -209,14 +202,12 @@ pub fn expected_mip_size(w: u32, h: u32, fmt: D3DFormat) -> usize {
     }
 }
 
-/// Результат проверки цепочки мипмапов .dds.
 #[derive(Debug, Clone)]
 pub struct MipChainInfo {
     pub levels: u32,
     pub total_bytes: usize,
 }
 
-/// Итоговый отчёт об успешном импорте DDS -> .TgPcDx.
 #[derive(Debug, Clone)]
 pub struct ImportReport {
     pub mip_count: u32,
@@ -224,8 +215,6 @@ pub struct ImportReport {
     pub dds_format: String,
 }
 
-/// Проверяет, что буфер данных .dds содержит ровно столько байт, сколько
-/// требуется заявленным уровням мипмапов.
 pub fn validate_dds_mip_chain(
     width: u32,
     height: u32,
@@ -235,13 +224,13 @@ pub fn validate_dds_mip_chain(
     expected_levels: Option<u32>,
 ) -> Result<MipChainInfo, String> {
     if fmt == DdsCompression::Unknown {
-        return Err("unknown compression format of DDS".into());
+        return Err(crate::gettext!("unknown compression format of DDS"));
     }
     if width == 0 || height == 0 {
         return Err("incorrect DDS dimensions".into());
     }
     if declared_levels == 0 {
-        return Err("no mipmap levels in DDS".into());
+        return Err(crate::gettext!("no mipmap levels in DDS"));
     }
     if let Some(expected) = expected_levels
         && declared_levels < expected
@@ -251,26 +240,30 @@ pub fn validate_dds_mip_chain(
         } else {
             "levels"
         };
-        return Err(format!(
-            "DDS file has {declared_levels} mipmap {level_word}, expected {expected}. Enable mipmap generation when saving DDS."
+        return Err(crate::gettext!(
+            "DDS file has {} mipmap {}, expected {}. Enable mipmap generation when saving DDS.",
+            declared_levels,
+            level_word,
+            expected
         ));
     }
-
     let mut total = 0usize;
     let mut mw = width;
     let mut mh = height;
     for _ in 0..declared_levels {
-        let size = mip_level_bytes(mw, mh, fmt).ok_or("failed to compute mipmap level size")?;
+        let size = mip_level_bytes(mw, mh, fmt)
+            .ok_or(crate::gettext!("failed to compute mipmap level size"))?;
         total = total
             .checked_add(size)
-            .ok_or("overflow when summing mipmap levels")?;
+            .ok_or(crate::gettext!("overflow when summing mipmap levels"))?;
         mw = (mw / 2).max(1);
         mh = (mh / 2).max(1);
     }
-
     if total != data_len {
-        return Err(format!(
-            "DDS file is truncated or has extra data: expected {total} bytes of mipmaps, found {data_len}"
+        return Err(crate::gettext!(
+            "DDS file is truncated or has extra data: expected {} bytes of mipmaps, found {}",
+            total,
+            data_len
         ));
     }
     Ok(MipChainInfo {

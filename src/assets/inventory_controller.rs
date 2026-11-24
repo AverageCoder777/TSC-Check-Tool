@@ -135,15 +135,15 @@ impl InventoryController {
                     if new_filter_state {
                         if suspicious_count == 0 {
                             app_guard.status =
-                                "No objects with non-standard symbols were found.".to_owned();
+                                crate::gettext!("No objects with non-standard symbols were found.");
                         } else {
-                            app_guard.status = format!(
+                            app_guard.status = crate::gettext!(
                                 "Found objects with non-standard symbols: {}.",
                                 suspicious_count
                             );
                         }
                     } else {
-                        app_guard.status = "Symbol filter is disabled.".to_owned();
+                        app_guard.status = crate::gettext!("Symbol filter is disabled.");
                     }
                     schedule_ui_sync();
                 }
@@ -304,26 +304,26 @@ impl InventoryController {
 
                 let description = match (!loft_road_uses.is_empty(), !scenery_uses.is_empty()) {
                     (true, false) => crate::gettext!(
-    "Delete loft {0} (Loft tiles: {1}, segments: {2})? This action will physically change the route files.",
-    asset.path,
-    loft_tiles.len(),
-    loft_segments
-),
+                    "Delete loft {0} (Loft tiles: {1}, segments: {2})? This action will physically change the route files.",
+                    asset.path,
+                    loft_tiles.len(),
+                    loft_segments
+                    ),
                     (false, true) => crate::ngettext!(
-    "Delete object {0} from all Scenery tiles ({1} entry)? This action will physically change the route files.",
-    "Delete object {0} from all Scenery tiles ({1} entries)? This action will physically change the route files.",
-    scenery_tiles.len(),
-    asset.path,
-    scenery_tiles.len()
-),
+                        "Delete object {0} from all Scenery tiles ({1} entry)? This action will physically change the route files.",
+                        "Delete object {0} from all Scenery tiles ({1} entries)? This action will physically change the route files.",
+                        scenery_tiles.len(),
+                        asset.path,
+                        scenery_tiles.len()
+                    ),
                     (true, true) => crate::gettext!(
-    "Delete object {0}?\nScenery — tiles: {1}, segments: {2}\nLoft — tiles: {3}, segments: {4}\nThis action will physically modify the route files.",
-    asset.path,
-    scenery_tiles.len(),
-    scenery_segments,
-    loft_tiles.len(),
-    loft_segments
-),
+                        "Delete object {0}?\nScenery — tiles: {1}, segments: {2}\nLoft — tiles: {3}, segments: {4}\nThis action will physically modify the route files.",
+                        asset.path,
+                        scenery_tiles.len(),
+                        scenery_segments,
+                        loft_tiles.len(),
+                        loft_segments
+                    ),
                     (false, false) => {
                         if let Ok(mut app_guard) = app.lock() {
                             app_guard.log_event(

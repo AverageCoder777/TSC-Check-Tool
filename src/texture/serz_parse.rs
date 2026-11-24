@@ -17,23 +17,23 @@ pub struct ImageMip {
 pub fn image_mips_from_bytes(data: &[u8]) -> Result<Vec<ImageMip>, String> {
     if data.starts_with(b"SERZ") {
         let mut reader = SerzReader::new(data);
-        let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let mut root = reader.parse().map_err(|e| crate::gettext!("serz parse: {}",e))?;
         let mut mips = Vec::new();
         collect_serz_image_mips_owned(&mut root, &mut mips)?;
         return Ok(mips);
     }
 
-    let xml = std::str::from_utf8(data).map_err(|e| format!("invalid text: {e}"))?;
+    let xml = std::str::from_utf8(data).map_err(|e| crate::gettext!("invalid text: {}", e))?;
     all_image_blocks(xml)
         .into_iter()
         .map(|block| {
-            let (width, height) = image_dimensions(block).ok_or("invalid mip dimensions")?;
+            let (width, height) = image_dimensions(block).ok_or(crate::gettext!("invalid mip dimensions"))?;
             let bytes = extract_blob_slice(block)
                 .map(hex_decode)
                 .unwrap_or_default();
             let declared = extract_blob_size(block) as usize;
             if declared > 0 && bytes.len() != declared {
-                return Err("XML mip blob size does not match its declared size".into());
+                return Err(crate::gettext!("XML mip blob size does not match its declared size"));
             }
             Ok(ImageMip {
                 format: extract_format(block),
@@ -374,7 +374,7 @@ pub fn set_or_insert_property(
     value: &str,
 ) -> Result<(), String> {
     let SerzNode::Element { children, .. } = elem else {
-        return Err(format!("cannot set {name} on a non-element node"));
+        return Err(crate::gettext!("cannot set {} on a non-element node", name));
     };
     if let Some(SerzNode::Property { value: current, .. }) = children
         .iter_mut()

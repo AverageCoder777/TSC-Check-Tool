@@ -24,7 +24,7 @@ fn save_ui_settings(
 ) -> Result<(), String> {
     let sw = weak
         .upgrade()
-        .ok_or_else(|| "Окно настроек недоступно".to_owned())?;
+        .ok_or_else(|| crate::gettext!("Окно настроек недоступно"))?;
     let limit = sw.get_serz_process_limit().max(1) as usize;
     let locoswap_path = sw.get_locoswap_path().to_string();
     let game_path = sw.get_game_path().to_string();

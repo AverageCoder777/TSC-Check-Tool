@@ -122,7 +122,7 @@ impl TextureController {
                 let snapshot = match load_texture_snapshot(&path, ChannelMode::Rgb) {
                     Ok(s) => s,
                     Err(e) => {
-                        let msg = format!("Failed to open texture {}: {e}", path.display());
+                        let msg = crate::gettext!("Failed to open texture {}: {}", path.display(), e);
                         notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
                         return;
                     }
@@ -301,7 +301,7 @@ impl TextureController {
                 let rgba = match decode_mip_to_rgba(&target_mip) {
                     Ok(r) => Arc::new(r),
                     Err(e) => {
-                        let msg = format!("Failed to decode mip #{mip_index}: {e}");
+                        let msg = crate::gettext!("Failed to decode mip #{}: {}", mip_index, e);
                         notify(&vw, &uiw, &msg, LogLevel::Error);
                         return;
                     }

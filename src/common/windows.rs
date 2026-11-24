@@ -1,5 +1,3 @@
-//! Windows shell integrations such as Explorer and the Recycle Bin.
-
 #[cfg(windows)]
 use std::{
     os::windows::process::CommandExt,
@@ -8,7 +6,6 @@ use std::{
     thread,
 };
 
-/// Запуск дочернего процесса без консольного окна.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 

@@ -26,15 +26,14 @@ pub fn delete_scenery_asset(
     }
     for usage in uses {
         if usage.tile_kind != TileKind::Scenery {
-            return Err(
+            return Err(crate::gettext!(
                 "Deleting track infrastructure and route parameters is only available in the game editor."
-                    .to_owned(),
-            );
+            ));
         }
         if usage.source_file.is_protected_pathway() {
-            return Err(
-                "You can't change the track infrastructure parts through the program!".to_owned(),
-            );
+            return Err(crate::gettext!(
+                "You can't change the track infrastructure parts through the program!"
+            ));
         }
     }
 
@@ -50,25 +49,24 @@ pub fn delete_scenery_asset(
     )
 }
 
-/// Удаляет вхождения лофта/дороги из тайлов `Loft Tiles` / `Road Tiles`
-/// (декоративные ленты без привязки к Tracks.bin). Путевые тайлы и
-/// Tracks.bin остаются защищёнными: такой объект не попадёт в эту функцию.
 pub fn delete_loft_asset(
     route_path: &Path,
     asset_path: &str,
     uses: &[AssetUse],
 ) -> Result<(usize, usize, Vec<String>), String> {
     if uses.is_empty() {
-        return Err("No places of use were found for the object.".to_owned());
+        return Err(crate::gettext!(
+            "No places of use were found for the object."
+        ));
     }
     for usage in uses {
         if usage.source_file.is_protected_pathway() {
-            return Err(
-                "You can't change the track infrastructure parts through the program!".to_owned(),
-            );
+            return Err(crate::gettext!(
+                "You can't change the track infrastructure parts through the program!"
+            ));
         }
         if usage.tile_kind != TileKind::Loft && usage.tile_kind != TileKind::Road {
-            return Err(format!(
+            return Err(crate::gettext!(
                 "Deletion working only for Loft/Road tiles: {}",
                 usage.source_file.display()
             ));
@@ -106,8 +104,9 @@ where
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("bin"));
         if !is_binary {
-            return Err(format!(
-                "Deletion working only for BIN-tiles {tile_label}: {}",
+            return Err(crate::gettext!(
+                "Deletion working only for BIN-tiles {}: {}",
+                tile_label,
                 source_file.display()
             ));
         }
@@ -115,16 +114,18 @@ where
         let temp = create_temporary_work_directory(&source_work_parent(&source_file, route_path))?;
         let file_path = source_file.materialize(temp.path())?;
         let bytes = fs::read(&file_path).map_err(|error| {
-            format!(
-                "Failed to read {} before deletion: {error}",
-                source_file.display()
+            crate::gettext!(
+                "Failed to read {} before deletion: {}",
+                source_file.display(),
+                error
             )
         })?;
         let mut reader = SerzReader::new(&bytes);
         let mut root = reader.parse().map_err(|error| {
-            format!(
-                "Failed to read {} before deletion: {error}",
-                source_file.display()
+            crate::gettext!(
+                "Failed to read {} before deletion: {}",
+                source_file.display(),
+                error
             )
         })?;
 
@@ -147,8 +148,10 @@ where
     }
 
     if staged.is_empty() {
-        return Err(format!(
-            "In tiles {tile_label} found no uses of {asset_path}. Update check and repeat."
+        return Err(crate::gettext!(
+            "In tiles {} found no uses of {}. Update check and repeat.",
+            tile_label,
+            asset_path
         ));
     }
 
@@ -164,9 +167,12 @@ where
             }
             Err(error) => {
                 transaction.rollback();
-                return Err(format!(
-                    "Deleted entries: {removed_instances}; successful changed files: {replaced_files}. Error in {}: {error}.",
-                    source_file.display()
+                return Err(crate::gettext!(
+                    "Deleted entries: {}; successful changed files: {}. Error in {}: {}.",
+                    removed_instances,
+                    replaced_files,
+                    source_file.display(),
+                    error
                 ));
             }
         }
@@ -182,25 +188,25 @@ fn collect_and_validate_source_files(
 ) -> Result<HashSet<RouteFile>, String> {
     let canonical_route = route_path
         .canonicalize()
-        .map_err(|error| format!("Couldn't check the route folder: {error}"))?;
+        .map_err(|error| crate::gettext!("Couldn't check the route folder: {}", error))?;
     let mut source_files = HashSet::with_capacity(uses.len());
     for usage in uses {
-        // Файл из архива .ap нельзя править на месте: он лежит внутри архива.
-        // Поэтому готовим временную копию, а результат кладём рядом с архивом.
         let source = usage.source_file.clone();
         if source.route_name(route_path).is_none() {
-            return Err(format!(
-                "File for {action_genitive} located off the route: {}",
+            return Err(crate::gettext!(
+                "File for {} located off the route: {}",
+                action_genitive,
                 source.display()
             ));
         }
         if let RouteFile::Path(path) = &source {
             let canonical_source = path.canonicalize().map_err(|error| {
-                format!("Failed to check route file{}: {error}", source.display())
+                crate::gettext!("Failed to check route file{}: {}", source.display(), error)
             })?;
             if !canonical_source.starts_with(&canonical_route) || !canonical_source.is_file() {
-                return Err(format!(
-                    "File for {action_genitive} located off the route of unavailable: {}",
+                return Err(crate::gettext!(
+                    "File for {} located off the route of unavailable: {}",
+                    action_genitive,
                     source.display()
                 ));
             }
@@ -229,21 +235,22 @@ fn stage_modified_bin(
     abort_suffix: &str,
 ) -> Result<(PathBuf, usize), String> {
     let bytes = encode_to_vec(root, preamble).map_err(|error| {
-        format!(
-            "Failed to prerare changed BIN {}: {error}",
-            source_file.display()
+        crate::gettext!(
+            "Failed to prerare changed BIN {}: {}",
+            source_file.display(),
+            error
         )
     })?;
     if bytes.len() < 1024 {
-        return Err(format!(
-            "Generation error: file size abnormally small ({} bytes). {abort_suffix}",
-            bytes.len()
+        return Err(crate::gettext!(
+            "Generation error: file size abnormally small ({} bytes). {}",
+            bytes.len(), abort_suffix
         ));
     }
     let mut validation_reader = SerzReader::new(&bytes);
     if let Err(error) = validation_reader.parse() {
-        return Err(format!(
-            "Serialization error: generated binary is corrupted: {error}"
+        return Err(crate::gettext!(
+            "Serialization error: generated binary is corrupted: {}", error
         ));
     }
     let converted_path = temp_dir.join(output_name);

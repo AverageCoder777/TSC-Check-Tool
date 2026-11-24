@@ -1,45 +1,16 @@
-//! Перевод имён ассетов на английский.
-//!
-//! Немецкие умляуты переводятся по правилам немецкого языка, французские буквы —
-//! по правилам французского. Символы без правила перевода (например, кириллица
-//! в именах файлов) оставляются пользователю на откуп: он сам выбирает, чем их
-//! заменить.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-/// Испорченные символы, которые встречаются в ссылках маршрута вместо умляута.
-///
-/// U+FFFD — стандартный символ замены, U+FFDF — такой же непечатаемый символ,
-/// который раньше встречался в ссылках маршрутов.
 pub(crate) const BROKEN_CHARACTERS: [char; 2] = ['\u{FFFD}', '\u{FFDF}'];
-
-/// Настоящие умляуты, которыми может быть назван файл ассета.
 pub(crate) const UMLAUT_CHARACTERS: [&str; 8] = ["ä", "Ä", "ö", "Ö", "ü", "Ü", "ß", "ẞ"];
-
-/// Транслитерации умляутов, которыми могли оказаться переименованы файлы.
 pub(crate) const TRANSLITERATED_CHARACTERS: [&str; 8] =
     ["ae", "Ae", "oe", "Oe", "ue", "Ue", "ss", "SS"];
-
-/// Сколько испорченных символов в ссылке ещё разбираются.
 pub(crate) const MAX_BROKEN_CHARACTERS: usize = 3;
-
-/// Сколько испорченных символов в ссылке ещё разбирается перебором вариантов.
-///
-/// Каждый символ умножает число вариантов на шестнадцать, поэтому больше двух
-/// символов перебором не обрабатываются.
 pub(crate) const MAX_REFERENCE_VARIANTS: usize = 2;
-
-/// Имя элемента, без которого в файле нет ни одной ссылки на ассет.
 pub(crate) const BLUEPRINT_ID_MARKER: &str = "BlueprintID";
 
-/// Замены символов, предложенные пользователем.
-///
-/// Для испорченных символов пользователь сам выбирает, чем их заменить:
-/// обычно это английская «s» или «c», но назвать можно что угодно.
 pub(crate) type CharacterFixes = BTreeMap<char, String>;
 
-/// Расшифровка XML-сущностей: игра пишет в файлы и спецсимволы.
 pub(crate) fn decode_xml_text(text: &str) -> String {
     let trimmed = text.trim();
     if !trimmed.contains('&') {
@@ -68,10 +39,6 @@ pub(crate) fn decode_xml_text(text: &str) -> String {
     decoded
 }
 
-/// Транслитерирует текст XML, не затрагивая указанные участки.
-///
-/// Участки нужны для ссылок на файлы за пределами папки ассета: их нельзя
-/// переписывать, иначе ссылка перестанет указывать на существующий файл.
 pub(crate) fn transliterate_xml_umlauts_outside(
     xml: &str,
     protected: &[Range<usize>],
@@ -99,7 +66,6 @@ pub(crate) fn transliterate_xml_umlauts_outside(
     result
 }
 
-/// Есть ли в XML символы, которые нужно перевести.
 pub(crate) fn has_umlauts_in_xml(xml: &str) -> bool {
     if has_umlauts(xml) {
         return true;
@@ -127,7 +93,6 @@ pub(crate) fn transliterate_xml_umlauts(xml: &str, fixes: &CharacterFixes) -> St
     output
 }
 
-/// Все неподдерживаемые символы в строке.
 pub(crate) fn unsupported_characters(value: &str) -> BTreeSet<char> {
     value
         .chars()
@@ -135,32 +100,24 @@ pub(crate) fn unsupported_characters(value: &str) -> BTreeSet<char> {
         .collect()
 }
 
-/// Переводит буквы с диакритикой на английский и подставляет замены,
-/// предложенные пользователем.
 pub(crate) fn transliterate_text(value: &str, fixes: &CharacterFixes) -> String {
     let mut result = String::with_capacity(value.len());
     transliterate_text_into(value, fixes, &mut result);
     result
 }
 
-/// Есть ли в строке символы, которые нужно перевести на английский.
-///
-/// Это немецкие умляуты, французские буквы и прочие буквы с диакритикой, а
-/// также испорченные символы: игра такие имена не читает.
 pub(crate) fn has_umlauts(value: &str) -> bool {
     value
         .chars()
         .any(|character| transliteration_rule(character).is_some())
 }
 
-/// Есть ли в строке испорченный символ.
 pub(crate) fn has_broken_character(value: &str) -> bool {
     value
         .chars()
         .any(|character| BROKEN_CHARACTERS.contains(&character))
 }
 
-/// Заменяет испорченные символы в имени на переданную подстановку.
 pub(crate) fn replace_broken_characters(name: &str, replacement: &str) -> String {
     if !has_broken_character(name) {
         return name.to_owned();
@@ -176,12 +133,6 @@ pub(crate) fn replace_broken_characters(name: &str, replacement: &str) -> String
     result
 }
 
-/// Варианты имени, где каждый испорченный символ заменён по отдельности.
-///
-/// Например, `Br\u{FFFD}cke Fu\u{FFFD}g\u{FFFD}nger` превращается в
-/// `Brücke Fußgänger`, `Brücke Fussganger` и другие комбинации. Число вариантов
-/// растёт как степень количества подстановок, поэтому ссылка с большим числом
-/// испорченных символов не разбирается вовсе.
 pub(crate) fn replace_broken_characters_combinations(
     name: &str,
     replacements: &[&str],
@@ -276,17 +227,11 @@ fn push_transliterated_char(character: char, fixes: &CharacterFixes, output: &mu
     }
 }
 
-/// Перевод букв с диакритикой на английский.
-///
-/// Немецкие умляуты переводятся по правилам немецкого языка (`ä` → `ae`),
-/// французские — по правилам французского (`é` → `e`, `ç` → `c`).
 fn transliteration_rule(character: char) -> Option<&'static str> {
     if character.is_ascii() {
         return None;
     }
     let mapped = match character {
-        // Испорченные символы по умолчанию читаются как «ss»: раньше в ссылках
-        // игры они означали именно «ß».
         '\u{FFFD}' | '\u{FFDF}' | 'ß' => "ss",
         'ẞ' => "SS",
         'ä' | 'æ' => "ae",
@@ -326,10 +271,6 @@ fn transliteration_rule(character: char) -> Option<&'static str> {
     Some(mapped)
 }
 
-/// Символы, которые игра не умеет загружать.
-///
-/// Кроме испорченных символов это кириллические и греческие буквы: игра
-/// такими именами файлов не пользуется, а выглядят они как латинские.
 fn is_unsupported_character(character: char) -> bool {
     if BROKEN_CHARACTERS.contains(&character) {
         return true;

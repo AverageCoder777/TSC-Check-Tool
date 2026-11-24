@@ -45,7 +45,7 @@ fn compile_xml_for_target(target_bin: &Path, xml: &str) -> Result<Vec<u8>, Strin
             let mut reader = SerzReader::new(&bytes);
             let root = reader
                 .parse()
-                .map_err(|error| format!("Failed to check deserialized TgPcDx: {error}"))?;
+                .map_err(|error| crate::gettext!("Failed to check deserialized TgPcDx: {}", error))?;
             encode_tgpcdx_to_vec(&root, reader.preamble.as_ref())
         } else {
             Ok(bytes)
@@ -92,7 +92,7 @@ fn run_sync_loop(
                 let _ = child.wait();
             }
             Err(e) => {
-                let err = format!("Failed to open editor: {e}");
+                let err = crate::gettext!("Failed to open editor: {}", e);
                 show_native_error(&crate::gettext!("Launch error"), &err);
                 return Err(err);
             }
@@ -107,7 +107,7 @@ fn run_sync_loop(
         let final_xml = match fs::read_to_string(xml_path) {
             Ok(s) => s,
             Err(e) => {
-                let err = format!("Failed to read {}: {e}", xml_path.display());
+                let err = crate::gettext!("Failed to read {}: {}", xml_path.display(), e);
                 show_native_error(&crate::gettext!("Read error"), &err);
                 return Err(err);
             }
@@ -123,7 +123,7 @@ fn run_sync_loop(
         match compile_xml_for_target(binary_path, &final_xml) {
             Ok(bytes) => {
                 if bytes.len() < 10 {
-                    let err = format!(
+                    let err = crate::gettext!(
                         "Write error: binary file too short ({} bytes).",
                         bytes.len()
                     );
@@ -132,7 +132,7 @@ fn run_sync_loop(
                 }
                 let mut validation_reader = SerzReader::new(&bytes);
                 if let Err(e) = validation_reader.parse() {
-                    let err = format!("Serialization error: generated binary is corrupted: {e}");
+                    let err = crate::gettext!("Serialization error: generated binary is corrupted: {}", e);
                     show_native_error(&crate::gettext!("Write error"), &err);
                     return Err(err);
                 }
@@ -143,7 +143,7 @@ fn run_sync_loop(
                     {
                         let _ = fs::rename(&backup_path, binary_path);
                     }
-                    let err = format!("Error writing to binary: {e}");
+                    let err = crate::gettext!("Error writing to binary: {}", e);
                     show_native_error(&crate::gettext!("Write error"), &err);
                     return Err(err);
                 }
@@ -156,7 +156,7 @@ fn run_sync_loop(
                 if ask_retry_on_xml_error(&err) {
                     continue;
                 }
-                return Err(format!(
+                return Err(crate::gettext!(
                     "File saved as XML ({}), binary without changes.",
                     xml_path.display()
                 ));
@@ -193,17 +193,17 @@ fn resolve_temp_xml(binary_asset_path: &Path, temp_xml_path: &Path) -> Result<St
     if regenerate {
         let xml = if uses_structured_serz_xml(binary_asset_path) {
             let raw = fs::read(binary_asset_path)
-                .map_err(|e| format!("Failed to read {}: {e}", binary_asset_path.display()))?;
+                .map_err(|e| crate::gettext!("Failed to read {}: {}", binary_asset_path.display(), e))?;
             tracks_bin_to_xml(&raw)?
         } else {
             read_serz_xml(binary_asset_path).map_err(|e| e.to_string())?
         };
         fs::write(temp_xml_path, &xml)
-            .map_err(|e| format!("Failed to write {}: {e}", temp_xml_path.display()))?;
+            .map_err(|e| crate::gettext!("Failed to write {}: {}", temp_xml_path.display(), e))?;
         Ok(xml)
     } else {
         fs::read_to_string(temp_xml_path)
-            .map_err(|e| format!("Failed to read {}: {e}", temp_xml_path.display()))
+            .map_err(|e| crate::gettext!("Failed to read {}: {}", temp_xml_path.display(), e))
     }
 }
 
@@ -294,7 +294,7 @@ pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<Child, String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
         return cmd
             .spawn()
-            .map_err(|e| format!("Failed to launch VS Code: {e}"));
+            .map_err(|e| crate::gettext!("Failed to launch VS Code: {}", e));
     }
 
     let mut c = Command::new("notepad.exe");
@@ -302,19 +302,19 @@ pub fn launch_editor(xml_path: &Path, wait: bool) -> Result<Child, String> {
     #[cfg(windows)]
     c.creation_flags(CREATE_NO_WINDOW);
     c.spawn()
-        .map_err(|e| format!("Failed to launch Notepad: {e}"))
+        .map_err(|e| crate::gettext!("Failed to launch Notepad: {}", e))
 }
 
 pub fn write_binary_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
     if target.parent().is_none() {
-        return Err(format!("Incorrect file path: {}", target.display()));
+        return Err(crate::gettext!("Incorrect file path: {}", target.display()));
     }
     let temp_path = append_suffix(target, ".tmp");
     fs::write(&temp_path, bytes)
-        .map_err(|error| format!("Failed to write temp file {}: {error}", temp_path.display()))?;
+        .map_err(|error| crate::gettext!("Failed to write temp file {}: {}", temp_path.display(), error))?;
     fs::rename(&temp_path, target).map_err(|error| {
         let _ = fs::remove_file(&temp_path);
-        format!("Failed to install {}: {error}", target.display())
+        crate::gettext!("Failed to install {}: {}", target.display(), error)
     })?;
     Ok(())
 }
@@ -335,7 +335,7 @@ pub fn create_backup_file(target_bin: &Path) -> Result<Option<PathBuf>, String> 
         }
     }
     fs::copy(target_bin, &backup_path)
-        .map_err(|e| format!("Failed to create backup {}: {e}", backup_path.display()))?;
+        .map_err(|e| crate::gettext!("Failed to create backup {}: {}", backup_path.display(), e))?;
     println!("[Backup] Backup created: {backup_path:?}");
     Ok(Some(backup_path))
 }

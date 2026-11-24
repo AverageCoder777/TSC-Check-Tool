@@ -87,9 +87,10 @@ fn analyze_route_file_with_stamp(
                         file: route_file.clone(),
                         stamp,
                         uses: Vec::new(),
-                        error: Some(format!(
-                            "{}: failed to read file: {error}",
-                            file_path.display()
+                        error: Some(crate::gettext!(
+                            "{}: failed to read file: {}",
+                            file_path.display(),
+                            error
                         )),
                     };
                 }
@@ -452,7 +453,7 @@ where
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(worker_count)
         .build()
-        .map_err(|error| format!("Failed to create file check pool: {error}"))?;
+        .map_err(|error| crate::gettext!("Failed to create file check pool: {}", error))?;
     let mut cache = AnalysisCache::load(route_path);
     let total_files = all_files.len();
     let processed = AtomicUsize::new(0);
@@ -555,7 +556,7 @@ where
         .collect();
     cache.retain(&current_files);
     if let Err(error) = cache.save(route_path) {
-        structure_issues.push(format!("Failed to save check cache: {error}"));
+        structure_issues.push(crate::gettext!("Failed to save check cache: {}", error));
     }
 
     report_progress(&crate::gettext!(
@@ -630,9 +631,9 @@ where
             .collect();
         missing.sort();
         for (provider, product) in missing {
-            route_properties_warnings.push(format!(
-                "Provider/product «{provider} / {product}» used on route, but not declared in RouteProperties.xml.",
-            ));
+            route_properties_warnings.push(crate::gettext!(
+                "Provider/product «{} / {}» used on route, but not declared in RouteProperties.xml.",
+            provider, product));
         }
     }
 
@@ -695,10 +696,10 @@ fn read_route_properties_text(route_path: &Path) -> Result<String, String> {
         return Ok(crate::routes::decode_xml_bytes(&data));
     }
     let entries = fs::read_dir(route_path)
-        .map_err(|error| format!("failed to read {}: {error}", route_path.display()))?;
+        .map_err(|error| crate::gettext!("failed to read {}: {}", route_path.display(), error))?;
     for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("Read failure {}: {error}", route_path.display()))?;
+        let entry = entry
+            .map_err(|error| crate::gettext!("Read failure {}: {}", route_path.display(), error))?;
         let archive_path = entry.path();
         if !is_ap_archive(&archive_path) {
             continue;
@@ -790,7 +791,7 @@ pub(crate) fn validate_route_structure(
     if let Ok(directories) = unexpected_route_directories(route_path)
         && !directories.is_empty()
     {
-        issues.push(format!(
+        issues.push(crate::gettext!(
             "unexpected route folders: {}",
             directories.join(", ")
         ));
@@ -798,7 +799,7 @@ pub(crate) fn validate_route_structure(
     if let Ok(leftover) = leftover_temporary_work_directories(route_path)
         && !leftover.is_empty()
     {
-        issues.push(format!(
+        issues.push(crate::gettext!(
             "route folder stil have temp program folders (can be deleted): {}",
             leftover.join(", ")
         ));
@@ -849,7 +850,11 @@ fn scan_single_product_dir(product_dir: &Path) -> Result<ProductApScan, String> 
             });
         }
         Err(error) => {
-            return Err(format!("Failed to read {}: {error}", product_dir.display()));
+            return Err(crate::gettext!(
+                "Failed to read {}: {}",
+                product_dir.display(),
+                error
+            ));
         }
     };
 
@@ -876,10 +881,20 @@ fn is_ap_archive(path: &Path) -> bool {
 }
 
 fn read_ap_archive_files(archive_path: &Path, files: &mut HashSet<String>) -> Result<(), String> {
-    let archive_file = fs::File::open(archive_path)
-        .map_err(|error| format!("Failed to open archive {}: {error}", archive_path.display()))?;
-    let archive = ZipArchive::new(archive_file)
-        .map_err(|error| format!("Failed to read archive {}: {error}", archive_path.display()))?;
+    let archive_file = fs::File::open(archive_path).map_err(|error| {
+        crate::gettext!(
+            "Failed to open archive {}: {}",
+            archive_path.display(),
+            error
+        )
+    })?;
+    let archive = ZipArchive::new(archive_file).map_err(|error| {
+        crate::gettext!(
+            "Failed to read archive {}: {}",
+            archive_path.display(),
+            error
+        )
+    })?;
 
     for name in archive.file_names().flatten() {
         files.insert(name.replace('/', "\\").trim().to_lowercase());
@@ -1010,10 +1025,18 @@ fn read_archive_member_bytes(
         std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
         std::collections::hash_map::Entry::Vacant(entry) => {
             let file = fs::File::open(archive_path).map_err(|error| {
-                format!("Failed to open archive {}: {error}", archive_path.display())
+                crate::gettext!(
+                    "Failed to open archive {}: {}",
+                    archive_path.display(),
+                    error
+                )
             })?;
             let archive = ZipArchive::new(file).map_err(|error| {
-                format!("Failed to read arcive {}: {error}", archive_path.display())
+                crate::gettext!(
+                    "Failed to read arcive {}: {}",
+                    archive_path.display(),
+                    error
+                )
             })?;
             entry.insert(archive)
         }
@@ -1021,9 +1044,11 @@ fn read_archive_member_bytes(
 
     // collect_archive_members сохраняет точное имя записи из архива, поэтому by_name работает за O(1).
     let mut member = zip.by_name(member_name).map_err(|error| {
-        format!(
-            "Cannot find {member_name} в {}: {error}",
-            archive_path.display()
+        crate::gettext!(
+            "Cannot find {} in {}: {}",
+            archive_path.display(),
+            member_name,
+            error
         )
     })?;
 
@@ -1035,9 +1060,11 @@ fn read_archive_member_bytes(
 
     let mut bytes = Vec::with_capacity(member.size().min(64 * 1024 * 1024) as usize);
     member.read_to_end(&mut bytes).map_err(|error| {
-        format!(
-            "Failed to read {member_name} from {}: {error}",
-            archive_path.display()
+        crate::gettext!(
+            "Failed to read {member_name} from {}: {}",
+            archive_path.display(),
+            member_name,
+            error
         )
     })?;
     Ok(Some(bytes))

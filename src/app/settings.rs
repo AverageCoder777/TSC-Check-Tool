@@ -51,13 +51,13 @@ impl AppConfig {
         let path = config_file();
         let parent = path
             .parent()
-            .ok_or_else(|| "Incorrect config path.".to_owned())?;
+            .ok_or_else(|| crate::gettext!("Incorrect config path."))?;
         fs::create_dir_all(parent)
-            .map_err(|error| format!("Failed to create config folder: {error}"))?;
+            .map_err(|error| crate::gettext!("Failed to create config folder: {}", error))?;
         let data = serde_json::to_string_pretty(self)
-            .map_err(|error| format!("Failed to prepare config: {error}"))?;
+            .map_err(|error| crate::gettext!("Failed to prepare config: {}", error))?;
         fs::write(&path, data)
-            .map_err(|error| format!("Failed to save config {}: {error}", path.display()))
+            .map_err(|error| crate::gettext!("Failed to save config {}: {}", path.display(), error))
     }
 }
 
@@ -135,9 +135,10 @@ pub(crate) fn load_ignored_route_ids() -> Result<HashSet<String>, String> {
             .map(str::to_owned)
             .collect()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashSet::new()),
-        Err(error) => Err(format!(
-            "Failed to read ignore-list {}: {error}",
-            path.display()
+        Err(error) => Err(crate::gettext!(
+            "Failed to read ignore-list {}: {}",
+            path.display(),
+            error
         )),
     }
 }
@@ -146,12 +147,10 @@ pub(crate) fn asset_replacement_log_file() -> PathBuf {
     app_data_dir().join("replacement_log.jsonl")
 }
 
-/// Путь к полному логу работы программы: `%APPDATA%\TSC Check Tool\app.log`.
 pub(crate) fn log_file() -> PathBuf {
     app_data_dir().join("app.log")
 }
 
-/// Путь к кэшу индекса `.ap`-архивов: `%APPDATA%\TSC Check Tool\ap_index_cache.json`.
 pub(crate) fn ap_index_cache_file() -> PathBuf {
     app_data_dir().join("ap_index_cache.json")
 }
@@ -162,30 +161,33 @@ pub(crate) fn append_asset_replacement_log(
 ) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Incorrect path to replacement log.".to_owned())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Failed to create folder for replacement log: {error}"))?;
+        .ok_or_else(|| crate::gettext!("Incorrect path to replacement log."))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        crate::gettext!("Failed to create folder for replacement log: {}", error)
+    })?;
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .map_err(|error| {
-            format!(
-                "Не удалось открыть журнал замен {}: {error}",
-                path.display()
+            crate::gettext!(
+                "Не удалось открыть журнал замен {}: {}",
+                path.display(),
+                error
             )
         })?;
     entry.timestamp_unix_seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("Failed to define log entry time: {error}"))?
+        .map_err(|error| crate::gettext!("Failed to define log entry time: {}", error))?
         .as_secs();
     let mut line = serde_json::to_vec(entry)
-        .map_err(|error| format!("Failed to prepare replacement log entry: {error}"))?;
+        .map_err(|error| crate::gettext!("Failed to prepare replacement log entry: {}", error))?;
     line.push(b'\n');
     file.write_all(&line).map_err(|error| {
-        format!(
-            "Failed to write replacement log {}: {error}",
-            path.display()
+        crate::gettext!(
+            "Failed to write replacement log {}: {}",
+            path.display(),
+            error
         )
     })
 }
@@ -197,9 +199,6 @@ pub(crate) fn maximum_serz_processes() -> usize {
         .max(1)
 }
 
-/// Количество потоков сканирования маршрутов.
-/// На HDD — жёстко 4 (I/O-bound, больше потоков только гасят диск).
-/// Иначе — лимит серз-процессов (CPU-bound).
 pub(crate) fn route_scan_max_threads(serz_process_limit: usize, on_hdd: bool) -> usize {
     if on_hdd { 4 } else { serz_process_limit.max(1) }
 }
@@ -210,15 +209,16 @@ pub(crate) fn read_route_thumbnail_setting(path: &Path) -> Result<bool, String> 
         Ok(value) => match value.trim() {
             "true" => Ok(true),
             "false" => Ok(false),
-            _ => Err(format!(
+            _ => Err(crate::gettext!(
                 "Incorrect route icon setting in {}.",
                 path.display()
             )),
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(format!(
-            "Failed to read route icon setting {}: {error}",
-            path.display()
+        Err(error) => Err(crate::gettext!(
+            "Failed to read route icon setting {}: {}",
+            path.display(),
+            error
         )),
     }
 }
@@ -227,13 +227,14 @@ pub(crate) fn read_route_thumbnail_setting(path: &Path) -> Result<bool, String> 
 pub(crate) fn write_route_thumbnail_setting(path: &Path, enabled: bool) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Incorrect path to route icon setting.".to_owned())?;
+        .ok_or_else(|| crate::gettext!("Incorrect path to route icon setting."))?;
     fs::create_dir_all(parent)
-        .map_err(|error| format!("Failed to create settings folder: {error}"))?;
+        .map_err(|error| crate::gettext!("Failed to create settings folder: {}", error))?;
     fs::write(path, enabled.to_string()).map_err(|error| {
-        format!(
-            "Failed to save route icon setting {}: {error}",
-            path.display()
+        crate::gettext!(
+            "Failed to save route icon setting {}: {}",
+            path.display(),
+            error
         )
     })
 }
@@ -241,20 +242,20 @@ pub(crate) fn write_route_thumbnail_setting(path: &Path, enabled: bool) -> Resul
 #[cfg(test)]
 pub(crate) fn read_serz_process_limit(path: &Path) -> Result<usize, String> {
     let value = match fs::read_to_string(path) {
-        Ok(value) => value
-            .trim()
-            .parse::<usize>()
-            .map_err(|_| format!("Incorrect max Serz threads count in {}.", path.display()))?,
+        Ok(value) => value.trim().parse::<usize>().map_err(|_| {
+            crate::gettext!("Incorrect max Serz threads count in {}.", path.display())
+        })?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => maximum_serz_processes(),
         Err(error) => {
-            return Err(format!(
-                "Failed to read Serz threads setting {}: {error}",
-                path.display()
+            return Err(crate::gettext!(
+                "Failed to read Serz threads setting {}: {}",
+                path.display(),
+                error
             ));
         }
     };
     if value == 0 {
-        return Err(format!(
+        return Err(crate::gettext!(
             "Serz threads in {} must be at least 1.",
             path.display()
         ));
@@ -265,18 +266,19 @@ pub(crate) fn read_serz_process_limit(path: &Path) -> Result<usize, String> {
 #[cfg(test)]
 pub(crate) fn write_serz_process_limit(path: &Path, limit: usize) -> Result<(), String> {
     if limit == 0 || limit > maximum_serz_processes() {
-        return Err(format!(
+        return Err(crate::gettext!(
             "Serz threads must be from 1 to {}.",
             maximum_serz_processes()
         ));
     }
     let parent = path
         .parent()
-        .ok_or_else(|| "Incorrect path to Serz setting.".to_owned())?;
+        .ok_or_else(|| crate::gettext!("Incorrect path to Serz setting."))?;
     fs::create_dir_all(parent)
-        .map_err(|error| format!("Failed to create settings folder: {error}"))?;
-    fs::write(path, limit.to_string())
-        .map_err(|error| format!("Failed to save Serz setting {}: {error}", path.display()))
+        .map_err(|error| crate::gettext!("Failed to create settings folder: {}", error))?;
+    fs::write(path, limit.to_string()).map_err(|error| {
+        crate::gettext!("Failed to save Serz setting {}: {}", path.display(), error)
+    })
 }
 
 #[cfg(test)]

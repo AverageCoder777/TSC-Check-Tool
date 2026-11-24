@@ -1,4 +1,3 @@
-//! Application state, background tasks, and Slint UI synchronization.
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
@@ -786,13 +785,13 @@ impl CheckerApp {
                             let timestamp = current_timestamp();
                             for issue in &result.structure_issues {
                                 self.push_log_entry(LogEntry {
-                                    text: format!("[{timestamp}] Structure error: {issue}"),
+                                    text: crate::gettext!("[{}] Structure error: {}", timestamp, issue),
                                     level: LogLevel::Warning,
                                 });
                             }
                             for error in &result.conversion_errors {
                                 self.push_log_entry(LogEntry {
-                                    text: format!("[{timestamp}] Serz/XML error: {error}"),
+                                    text: crate::gettext!("[{}] Serz/XML error: {}", timestamp, error),
                                     level: LogLevel::Error,
                                 });
                             }

@@ -171,7 +171,7 @@ pub(super) fn decode_mip_to_rgba(mip: &ImageMip) -> Result<Vec<u8>, String> {
         }
         DdsCompression::A8 => {
             if bytes.len() < pixels {
-                return Err("A8 texture data too small".into());
+                return Err(crate::gettext!("A8 texture data too small"));
             }
             let mut rgba = vec![0u8; rgba_bytes];
             for (dst, &a) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(&bytes[..pixels]) {
@@ -205,7 +205,7 @@ fn decode_uncompressed_rgba(
     rgba_bytes: usize,
 ) -> Result<Vec<u8>, String> {
     if bytes.len() < rgba_bytes {
-        return Err("uncompressed texture data too small".into());
+        return Err(crate::gettext!("uncompressed texture data too small"));
     }
     let is_bgra = contains_ignore_ascii_case(format, "BGRA");
     let is_argb = contains_ignore_ascii_case(format, "ARGB");
@@ -241,7 +241,7 @@ pub fn decode_tgpcdx_with_max_dimension(
                 .find(|block| block.width <= max_dim && block.height <= max_dim)
         })
         .or_else(|| image_blocks.first())
-        .ok_or("no image block")?;
+        .ok_or(crate::gettext!("no image block"))?;
 
     let rgba = decode_mip_to_rgba(image_block)?;
     Ok((image_block.width, image_block.height, rgba))
@@ -307,8 +307,8 @@ pub fn decode_bc_to_rgba(
 ) -> Result<Vec<u8>, String> {
     let pixels = (width as usize)
         .checked_mul(height as usize)
-        .ok_or("texture dimensions overflow")?;
-    let rgba_bytes = pixels.checked_mul(4).ok_or("texture dimensions overflow")?;
+        .ok_or(crate::gettext!("texture dimensions overflow"))?;
+    let rgba_bytes = pixels.checked_mul(4).ok_or(crate::gettext!("texture dimensions overflow"))?;
 
     let mut image_u32 = vec![0u32; pixels];
     match format {
@@ -339,16 +339,16 @@ pub fn decode_bc_to_rgba(
 pub fn decode_tgpcdx_native(data: &[u8]) -> Result<DecodedTextureData, String> {
     let image_blocks = expand_and_sort_mips(image_mips_from_bytes(data)?);
     let Some(base) = image_blocks.first() else {
-        return Err("no image block".into());
+        return Err(crate::gettext!("no image block"));
     };
     if base.width == 0 || base.height == 0 {
-        return Err("invalid dimensions".into());
+        return Err(crate::gettext!("invalid dimensions"));
     }
 
     let rgba_bytes = (base.width as usize)
         .checked_mul(base.height as usize)
         .and_then(|p| p.checked_mul(4))
-        .ok_or("texture dimensions overflow")?;
+        .ok_or(crate::gettext!("texture dimensions overflow"))?;
 
     let bc_format = match tgpcdx_dds_compression(&base.format) {
         DdsCompression::Dxt1 => Some(CompressedFormat::Bc1),

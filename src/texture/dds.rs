@@ -24,13 +24,19 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     let width = dds.get_width();
     let height = dds.get_height();
     if width == 0 || height == 0 {
-        return Err("incorrect DDS size".into());
+        return Err(crate::gettext!("incorrect DDS size"));
     }
     if width > u32::from(u16::MAX) || height > u32::from(u16::MAX) {
-        return Err("DDS sizes exceeding boundaries of TgPcDx sUInt16".into());
+        return Err(crate::gettext!(
+            "DDS sizes exceeding boundaries of TgPcDx sUInt16"
+        ));
     }
     if !width.is_power_of_two() || !height.is_power_of_two() {
-        return Err(format!("DDS sizes is not powers of two: {width}×{height}"));
+        return Err(crate::gettext!(
+            "DDS sizes is not powers of two: {}×{}",
+            width,
+            height
+        ));
     }
 
     let compression = dds_compression_of(&dds);
@@ -47,7 +53,9 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
         .as_deref()
         .is_some_and(|bytes| !bytes.starts_with(b"SERZ"))
     {
-        return Err("TgPcDx import requires a binary SERZ target".into());
+        return Err(crate::gettext!(
+            "TgPcDx import requires a binary SERZ target"
+        ));
     }
 
     // Validate the DDS chain independently of the old texture's mip count:
@@ -68,10 +76,16 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
     for _ in 0..declared {
         let pitch = format.get_pitch(mw).ok_or("pitch")?;
         let row_h = mh.div_ceil(format.get_pitch_height());
-        let size = pitch.checked_mul(row_h).ok_or("mip data size overflow")? as usize;
-        let end = off.checked_add(size).ok_or("mip data size overflow")?;
+        let size = pitch
+            .checked_mul(row_h)
+            .ok_or(crate::gettext!("mip data size overflow"))? as usize;
+        let end = off
+            .checked_add(size)
+            .ok_or(crate::gettext!("mip data size overflow"))?;
         if end > all.len() {
-            return Err("DDS mip data is shorter than its declared mip chain".into());
+            return Err(crate::gettext!(
+                "DDS mip data is shorter than its declared mip chain"
+            ));
         }
         mips.push((mw, mh, all[off..end].to_vec()));
         off = end;
@@ -79,8 +93,9 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
         mh = (mh / 2).max(1);
     }
     if off != all.len() {
-        return Err(format!(
-            "DDS mip data size mismatch: consumed {off} bytes, found {}",
+        return Err(crate::gettext!(
+            "DDS mip data size mismatch: consumed {} bytes, found {}",
+            off,
             all.len()
         ));
     }
@@ -101,7 +116,9 @@ pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<Impor
 
         // Rebuild mip nodes whenever their layout or format does not match the DDS.
         let mut reader = SerzReader::new(&target_bytes);
-        let mut root = reader.parse().map_err(|e| format!("serz parse: {e}"))?;
+        let mut root = reader
+            .parse()
+            .map_err(|e| crate::gettext!("serz parse: {}", e))?;
         let preamble = reader.preamble.clone();
         modify_tgpcdx_tree(&mut root, width, height, &fmt_str, &mips)?;
         let bytes = encode_tgpcdx_to_vec(&root, preamble.as_ref())?;
@@ -126,7 +143,7 @@ pub fn export_tgpcdx_to_dds(input: &Path, output: &Path) -> Result<(), String> {
 pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), String> {
     let image_mips = image_mips_from_bytes(data)?;
     if image_mips.is_empty() {
-        return Err("no image blocks".into());
+        return Err(crate::gettext!("no image blocks"));
     }
     let fmt_str = image_mips[0].format.clone();
     let d3d_fmt = tgpcdx_format_to_d3d(&fmt_str);
@@ -135,10 +152,10 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
     let mut mips: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(image_mips.len());
     for mip in image_mips {
         if mip.width == 0 || mip.height == 0 {
-            return Err("invalid mip dimensions".into());
+            return Err(crate::gettext!("invalid mip dimensions"));
         }
         if mip.data.is_empty() {
-            return Err("empty mip blob".into());
+            return Err(crate::gettext!("empty mip blob"));
         }
         mips.push((mip.width, mip.height, mip.data));
     }
@@ -166,8 +183,9 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
             while sum < blob_len && !(mw == 1 && mh == 1) {
                 mw = (mw / 2).max(1);
                 mh = (mh / 2).max(1);
-                let sz = mip_level_bytes(mw, mh, compression)
-                    .ok_or("it is impossible to calculate size of the mipmap level")?;
+                let sz = mip_level_bytes(mw, mh, compression).ok_or(crate::gettext!(
+                    "it is impossible to calculate size of the mipmap level"
+                ))?;
                 if sz == 0 || sz > blob_len - sum {
                     break;
                 }
@@ -185,8 +203,9 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
         for (w, h, bytes) in &mips {
             let expected = expected_mip_size(*w, *h, d3d_fmt);
             if expected > 0 && bytes.len() != expected {
-                return Err(format!(
-                    "mip {w}x{h} size mismatch: got {}, expected {expected}",
+                return Err(crate::gettext!(
+                    "mip {w}x{h} size mismatch: got {}, expected {}",
+                    expected,
                     bytes.len()
                 ));
             }
@@ -207,9 +226,9 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
     for (_, _, bytes) in &mips {
         let end = offset
             .checked_add(bytes.len())
-            .ok_or("mip data size overflow")?;
+            .ok_or(crate::gettext!("mip data size overflow"))?;
         if end > dds.data.len() {
-            return Err("mip data exceeds dds buffer".into());
+            return Err(crate::gettext!("mip data exceeds dds buffer"));
         }
         dds.data[offset..end].copy_from_slice(bytes);
         offset = end;
@@ -404,14 +423,18 @@ fn validate_imported_tgpcdx(
     let mut reader = SerzReader::new(bytes);
     let root = reader
         .parse()
-        .map_err(|e| format!("SERZ validation: {e}"))?;
+        .map_err(|e| crate::gettext!("SERZ validation: {}", e))?;
     if find_texture_dimensions(&root) != Some((width, height)) {
-        return Err("serialized TgPcDx dimensions do not match the DDS".into());
+        return Err(crate::gettext!(
+            "serialized TgPcDx dimensions do not match the DDS"
+        ));
     }
     let mut actual_mips = Vec::with_capacity(expected_mips.len());
     collect_serz_image_mips(&root, &mut actual_mips)?;
     if actual_mips.len() != expected_mips.len() {
-        return Err("serialized TgPcDx mip count does not match the DDS".into());
+        return Err(crate::gettext!(
+            "serialized TgPcDx mip count does not match the DDS"
+        ));
     }
     for (actual, (expected_width, expected_height, expected_data)) in
         actual_mips.iter().zip(expected_mips)
@@ -421,7 +444,9 @@ fn validate_imported_tgpcdx(
             || actual.format != format
             || actual.data != *expected_data
         {
-            return Err("serialized TgPcDx mip metadata or Blob does not match the DDS".into());
+            return Err(crate::gettext!(
+                "serialized TgPcDx mip metadata or Blob does not match the DDS"
+            ));
         }
     }
     Ok(())
