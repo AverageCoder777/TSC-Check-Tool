@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-11-24 18:05+0000\n"
+"POT-Creation-Date: 2026-11-24 19:25+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -826,6 +826,10 @@ msgstr ""
 #: .\target\i18n_src\app\app_controller.rs:258
 #, rust-format
 msgid "Couldn't rename new asset to English names: {}"
+msgstr ""
+
+#: .\target\i18n_src\app\app_controller.rs:358
+msgid "Scanning routes"
 msgstr ""
 
 #: .\target\i18n_src\app\app_controller.rs:406
@@ -1987,12 +1991,13 @@ msgid "Career"
 msgstr ""
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:220
+#: .\target\i18n_src\scenarios\scenario_controller.rs:547
 #, rust-format
 msgid ""
 "Provider: {}\n"
 "Product: {}\n"
 "File: {}\n"
-"number: {}"
+"Number: {}"
 msgstr ""
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:227
@@ -2029,15 +2034,6 @@ msgstr ""
 #: .\target\i18n_src\scenarios\scenario_controller.rs:428
 #, rust-format
 msgid "Locoswap is launched for scenario: {}."
-msgstr ""
-
-#: .\target\i18n_src\scenarios\scenario_controller.rs:547
-#, rust-format
-msgid ""
-"Provider: {}\n"
-"Product: {}\n"
-"File: {}\n"
-"Number: {}"
 msgstr ""
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:603

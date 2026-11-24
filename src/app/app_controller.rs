@@ -355,7 +355,7 @@ impl CheckerApp {
             self.selected_incomplete = None;
         }
         self.result = None;
-        self.log_event("Scanning routes".to_owned(), LogLevel::Info);
+        self.log_event(crate::gettext!("Scanning routes"), LogLevel::Info);
         crate::schedule_ui_sync();
         let ignored_route_ids = self.ignored_route_ids.clone();
         let max_threads = route_scan_max_threads(self.serz_process_limit, self.route_scan_on_hdd);

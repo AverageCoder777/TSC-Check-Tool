@@ -2,8 +2,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-11-24 18:05+0000\n"
-"PO-Revision-Date: 2026-11-24 21:13+0300\n"
+"POT-Creation-Date: 2026-11-24 19:25+0000\n"
+"PO-Revision-Date: 2026-11-24 22:26+0300\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ru\n"
@@ -838,6 +838,10 @@ msgstr ""
 "Не удалось переименовать новый объект в соответствии с английскими именами: "
 "{}"
 
+#: .\target\i18n_src\app\app_controller.rs:358
+msgid "Scanning routes"
+msgstr "Сканирование маршрутов"
+
 #: .\target\i18n_src\app\app_controller.rs:406
 #, rust-format
 msgid "Checking route «{}»"
@@ -1534,13 +1538,12 @@ msgid "Failed to write temporal XML for {}: {}"
 msgstr "Не удалось записать временный XML для {}: {}."
 
 #: .\target\i18n_src\assets\replacement.rs:573
-#, fuzzy, rust-format
-#| msgid "In tiles {} found no uses of {}. Update check and repeat."
+#, rust-format
 msgid ""
 "No usage of {} found in the source code of the route. Update check and "
 "repeat."
 msgstr ""
-"В плитках {} не найдено использований {}. Обновите проверку и повторите."
+"Не найдено использований {} в файлах маршрута. Обновите проверку и повторите."
 
 #: .\target\i18n_src\assets\replacement.rs:595
 #, rust-format
@@ -2046,12 +2049,13 @@ msgid "Career"
 msgstr "Карьерный"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:220
+#: .\target\i18n_src\scenarios\scenario_controller.rs:547
 #, rust-format
 msgid ""
 "Provider: {}\n"
 "Product: {}\n"
 "File: {}\n"
-"number: {}"
+"Number: {}"
 msgstr ""
 "Разработчик: {}\n"
 "Продукт: {}\n"
@@ -2094,19 +2098,6 @@ msgstr "LocoSwap не найден: {}."
 msgid "Locoswap is launched for scenario: {}."
 msgstr "LocoSwap запущен для сценария: {}."
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:547
-#, rust-format
-msgid ""
-"Provider: {}\n"
-"Product: {}\n"
-"File: {}\n"
-"Number: {}"
-msgstr ""
-"Разработчик: {}\n"
-"Продукт: {}\n"
-"Файл: {}\n"
-"Номер: {}"
-
 #: .\target\i18n_src\scenarios\scenario_controller.rs:603
 #, rust-format
 msgid "Asset path is open in explorer: {}."
@@ -2129,7 +2120,7 @@ msgstr "Не удалось найти чертеж подвижного сос�
 
 #: .\target\i18n_src\texture\dds.rs:27
 msgid "incorrect DDS size"
-msgstr "Некорректный размер DDS"
+msgstr "некорректный размер DDS"
 
 #: .\target\i18n_src\texture\dds.rs:31
 msgid "DDS sizes exceeding boundaries of TgPcDx sUInt16"
@@ -2551,6 +2542,18 @@ msgstr "Внутреннее имя текстуры сохранено: {}"
 #, rust-format
 msgid "Failed to save name: {}"
 msgstr "Не удалось сохранить имя: {}"
+
+#, rust-format
+#~ msgid ""
+#~ "Provider: {}\n"
+#~ "Product: {}\n"
+#~ "File: {}\n"
+#~ "number: {}"
+#~ msgstr ""
+#~ "Разработчик: {}\n"
+#~ "Продукт: {}\n"
+#~ "Файл: {}\n"
+#~ "Номер: {}"
 
 #, fuzzy, rust-format
 #~| msgid "Failed to save name: {}"
