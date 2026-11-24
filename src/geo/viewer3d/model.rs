@@ -80,23 +80,23 @@ impl LoadedModel {
                 if let Some((resolved_path, result)) = resolved_key.and_then(|k| decoded.get(&k)) {
                     match result {
                         Ok(texture) => {
-                            statuses.push(format!("Loaded: {name} ({resolved_path})"));
+                            statuses.push(crate::gettext!("Loaded: {0} ({1})", name, resolved_path));
                             Arc::clone(texture)
                         }
                         Err(error) => {
-                            statuses.push(format!("Missing / invalid: {name} ({error})"));
+                            statuses.push(crate::gettext!("Missing / invalid: {0} ({1})", name, error));
                             Arc::clone(&fallback)
                         }
                     }
                 } else {
-                    statuses.push(format!("Missing: {name}"));
+                    statuses.push(crate::gettext!("Missing: {0}", name));
                     Arc::clone(&fallback)
                 };
             textures.push(resolved_texture);
         }
 
         if statuses.is_empty() {
-            statuses.push("No texture references found".into());
+            statuses.push(crate::gettext!("No texture references found").into());
             textures.push(Arc::clone(&fallback));
         }
 

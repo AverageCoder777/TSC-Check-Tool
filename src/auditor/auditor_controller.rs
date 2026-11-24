@@ -217,7 +217,7 @@ impl AuditorController {
                                     0.0
                                 };
                                 w.set_scan_progress(progress);
-                                let template = crate::gettext!("Scanning: {} / {} files...");
+                                let template = crate::gettext!("Scanning files: {} / {}...");
                                 w.set_scan_status_text(
                                     template
                                         .replacen("{}", &done.to_string(), 1)
@@ -532,7 +532,7 @@ impl AuditorController {
                 if let Some(path) = target_path {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
-                            format!("Parent folder opened in explorer: {}.", path.display()),
+                            crate::gettext!("Parent folder opened in explorer: {}.", path.display()),
                             LogLevel::Info,
                         );
                         crate::schedule_ui_sync();
@@ -561,7 +561,7 @@ impl AuditorController {
                 {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
-                            format!("Parent folder opened in explorer: {}.", dir.display()),
+                            crate::gettext!("Parent folder opened in explorer: {}.", dir.display()),
                             LogLevel::Info,
                         );
                         crate::schedule_ui_sync();

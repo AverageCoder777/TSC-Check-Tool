@@ -124,7 +124,7 @@ impl Default for CheckerApp {
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(load_last_game_path);
         let (ignored_route_ids, status) = match load_ignored_route_ids() {
-            Ok(ids) => (ids, "Set Ralworks path and scan routes.".to_owned()),
+            Ok(ids) => (ids, crate::gettext!("Set RailWorks path and scan routes.")),
             Err(error) => (HashSet::new(), error),
         };
         Self {
@@ -209,7 +209,7 @@ impl CheckerApp {
         };
         if let Some(error) = window_error {
             self.log_event(
-                format!("Failed to open asset inventory: {error}"),
+                crate::gettext!("Failed to open asset inventory: {}", error),
                 LogLevel::Error,
             );
         }
@@ -238,7 +238,7 @@ impl CheckerApp {
         self.asset_replacement = Some(rx);
         self.asset_replacement_feedback = None;
         self.log_event(
-            format!("Preparing asset replacement {}...", missing.path),
+            crate::gettext!("Preparing asset replacement {}...", missing.path),
             LogLevel::Info,
         );
         thread::spawn(move || {
@@ -255,7 +255,7 @@ impl CheckerApp {
                     Err(error) => {
                         let _ = tx.send((
                             missing_path,
-                            Err(gettext!(
+                            Err(crate::gettext!(
                                 "Couldn't rename new asset to English names: {}",
                                 error
                             )),
@@ -403,7 +403,10 @@ impl CheckerApp {
             state.umlaut_assets.clear();
             state.scanning_umlauts = false;
         }
-        self.log_event(format!("Checking route «{}»", route.name), LogLevel::Info);
+        self.log_event(
+            crate::gettext!("Checking route «{}»", route.name),
+            LogLevel::Info,
+        );
         crate::schedule_ui_sync();
         thread::spawn(move || {
             let progress_tx = tx.clone();
@@ -505,7 +508,7 @@ impl CheckerApp {
     fn poll_inventory_scan(&mut self) {
         let Some(result) = poll_receiver(
             &mut self.inventory_scan,
-            "Failed to obtain umlauts check result.",
+            &crate::gettext!("Failed to obtain umlauts check result."),
         ) else {
             return;
         };
@@ -536,12 +539,12 @@ impl CheckerApp {
                 };
                 let (message, level) = if errors.is_empty() {
                     (
-                        format!("Umlauts check completed. Found: {}.", assets.len()),
+                        crate::gettext!("Umlauts check completed. Found: {}.", assets.len()),
                         LogLevel::Success,
                     )
                 } else {
                     (
-                        format!(
+                        crate::gettext!(
                             "Check completed. Found: {}, analysis errors: {}.",
                             assets.len(),
                             errors.len()
@@ -551,8 +554,9 @@ impl CheckerApp {
                 };
                 self.log_event(message, level);
                 if let Some(error) = window_error {
-                    self.status.push_str(&format!(
-                        "Failed to update inventory window status: {error}"
+                    self.status.push_str(&crate::gettext!(
+                        "Failed to update inventory window status: {}",
+                        error
                     ));
                 }
             }
@@ -574,7 +578,9 @@ impl CheckerApp {
                 Ok(result) => Some(result),
                 Err(TryRecvError::Disconnected) => Some((
                     String::new(),
-                    Err("Failed to obtain asset replacement result.".to_owned()),
+                    Err(crate::gettext!(
+                        "Failed to obtain asset replacement result."
+                    )),
                 )),
                 Err(TryRecvError::Empty) => None,
             });
@@ -585,11 +591,11 @@ impl CheckerApp {
                     let log_message = report.log_file.as_ref().map_or_else(
                         || {
                             report.log_error.as_ref().map_or_else(
-                                || "Replacement log is unavailable.".to_owned(),
-                                |error| format!("LOG IS NOT RECORDED: {error}"),
+                                || crate::gettext!("Replacement log is unavailable."),
+                                |error| crate::gettext!("LOG IS NOT RECORDED: {}", error),
                             )
                         },
-                        |path| format!("Log: {}", path.display()),
+                        |path| crate::gettext!("Log: {}", path.display()),
                     );
                     let remaining_assets = self.result.as_mut().map(|check_result| {
                         check_result
@@ -609,35 +615,48 @@ impl CheckerApp {
                         self.missing_assets_popup = (!paths.is_empty()).then_some(paths);
                     }
                     self.missing_assets_shown = false;
-                    self.asset_replacement_feedback = Some(Ok(format!(
-                        "Replaced placements: {}; edited tiles: {}. {log_message}",
-                        report.replaced_instances, report.replaced_files,
+                    self.asset_replacement_feedback = Some(Ok(crate::gettext!(
+                        "Replaced placements: {}; edited tiles: {}. {}",
+                        report.replaced_instances,
+                        report.replaced_files,
+                        log_message
                     )));
                     self.log_event(
-                        format!(
+                        crate::gettext!(
                             "Replacing object {} -> {} on route ({} in total)",
-                            missing_path, report.replacement_asset, report.replaced_instances
+                            missing_path,
+                            report.replacement_asset,
+                            report.replaced_instances
                         ),
                         LogLevel::Info,
                     );
                     self.inventory_refresh_pending = true;
                     if !report.backups.is_empty() {
                         self.log_event(
-                            format!("Created {} backups.", report.backups.len()),
+                            crate::ngettext!(
+                                "Created {0} backup.",
+                                "Created {0} backups.",
+                                report.backups.len(),
+                                report.backups.len()
+                            ),
                             LogLevel::Info,
                         );
                     }
                     if remaining_assets == Some((0, 0)) {
                         self.log_event(
-                            "All missing assets have been processed. The final route check is being performed...".to_owned(),
+                            crate::gettext!(
+                                "All missing assets have been processed. The final route check is being performed..."
+                            ),
                             LogLevel::Info,
                         );
                         self.inventory_replacement_pending_check = false;
                         self.start_check();
                     } else if let Some((remaining, umlauts)) = remaining_assets {
                         self.log_event(
-                            format!(
-                                "Replacement completed. Missing assets remaining: {remaining}; assets with umlauts: {umlauts}."
+                            crate::gettext!(
+                                "Replacement completed. Missing assets remaining: {0}; assets with umlauts: {1}.",
+                                remaining,
+                                umlauts
                             ),
                             LogLevel::Info,
                         );
@@ -664,7 +683,7 @@ impl CheckerApp {
     fn poll_route_scan(&mut self) {
         let Some(result) = poll_receiver(
             &mut self.route_scan,
-            "Failed to obtain scanning routes result",
+            &crate::gettext!("Failed to obtain scanning routes result"),
         ) else {
             return;
         };
@@ -672,19 +691,19 @@ impl CheckerApp {
             Ok(outcome) => {
                 let routes = outcome.result;
                 let source = if outcome.from_cache {
-                    " (loaded from cache)"
+                    crate::gettext!(" (loaded from cache)")
                 } else {
-                    " (full scan)"
+                    crate::gettext!(" (full scan)")
                 };
                 self.log_event(
-                    format!(
+                    crate::gettext!(
                         "Routes found: {}; incomplete routes: {}.",
                         routes.routes.len(),
                         routes.incomplete_folders.len()
                     ),
                     LogLevel::Info,
                 );
-                self.status.push_str(source);
+                self.status.push_str(&source);
                 if let Some(notice) = outcome.notice {
                     self.status.push(' ');
                     self.status.push_str(&notice);
@@ -707,7 +726,7 @@ impl CheckerApp {
             let check_message = match rx.try_recv() {
                 Ok(message) => Ok(message),
                 Err(TryRecvError::Disconnected) => {
-                    Err("Failed to obtain route checking result.".to_owned())
+                    Err(crate::gettext!("Failed to obtain route checking result."))
                 }
                 Err(TryRecvError::Empty) => break,
             };
@@ -733,7 +752,7 @@ impl CheckerApp {
                         Ok(result) => {
                             let mut summary = Vec::new();
                             if !result.missing_assets.is_empty() {
-                                summary.push(format!(
+                                summary.push(crate::gettext!(
                                     "missing assets count: {}",
                                     result.missing_assets.len()
                                 ));
@@ -745,22 +764,22 @@ impl CheckerApp {
                                 self.missing_assets_popup = Some(paths);
                             }
                             if !result.conversion_errors.is_empty() {
-                                summary.push(format!(
+                                summary.push(crate::gettext!(
                                     "Serz/XML errors count: {}",
                                     result.conversion_errors.len()
                                 ));
                             }
                             if !result.structure_issues.is_empty() {
-                                summary.push(format!(
+                                summary.push(crate::gettext!(
                                     "structural problems: {}",
                                     result.structure_issues.len()
                                 ));
                             }
                             self.log_event(
                                 if summary.is_empty() {
-                                    "Check completed: no errors.".to_owned()
+                                    crate::gettext!("Check completed: no errors.")
                                 } else {
-                                    format!("Check completed: {}.", summary.join(", "))
+                                    crate::gettext!("Check completed: {}.", summary.join(", "))
                                 },
                                 LogLevel::Info,
                             );

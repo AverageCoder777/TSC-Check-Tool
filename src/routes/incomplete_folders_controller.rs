@@ -61,8 +61,11 @@ impl IncompleteFoldersController {
             };
 
             let confirmed = rfd::MessageDialog::new()
-                .set_title("Folder deletion")
-                .set_description(format!("Delete selected incomplete folder «{folder_id}»?"))
+                .set_title(crate::gettext!("Folder deletion"))
+                .set_description(crate::gettext!(
+                    "Delete selected incomplete folder «{0}»?",
+                    folder_id
+                ))
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
             if confirmed != rfd::MessageDialogResult::Ok {
@@ -82,7 +85,10 @@ impl IncompleteFoldersController {
                         Ok(()) => {
                             app.incomplete_folders.remove(pos);
                             app.log_event(
-                                format!("Deleted incomplete folder: {}.", target_path.display()),
+                                crate::gettext!(
+                                    "Deleted incomplete folder: {0}.",
+                                    target_path.display()
+                                ),
                                 LogLevel::Info,
                             );
                             if let Some(w) = weak_del.upgrade() {
@@ -92,16 +98,21 @@ impl IncompleteFoldersController {
                         }
                         Err(error) => {
                             app.log_event(
-                                format!("Failed to delete {}: {error}.", target_path.display()),
+                                crate::gettext!(
+                                    "Failed to delete {0}: {1}.",
+                                    target_path.display(),
+                                    error
+                                ),
                                 LogLevel::Error,
                             );
                         }
                     },
                     Err(e) => {
                         app.log_event(
-                            format!(
-                                "Security error during deletion {}: {e}.",
-                                target_path.display()
+                            crate::gettext!(
+                                "Security error during deletion {0}: {1}.",
+                                target_path.display(),
+                                e
                             ),
                             LogLevel::Error,
                         );
@@ -124,8 +135,8 @@ impl IncompleteFoldersController {
             }
 
             let confirmed = rfd::MessageDialog::new()
-                .set_title("Folder deletion")
-                .set_description("Delete all detected incomplete folders?")
+                .set_title(crate::gettext!("Folder deletion"))
+                .set_description(crate::gettext!("Delete all detected incomplete folders?"))
                 .set_buttons(rfd::MessageButtons::OkCancel)
                 .show();
             if confirmed != rfd::MessageDialogResult::Ok {
@@ -140,7 +151,7 @@ impl IncompleteFoldersController {
                     Ok(dir) => dir,
                     Err(e) => {
                         app.log_event(
-                            format!("Security error during deletion folders: {e}."),
+                            crate::gettext!("Security error during deletion folders: {0}.", e),
                             LogLevel::Error,
                         );
                         return;
@@ -156,7 +167,11 @@ impl IncompleteFoldersController {
                         Ok(()) => {
                             if let Err(error) = fs::remove_dir_all(&folder.path) {
                                 app.log_event(
-                                    format!("Failed to delete {}: {error}.", folder.path.display()),
+                                    crate::gettext!(
+                                        "Failed to delete {0}: {1}.",
+                                        folder.path.display(),
+                                        error
+                                    ),
                                     LogLevel::Error,
                                 );
                                 remaining.push(folder);
@@ -164,9 +179,10 @@ impl IncompleteFoldersController {
                         }
                         Err(e) => {
                             app.log_event(
-                                format!(
-                                    "Security error during deletion {}: {e}.",
-                                    folder.path.display()
+                                crate::gettext!(
+                                    "Security error during deletion {0}: {1}.",
+                                    folder.path.display(),
+                                    e
                                 ),
                                 LogLevel::Error,
                             );
@@ -181,18 +197,28 @@ impl IncompleteFoldersController {
 
                 if failed == 0 {
                     app.log_event(
-                        format!("Deleted all incomplete folders ({removed} entries)."),
+                        crate::ngettext!(
+                            "Deleted all incomplete folders ({0} entry).",
+                            "Deleted all incomplete folders ({0} entries).",
+                            removed,
+                            removed
+                        ),
                         LogLevel::Info,
                     );
                 } else if removed > 0 {
                     app.log_event(
-                        format!(
-                            "Deleted incomplete folders: {removed} (failed to delete: {failed})."
+                        crate::gettext!(
+                            "Deleted incomplete folders: {0} (failed to delete: {1}).",
+                            removed,
+                            failed
                         ),
                         LogLevel::Warning,
                     );
                 } else {
-                    app.log_event("Couldn't delete any incomplete folders.", LogLevel::Error);
+                    app.log_event(
+                        crate::gettext!("Couldn't delete any incomplete folders."),
+                        LogLevel::Error,
+                    );
                 }
 
                 if let Some(w) = weak_all.upgrade() {
@@ -216,8 +242,10 @@ impl IncompleteFoldersController {
 fn update_window(window: &IncompleteFoldersWindow, folders: &[IncompleteRouteFolder]) {
     let items = build_incomplete_folder_items(folders);
     let total_bytes: u64 = folders.iter().map(|f| f.total_size_bytes).sum();
-    let summary = format!(
-        "All: {} folders, total size: {}",
+    let summary = crate::ngettext!(
+        "All: {0} folder, total size: {1}",
+        "All: {0} folders, total size: {1}",
+        folders.len(),
         folders.len(),
         format_size_bytes(total_bytes)
     );

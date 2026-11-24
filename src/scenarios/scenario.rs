@@ -63,11 +63,11 @@ fn find_tag(xml: &str, tag: &str) -> Option<usize> {
 
 /// Название состава из cDriver/ServiceName/Localisation-cUserLocalisedString.
 /// Берётся первый непустой элемент, не Key и не Other. Если состав без
-/// водителя (Loose Consist) или имя не найдено — "Неназванный состав".
+/// водителя (Loose Consist) или имя не найдено — "Unnamed consist".
 fn consist_name(consist: &str) -> String {
     let driver_start = match find_tag(consist, "Driver") {
         Some(pos) => pos,
-        None => return "Unnamed consist".to_owned(),
+        None => return crate::gettext!("Unnamed consist"),
     };
     let driver_rest = &consist[driver_start..];
     let driver_end = driver_rest.find("</Driver>").unwrap_or(driver_rest.len());
@@ -75,7 +75,7 @@ fn consist_name(consist: &str) -> String {
 
     let cdriver_start = match find_tag(driver_block, "cDriver") {
         Some(pos) => pos,
-        None => return "Unnamed consist".to_owned(),
+        None => return crate::gettext!("Unnamed consist"),
     };
     let cdriver_rest = &driver_block[cdriver_start..];
     let cdriver_end = cdriver_rest
@@ -85,7 +85,7 @@ fn consist_name(consist: &str) -> String {
 
     let sn_start = match find_tag(cdriver_block, "ServiceName") {
         Some(pos) => pos,
-        None => return "Unnamed consist".to_owned(),
+        None => return crate::gettext!("Unnamed consist"),
     };
     let sn_rest = &cdriver_block[sn_start..];
     let sn_end = sn_rest.find("</ServiceName>").unwrap_or(sn_rest.len());
@@ -93,7 +93,7 @@ fn consist_name(consist: &str) -> String {
 
     let loc_start = match find_tag(sn_block, "Localisation-cUserLocalisedString") {
         Some(pos) => pos,
-        None => return "Unnamed consist".to_owned(),
+        None => return crate::gettext!("Unnamed consist"),
     };
     let loc_rest = &sn_block[loc_start..];
     let loc_end = loc_rest
@@ -146,7 +146,7 @@ fn consist_name(consist: &str) -> String {
         pos = value_end;
     }
 
-    "Неназванный состав".to_owned()
+    crate::gettext!("Unnamed consist")
 }
 
 /// Определяет вид состава по содержимому cConsist.

@@ -75,7 +75,7 @@ pub fn open_and_sync_with_vscode(
 pub fn run_headless(target: &Path) -> Result<(), String> {
     let temp_xml_path = generate_temp_xml_path(target);
     let initial_xml =
-        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error("Error", e))?;
+        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error(&crate::gettext!("Error"), e))?;
     run_sync_loop(target, &temp_xml_path, &initial_xml, "Headless").map(|_| ())
 }
 
@@ -93,7 +93,7 @@ fn run_sync_loop(
             }
             Err(e) => {
                 let err = format!("Failed to open editor: {e}");
-                show_native_error("Launch error", &err);
+                show_native_error(&crate::gettext!("Launch error"), &err);
                 return Err(err);
             }
         }
@@ -108,7 +108,7 @@ fn run_sync_loop(
             Ok(s) => s,
             Err(e) => {
                 let err = format!("Failed to read {}: {e}", xml_path.display());
-                show_native_error("Read error", &err);
+                show_native_error(&crate::gettext!("Read error"), &err);
                 return Err(err);
             }
         };
@@ -127,13 +127,13 @@ fn run_sync_loop(
                         "Write error: binary file too short ({} bytes).",
                         bytes.len()
                     );
-                    show_native_error("Write error", &err);
+                    show_native_error(&crate::gettext!("Write error"), &err);
                     return Err(err);
                 }
                 let mut validation_reader = SerzReader::new(&bytes);
                 if let Err(e) = validation_reader.parse() {
                     let err = format!("Serialization error: generated binary is corrupted: {e}");
-                    show_native_error("Write error", &err);
+                    show_native_error(&crate::gettext!("Write error"), &err);
                     return Err(err);
                 }
                 let backup = create_backup_file(binary_path).ok().flatten();
@@ -144,7 +144,7 @@ fn run_sync_loop(
                         let _ = fs::rename(&backup_path, binary_path);
                     }
                     let err = format!("Error writing to binary: {e}");
-                    show_native_error("Write error", &err);
+                    show_native_error(&crate::gettext!("Write error"), &err);
                     return Err(err);
                 }
                 let _ = fs::remove_file(xml_path);
@@ -166,11 +166,12 @@ fn run_sync_loop(
 }
 
 fn ask_retry_on_xml_error(err: &str) -> bool {
-    let prompt = format!(
-        "An XML syntax error has been detected:\n{err}\n\nOpen the editor again to fix the error?\n(If you click 'No', the file will remain saved as XML next to the original, and the binary will not be affected)"
+    let prompt = crate::gettext!(
+        "An XML syntax error has been detected:\n{0}\n\nOpen the editor again to fix the error?\n(If you click 'No', the file will remain saved as XML next to the original, and the binary will not be affected)",
+        err
     );
     rfd::MessageDialog::new()
-        .set_title("XML syntax error")
+        .set_title(crate::gettext!("XML syntax error"))
         .set_description(&prompt)
         .set_buttons(rfd::MessageButtons::YesNo)
         .set_level(rfd::MessageLevel::Warning)

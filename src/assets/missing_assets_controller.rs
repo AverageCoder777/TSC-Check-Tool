@@ -175,7 +175,7 @@ impl MissingAssetsController {
                         BTreeMap::new(),
                     );
                     app.log_event(
-                        format!("Path corrected: {corrupted} -> {clean_repair}."),
+                        crate::gettext!("Path corrected: {0} -> {1}.", corrupted, clean_repair),
                         LogLevel::Info,
                     );
                     crate::schedule_ui_sync();
@@ -210,7 +210,12 @@ impl MissingAssetsController {
                 app.asset_replacement_queue = queue;
                 app.missing_assets_shown = false;
                 app.log_event(
-                    format!("Mass path correction: fixed {repairable_count} objects."),
+                    crate::ngettext!(
+                        "Mass path correction: fixed {0} object.",
+                        "Mass path correction: fixed {0} objects.",
+                        repairable_count,
+                        repairable_count
+                    ),
                     LogLevel::Info,
                 );
                 app.start_next_asset_replacement();
@@ -288,7 +293,7 @@ impl MissingAssetsController {
             if !crate::assets::is_safe_for_global_replacement(&missing.path, &missing.uses) {
                 if let Ok(mut app) = app.lock() {
                     app.log_event(
-                        "The replacement of track infrastructure is blocked to prevent damage to the route.".to_owned(),
+                        crate::gettext!("The replacement of track infrastructure is blocked to prevent damage to the route."),
                         LogLevel::Warning,
                     );
                     crate::schedule_ui_sync();
@@ -425,15 +430,14 @@ impl MissingAssetsController {
                                 .retain(|m| !m.path.eq_ignore_ascii_case(&selected_path));
                         }
                         app.log_event(
-                            format!(
-                                "Object {selected_path} deleted from {files} tiles ({occurrences} uses)."
-                            ),
+                            crate::gettext!("Object {0} deleted (tiles: {1}, uses: {2}).", selected_path, files, occurrences),
                             LogLevel::Info,
                         );
                         if !untouched.is_empty() {
                             app.log_event(
-                                format!(
-                                    "Warning: it was not possible to delete occurrences of the object {selected_path} in the following tiles: {}",
+                                crate::gettext!(
+                                    "Warning: it was not possible to delete occurrences of the object {0} in the following tiles: {1}",
+                                    selected_path,
                                     untouched.join(", ")
                                 ),
                                 LogLevel::Warning,

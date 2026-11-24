@@ -191,12 +191,12 @@ fn bind_external_editor(window: &GeoViewerWindow, path: &Path) {
             external_editor::open_and_sync_with_vscode(&editor_path, move |result| {
                 let status = match result {
                     Ok(message) => message,
-                    Err(error) => format!("Editor error: {error}"),
+                    Err(error) => crate::gettext!("Editor error: {}", error),
                 };
                 set_status(&callback_weak, status);
             })
         {
-            set_status(&editor_weak, format!("Failed to open editor: {error}"));
+            set_status(&editor_weak, crate::gettext!("Failed to open editor: {}", error));
         }
     });
 }
@@ -283,7 +283,7 @@ fn render_worker(
     let mut loaded = match LoadedModel::load(&path) {
         Ok(model) => model,
         Err(error) => {
-            set_status(&window, format!("Unable to load model: {error}"));
+            set_status(&window, crate::gettext!("Unable to load model: {}", error));
             return;
         }
     };
@@ -312,7 +312,7 @@ fn render_worker(
     match render_frame(&loaded, gpu.as_mut(), camera) {
         Ok((width, height, pixels)) => push_frame(&window, width, height, pixels),
         Err(error) => {
-            set_status(&window, format!("Render failed: {error}"));
+            set_status(&window, crate::gettext!("Render failed: {}", error));
             return;
         }
     }
@@ -386,7 +386,7 @@ fn render_worker(
         }
         match render_frame(&loaded, gpu.as_mut(), camera) {
             Ok((width, height, pixels)) => push_frame(&window, width, height, pixels),
-            Err(error) => set_status(&window, format!("Render failed: {error}")),
+            Err(error) => set_status(&window, crate::gettext!("Render failed: {}", error)),
         }
     }
 }

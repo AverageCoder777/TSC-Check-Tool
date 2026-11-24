@@ -270,7 +270,7 @@ impl InventoryController {
                 {
                     if let Ok(mut app_guard) = app.lock() {
                         app_guard.log_event(
-                            "You can't change the track infrastructure parts through the program!".to_owned(),
+                            crate::gettext!("You can't change the track infrastructure parts through the program!"),
                             LogLevel::Warning,
                         );
                         schedule_ui_sync();
@@ -303,30 +303,32 @@ impl InventoryController {
                 let scenery_segments: usize = scenery_uses.iter().map(|u| u.count as usize).sum();
 
                 let description = match (!loft_road_uses.is_empty(), !scenery_uses.is_empty()) {
-                    (true, false) => format!(
-                        "Delete loft {} from {} Loft tiles({} segments)? This action will physically change the route files.",
-                        asset.path,
-                        loft_tiles.len(),
-                        loft_segments
-                    ),
-                    (false, true) => format!(
-                        "Delete object {} from all Scenery tiles ({} entries)? This action will physically change the route files.",
-                        asset.path,
-                        scenery_tiles.len()
-                    ),
-                    (true, true) => format!(
-                        "Delete object {} from {} Scenery tiles ({} segments) and {} Loft tiles ({} segments)? This action will physically change the route files.",
-                        asset.path,
-                        scenery_tiles.len(),
-                        scenery_segments,
-                        loft_tiles.len(),
-                        loft_segments
-                    ),
+                    (true, false) => crate::gettext!(
+    "Delete loft {0} (Loft tiles: {1}, segments: {2})? This action will physically change the route files.",
+    asset.path,
+    loft_tiles.len(),
+    loft_segments
+),
+                    (false, true) => crate::ngettext!(
+    "Delete object {0} from all Scenery tiles ({1} entry)? This action will physically change the route files.",
+    "Delete object {0} from all Scenery tiles ({1} entries)? This action will physically change the route files.",
+    scenery_tiles.len(),
+    asset.path,
+    scenery_tiles.len()
+),
+                    (true, true) => crate::gettext!(
+    "Delete object {0}?\nScenery — tiles: {1}, segments: {2}\nLoft — tiles: {3}, segments: {4}\nThis action will physically modify the route files.",
+    asset.path,
+    scenery_tiles.len(),
+    scenery_segments,
+    loft_tiles.len(),
+    loft_segments
+),
                     (false, false) => {
                         if let Ok(mut app_guard) = app.lock() {
                             app_guard.log_event(
-                                format!(
-                                    "No suitable tiles for object {} were found to delete.",
+                                crate::gettext!(
+                                    "No suitable tiles for object {0} were found to delete.",
                                     asset.path
                                 ),
                                 LogLevel::Warning,
@@ -338,7 +340,7 @@ impl InventoryController {
                 };
 
                 let confirmed = rfd::MessageDialog::new()
-                    .set_title("Object deletion")
+                    .set_title(crate::gettext!("Object deletion"))
                     .set_description(description)
                     .set_buttons(rfd::MessageButtons::OkCancel)
                     .show();
@@ -386,16 +388,18 @@ impl InventoryController {
                 if let Ok(mut app_guard) = app.lock() {
                     if errors.is_empty() {
                         app_guard.log_event(
-                            format!(
-                                "Object {} deleted from {} tiles ({} uses)",
-                                asset.path, total_tiles, total_occurrences
+                            crate::gettext!(
+                                "Object {0} deleted (tiles: {1}, uses: {2})",
+                                asset.path,
+                                total_tiles,
+                                total_occurrences
                             ),
                             LogLevel::Info,
                         );
                         if !untouched_files.is_empty() {
                             app_guard.log_event(
-                                format!(
-                                    "Warning: it was not possible to delete uses of the object in the following tiles {} (probably a composite lot, manual removal is required): {}",
+                                crate::gettext!(
+                                    "Warning: it was not possible to delete uses of the object in the following tiles {0} (probably a composite lot, manual removal is required): {1}",
                                     asset.path,
                                     untouched_files.join(", ")
                                 ),
@@ -436,8 +440,7 @@ impl InventoryController {
                 if !is_safe_for_global_replacement(&asset.path, &asset.uses) {
                     if let Ok(mut app_guard) = app.lock() {
                         app_guard.log_event(
-                            "You can't change the track infrastructure parts through the program!"
-                                .to_owned(),
+                            crate::gettext!("You can't change the track infrastructure parts through the program!"),
                             LogLevel::Warning,
                         );
                         schedule_ui_sync();

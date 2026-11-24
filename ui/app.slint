@@ -60,7 +60,7 @@ export struct LogLine {
 }
 
 export component MainWindow inherits Window {
-    title: "TSC Check Tool";
+    title: @tr("TSC Check Tool");
     min-width: 1350px;
     min-height: 1000px;
     default-font-family: "Inter";
@@ -120,7 +120,7 @@ export component MainWindow inherits Window {
                 }
 
                 if search-query != "": Text {
-                    text: @tr("{} {}", route-items.length, @tr("found"));
+                    text: @tr("{} found", route-items.length);
                     font-size: 12px;
                     color: #999999;
                     vertical-alignment: center;

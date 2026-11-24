@@ -410,7 +410,7 @@ pub(crate) fn check_route<F>(
 where
     F: Fn(&str) + Sync,
 {
-    report_progress("Scanning route files...");
+    report_progress(&crate::gettext!("Scanning route files..."));
     let collected_route_files = collect_route_files(route_path, ignore_scenarios)?;
     let mut structure_issues =
         validate_route_structure(route_path, assets_path, &collected_route_files);
@@ -458,8 +458,10 @@ where
     let processed = AtomicUsize::new(0);
 
     if total_files > 0 {
-        report_progress(&format!(
-            "Analyzing files. 1 out of {total_files}; threads: {worker_count}",
+        report_progress(&crate::gettext!(
+            "Analyzing files. 1 out of {0}; threads: {1}",
+            total_files,
+            worker_count
         ));
     }
 
@@ -469,8 +471,11 @@ where
             .map_init(ZipCache::new, |zip_cache, route_file| {
                 let done = processed.fetch_add(1, Ordering::Relaxed) + 1;
                 if done.is_multiple_of(32) || done == total_files {
-                    report_progress(&format!(
-                        "Analyzing files. {done} out of {total_files}; threads: {worker_count}",
+                    report_progress(&crate::gettext!(
+                        "Analyzing files. {0} out of {1}; threads: {2}",
+                        done,
+                        total_files,
+                        worker_count
                     ));
                 }
 
@@ -553,8 +558,8 @@ where
         structure_issues.push(format!("Failed to save check cache: {error}"));
     }
 
-    report_progress(&format!(
-        "Unique links: {}. Searching for .ap arcives...",
+    report_progress(&crate::gettext!(
+        "Unique links: {0}. Searching for .ap archives...",
         asset_uses.len(),
     ));
     let product_dirs: HashSet<PathBuf> = asset_uses
@@ -577,7 +582,7 @@ where
     let (ap_cache, archive_errors) = scan_product_ap_archives(&product_dirs, &pool)?;
     structure_issues.extend(archive_errors);
 
-    report_progress("Checking for umlauts...");
+    report_progress(&crate::gettext!("Checking for umlauts..."));
     let inventory_seed: Vec<_> = asset_uses
         .iter()
         .map(|(path, uses)| {

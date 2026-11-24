@@ -166,7 +166,7 @@ impl ApPickerController {
                     Err(err) => {
                         eprintln!("[ApPicker] Extracting error: {err}");
                         if let Ok(mut app) = app_t.lock() {
-                            app.log_event(format!("Unpacking error: {err}"), LogLevel::Error);
+                            app.log_event(crate::gettext!("Unpacking error: {}", err), LogLevel::Error);
                             crate::schedule_ui_sync();
                         }
                         let _ = slint::invoke_from_event_loop(move || {

@@ -7,9 +7,7 @@ use std::thread;
 use slint::{ComponentHandle, Weak};
 
 use super::decode::{ChannelMode, apply_channel_mode, decode_mip_to_rgba};
-use super::inspect::{
-    load_tgpcdx_bundle, restore_tgpcdx_from_backup, texture_info_text_with_view,
-};
+use super::inspect::{load_tgpcdx_bundle, restore_tgpcdx_from_backup, texture_info_text_with_view};
 use super::serz_parse::ImageMip;
 use super::{
     TextureInfo, convert_dds_to_tgpcdx_report, export_tgpcdx_to_dds, rgba_to_slint_image,
@@ -159,7 +157,7 @@ impl TextureController {
                 notify(
                     &viewer_weak,
                     &ui_weak,
-                    "There is no loaded texture to open in editor.",
+                    &crate::gettext!("There is no loaded texture to open in editor."),
                     LogLevel::Warning,
                 );
                 return;
@@ -191,20 +189,21 @@ impl TextureController {
                                 });
                             }
                             Err(error) => {
-                                let msg = format!(
-                                    "File changed, but preview could not be updated: {error}"
+                                let msg = crate::gettext!(
+                                    "File changed, but preview could not be updated: {}",
+                                    error
                                 );
                                 notify(&cb_viewer, &cb_ui, &msg, LogLevel::Error);
                             }
                         }
                     }
                     Err(error) => {
-                        let msg = format!("Editor error: {error}");
+                        let msg = crate::gettext!("Editor error: {}", error);
                         notify(&cb_viewer, &cb_ui, &msg, LogLevel::Error);
                     }
                 })
             {
-                let msg = format!("Failed to open file in editor: {error}");
+                let msg = crate::gettext!("Failed to open file in editor: {}", error);
                 notify(&viewer_weak, &ui_weak, &msg, LogLevel::Error);
             }
         });
@@ -375,7 +374,7 @@ impl TextureController {
                 notify(
                     &viewer_weak,
                     &ui_weak,
-                    "There is no loaded texture to export.",
+                    &crate::gettext!("There is no loaded texture to export."),
                     LogLevel::Warning,
                 );
                 return;
@@ -397,10 +396,13 @@ impl TextureController {
             thread::spawn(move || {
                 let (msg, level) = match export_tgpcdx_to_dds(&path, &out) {
                     Ok(()) => (
-                        format!("DDS exported: {}", out.display()),
+                        crate::gettext!("DDS exported: {}", out.display()),
                         LogLevel::Success,
                     ),
-                    Err(e) => (format!("DDS export failure: {e}"), LogLevel::Error),
+                    Err(e) => (
+                        crate::gettext!("DDS export failure: {}", e),
+                        LogLevel::Error,
+                    ),
                 };
                 notify(&vw, &uiw, &msg, level);
             });
@@ -417,13 +419,13 @@ impl TextureController {
                 notify(
                     &viewer_weak_replace,
                     &ui_weak_replace,
-                    "There is no loaded texture to replace.",
+                    &crate::gettext!("There is no loaded texture to replace."),
                     LogLevel::Warning,
                 );
                 return;
             };
             if is_readonly(&path) {
-                let msg = format!(
+                let msg = crate::gettext!(
                     "File is read-only (possibly inside a .ap archive): {}. Unpack before replacing.",
                     path.display()
                 );
@@ -446,20 +448,23 @@ impl TextureController {
 
             thread::spawn(move || {
                 if let Err(e) = external_editor::create_backup_file(&path) {
-                    notify(&vw, &uiw, &format!("Failed to create backup: {e}"), LogLevel::Error);
+                    notify(&vw, &uiw, &crate::gettext!("Failed to create backup: {}", e), LogLevel::Error);
                     return;
                 }
                 let report = match convert_dds_to_tgpcdx_report(&input, &path) {
                     Ok(r) => r,
                     Err(e) => {
-                        notify(&vw, &uiw, &format!("Error replacing from DDS: {e}"), LogLevel::Error);
+                        notify(&vw, &uiw, &crate::gettext!("Error replacing from DDS: {}", e), LogLevel::Error);
                         return;
                     }
                 };
-                let msg = format!(
-                    "DDS imported: {} ({} mipmaps, {} B)",
-                    report.dds_format, report.mip_count, report.total_bytes
-                );
+                let msg = crate::ngettext!("DDS imported: {0} ({1} mipmap, {2} B)",
+"DDS imported: {0} ({1} mipmaps, {2} B)",
+    report.mip_count,
+    report.dds_format,
+    report.mip_count,
+    report.total_bytes
+);
                 notify(&vw, &uiw, &msg, LogLevel::Success);
 
                 if gen_ref.load(Ordering::Acquire) != gen_id {
@@ -481,7 +486,7 @@ impl TextureController {
                     notify(
                         &vw,
                         &uiw,
-                        "Texture replaced, but preview could not be reloaded.",
+                        &crate::gettext!("Texture replaced, but preview could not be reloaded."),
                         LogLevel::Warning,
                     );
                 }
@@ -507,7 +512,12 @@ impl TextureController {
 
             thread::spawn(move || {
                 if let Err(e) = restore_tgpcdx_from_backup(&path) {
-                    notify(&vw, &uiw, &format!("Restore failed: {e}"), LogLevel::Error);
+                    notify(
+                        &vw,
+                        &uiw,
+                        &crate::gettext!("Restore failed: {}", e),
+                        LogLevel::Error,
+                    );
                     return;
                 }
                 let mode = current_channel_mode(&viewer_state);
@@ -529,7 +539,7 @@ impl TextureController {
                         notify(
                             &vw,
                             &uiw,
-                            &format!("Restored from .bak: {}", path.display()),
+                            &crate::gettext!("Restored from .bak: {}", path.display()),
                             LogLevel::Success,
                         );
                     }
@@ -537,7 +547,7 @@ impl TextureController {
                         notify(
                             &vw,
                             &uiw,
-                            &format!("Restored, but preview failed: {e}"),
+                            &crate::gettext!("Restored, but preview failed: {}", e),
                             LogLevel::Warning,
                         );
                     }
@@ -565,34 +575,41 @@ impl TextureController {
             let viewer_state = viewer_state.clone();
             let new_name = new_name.to_string();
 
-            thread::spawn(move || match update_tgpcdx_internal_name(&path, &new_name) {
-                Ok(()) => {
-                    let mode = current_channel_mode(&viewer_state);
-                    if let Ok(snapshot) = load_texture_snapshot(&path, mode)
-                        && gen_ref.load(Ordering::Acquire) == gen_id
-                    {
-                        store_snapshot(&tex_state, &viewer_state, &snapshot, mode);
-                        let vw_ui = vw.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if gen_ref.load(Ordering::Acquire) != gen_id {
-                                return;
-                            }
-                            if let Some(v) = vw_ui.upgrade() {
-                                apply_texture_to_viewer(&v, &snapshot, false);
-                            }
-                        });
+            thread::spawn(
+                move || match update_tgpcdx_internal_name(&path, &new_name) {
+                    Ok(()) => {
+                        let mode = current_channel_mode(&viewer_state);
+                        if let Ok(snapshot) = load_texture_snapshot(&path, mode)
+                            && gen_ref.load(Ordering::Acquire) == gen_id
+                        {
+                            store_snapshot(&tex_state, &viewer_state, &snapshot, mode);
+                            let vw_ui = vw.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if gen_ref.load(Ordering::Acquire) != gen_id {
+                                    return;
+                                }
+                                if let Some(v) = vw_ui.upgrade() {
+                                    apply_texture_to_viewer(&v, &snapshot, false);
+                                }
+                            });
+                        }
+                        notify(
+                            &vw,
+                            &uiw,
+                            &crate::gettext!("Internal texture name saved: {}", path.display()),
+                            LogLevel::Success,
+                        );
                     }
-                    notify(
-                        &vw,
-                        &uiw,
-                        &format!("Internal texture name saved: {}", path.display()),
-                        LogLevel::Success,
-                    );
-                }
-                Err(e) => {
-                    notify(&vw, &uiw, &format!("Failed to save name: {e}"), LogLevel::Error);
-                }
-            });
+                    Err(e) => {
+                        notify(
+                            &vw,
+                            &uiw,
+                            &crate::gettext!("Failed to save name: {}", e),
+                            LogLevel::Error,
+                        );
+                    }
+                },
+            );
         });
 
         // Подстановка имени по имени файла
