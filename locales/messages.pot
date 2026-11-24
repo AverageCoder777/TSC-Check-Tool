@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-11-24 00:24+0000\n"
+"POT-Creation-Date: 2026-11-24 11:49+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -62,37 +62,37 @@ msgctxt "MainWindow"
 msgid "No scenarios were found in Scenarios folder of selected route."
 msgstr ""
 
-#: ui\app.slint:381
+#: ui\app.slint:383
 msgctxt "MainWindow"
 msgid "Check route"
 msgstr ""
 
-#: ui\app.slint:403
+#: ui\app.slint:394
 msgctxt "MainWindow"
 msgid "Show all assets"
 msgstr ""
 
-#: ui\app.slint:414
+#: ui\app.slint:401
 msgctxt "MainWindow"
 msgid "Hide log"
 msgstr ""
 
-#: ui\app.slint:414
+#: ui\app.slint:401
 msgctxt "MainWindow"
 msgid "Show log"
 msgstr ""
 
-#: ui\app.slint:436
+#: ui\app.slint:423
 msgctxt "MainWindow"
 msgid "Log"
 msgstr ""
 
-#: ui\app.slint:500
+#: ui\app.slint:487
 msgctxt "MainWindow"
 msgid "Corrupted folders found ({})"
 msgstr ""
 
-#: ui\app.slint:509
+#: ui\app.slint:496
 msgctxt "MainWindow"
 msgid ""
 "Incomplete route folders were found in the Content/Routes folder. These "
@@ -100,507 +100,507 @@ msgid ""
 "permanently, or view the list."
 msgstr ""
 
-#: ui\app.slint:520
+#: ui\app.slint:507
 msgctxt "MainWindow"
 msgid "Ignore"
 msgstr ""
 
-#: ui\app.slint:525
+#: ui\app.slint:512
 msgctxt "MainWindow"
 msgid "Don't show anymore"
 msgstr ""
 
-#: ui\app.slint:530
+#: ui\app.slint:517
 msgctxt "MainWindow"
 msgid "Show list"
 msgstr ""
 
-#: ui\app.slint:543
+#: ui\app.slint:530
 msgctxt "AssetInventoryWindow"
 msgid "Route assets list"
 msgstr ""
 
-#: ui\app.slint:568
+#: ui\app.slint:555
 msgctxt "AssetInventoryWindow"
 msgid "Search by path, tile, or source file"
 msgstr ""
 
-#: ui\app.slint:574
+#: ui\app.slint:561
 msgctxt "AssetInventoryWindow"
 msgid "Show all"
 msgstr ""
 
-#: ui\app.slint:574
+#: ui\app.slint:561
 msgctxt "AssetInventoryWindow"
 msgid "Only missing"
 msgstr ""
 
-#: ui\app.slint:579
+#: ui\app.slint:566
 msgctxt "AssetInventoryWindow"
 msgid "Open in editor"
 msgstr ""
 
-#: ui\app.slint:596
+#: ui\app.slint:583
 msgctxt "AssetInventoryWindow"
-msgid "Replace in route"
+msgid "Replace"
 msgstr ""
 
-#: ui\app.slint:618
+#: ui\app.slint:605
 msgctxt "AssetInventoryWindow"
-msgid "Delete from route"
+msgid "Delete"
 msgstr ""
 
-#: ui\app.slint:628
+#: ui\app.slint:615
 msgctxt "AssetInventoryWindow"
-msgid "Check for symbols"
+msgid "Check symbols"
 msgstr ""
 
-#: ui\app.slint:634
+#: ui\app.slint:621
 msgctxt "AssetInventoryWindow"
 msgid "⚠ Track infrastructure can be replaced only in the TSC editor!!!"
 msgstr ""
 
-#: ui\app.slint:644
+#: ui\app.slint:631
 msgctxt "AssetInventoryWindow"
 msgid "Asset path"
 msgstr ""
 
-#: ui\app.slint:649
+#: ui\app.slint:636
 msgctxt "AssetInventoryWindow"
 msgid "Uses count"
 msgstr ""
 
-#: ui\app.slint:650
+#: ui\app.slint:637
 msgctxt "AssetInventoryWindow"
 msgid "Tiles"
 msgstr ""
 
-#: ui\app.slint:661
+#: ui\app.slint:648
 msgctxt "IgnoreListWindow"
 msgid "Ignore-list of routes"
 msgstr ""
 
-#: ui\app.slint:675
+#: ui\app.slint:662
 msgctxt "IgnoreListWindow"
 msgid "Add selected to ignore-list"
 msgstr ""
 
-#: ui\app.slint:689 ui\app.slint:711
+#: ui\app.slint:676 ui\app.slint:698
 msgctxt "IncompleteFoldersWindow"
 msgid "Incomplete and corrupted routes"
 msgstr ""
 
-#: ui\app.slint:763
+#: ui\app.slint:750
 msgctxt "IncompleteFoldersWindow"
 msgid "No incomplete folders found"
 msgstr ""
 
-#: ui\app.slint:804
+#: ui\app.slint:791
 msgctxt "IncompleteFoldersWindow"
 msgid "{} files"
 msgstr ""
 
-#: ui\app.slint:817
+#: ui\app.slint:804
 msgctxt "IncompleteFoldersWindow"
 msgid "Missing: "
 msgstr ""
 
-#: ui\app.slint:841
+#: ui\app.slint:828
 msgctxt "IncompleteFoldersWindow"
 msgid "📁 explorer"
 msgstr ""
 
-#: ui\app.slint:876
+#: ui\app.slint:863
 msgctxt "IncompleteFoldersWindow"
 msgid "Delete selected"
 msgstr ""
 
-#: ui\app.slint:897
+#: ui\app.slint:884
 msgctxt "IncompleteFoldersWindow"
 msgid "Delete all"
 msgstr ""
 
-#: ui\app.slint:911
+#: ui\app.slint:898
 msgctxt "IncompleteFoldersWindow"
 msgid "Close"
 msgstr ""
 
-#: ui\app.slint:986
+#: ui\app.slint:973
 msgctxt "ScenarioWindow"
 msgid "Time: {}"
 msgstr ""
 
-#: ui\app.slint:1004
+#: ui\app.slint:991
 msgctxt "ScenarioWindow"
 msgid "Author: {}"
 msgstr ""
 
-#: ui\app.slint:1022
+#: ui\app.slint:1009
 msgctxt "ScenarioWindow"
 msgid "Weather: {}"
 msgstr ""
 
-#: ui\app.slint:1040
+#: ui\app.slint:1027
 msgctxt "ScenarioWindow"
 msgid "Season: {}"
 msgstr ""
 
-#: ui\app.slint:1072
+#: ui\app.slint:1059
 msgctxt "ScenarioWindow"
 msgid "Consists ({})"
 msgstr ""
 
-#: ui\app.slint:1108
+#: ui\app.slint:1095
 msgctxt "ScenarioWindow"
 msgid "Player"
 msgstr ""
 
-#: ui\app.slint:1150
+#: ui\app.slint:1137
 msgctxt "ScenarioWindow"
 msgid "Wagons ({})"
 msgstr ""
 
-#: ui\app.slint:1201
+#: ui\app.slint:1188
 msgctxt "ScenarioWindow"
 msgid "Wagon properties"
 msgstr ""
 
-#: ui\app.slint:1263
+#: ui\app.slint:1250
 msgctxt "ScenarioWindow"
 msgid "Open folder"
 msgstr ""
 
-#: ui\app.slint:1283
+#: ui\app.slint:1270
 msgctxt "ScenarioWindow"
 msgid "Open in LocoSwap"
 msgstr ""
 
-#: ui\app.slint:1293
+#: ui\app.slint:1280
 msgctxt "ScenarioWindow"
 msgid "Close"
 msgstr ""
 
-#: ui\app.slint:1306 ui\app.slint:1344
+#: ui\app.slint:1293 ui\app.slint:1331
 msgctxt "MissingAssetsWindow"
 msgid "Missing objects"
 msgstr ""
 
-#: ui\app.slint:1351
+#: ui\app.slint:1338
 msgctxt "MissingAssetsWindow"
 msgid "Search by path or file"
 msgstr ""
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Scenery"
 msgstr ""
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Loft"
 msgstr ""
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Road"
 msgstr ""
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Track infrastructure"
 msgstr ""
 
-#: ui\app.slint:1429
+#: ui\app.slint:1416
 msgctxt "MissingAssetsWindow"
 msgid "Track rules"
 msgstr ""
 
-#: ui\app.slint:1458
+#: ui\app.slint:1445
 msgctxt "MissingAssetsWindow"
 msgid "Path corrupted"
 msgstr ""
 
-#: ui\app.slint:1548
+#: ui\app.slint:1535
 msgctxt "MissingAssetsWindow"
 msgid "Used on tiles for: {}"
 msgstr ""
 
-#: ui\app.slint:1625
+#: ui\app.slint:1612
 msgctxt "MissingAssetsWindow"
 msgid "Copy all list"
 msgstr ""
 
-#: ui\app.slint:1650
+#: ui\app.slint:1637
 msgctxt "MissingAssetsWindow"
 msgid "Delete from route"
 msgstr ""
 
-#: ui\app.slint:1672
+#: ui\app.slint:1659
 msgctxt "MissingAssetsWindow"
 msgid "Fix all broken paths"
 msgstr ""
 
-#: ui\app.slint:1698
+#: ui\app.slint:1685
 msgctxt "MissingAssetsWindow"
 msgid "Replace"
 msgstr ""
 
-#: ui\app.slint:1711
+#: ui\app.slint:1698
 msgctxt "RoutePropertiesWarningWindow"
 msgid "RouteProperties.xml warning"
 msgstr ""
 
-#: ui\app.slint:1726
+#: ui\app.slint:1713
 msgctxt "RoutePropertiesWarningWindow"
 msgid "Providers/products not declared in RouteProperties.xml"
 msgstr ""
 
-#: ui\app.slint:1793
+#: ui\app.slint:1780
 msgctxt "RoutePropertiesWarningWindow"
 msgid "Close"
 msgstr ""
 
-#: ui\app.slint:1801
+#: ui\app.slint:1788
 msgctxt "ApAssetPickerWindow"
 msgid "Asset selection from archive"
 msgstr ""
 
-#: ui\app.slint:1822
+#: ui\app.slint:1809
 msgctxt "ApAssetPickerWindow"
 msgid "Asset selection from archive: {}"
 msgstr ""
 
-#: ui\app.slint:1828
+#: ui\app.slint:1815
 msgctxt "ApAssetPickerWindow"
 msgid "Search"
 msgstr ""
 
-#: ui\app.slint:1875
+#: ui\app.slint:1862
 msgctxt "ApAssetPickerWindow"
 msgid "Extracting..."
 msgstr ""
 
-#: ui\app.slint:1881
+#: ui\app.slint:1868
 msgctxt "ApAssetPickerWindow"
 msgid "Cancel"
 msgstr ""
 
-#: ui\app.slint:1899
+#: ui\app.slint:1886
 msgctxt "ApAssetPickerWindow"
 msgid "Select"
 msgstr ""
 
-#: ui\app.slint:1912
+#: ui\app.slint:1899
 msgctxt "SettingsWindow"
 msgid "Settings"
 msgstr ""
 
-#: ui\app.slint:1948
+#: ui\app.slint:1935
 msgctxt "SettingsWindow"
 msgid "CPU threads:"
 msgstr ""
 
-#: ui\app.slint:1973
+#: ui\app.slint:1960
 msgctxt "SettingsWindow"
 msgid "LocoSwap path:"
 msgstr ""
 
-#: ui\app.slint:1991 ui\app.slint:2025
+#: ui\app.slint:1978 ui\app.slint:2012
 msgctxt "SettingsWindow"
 msgid "Review"
 msgstr ""
 
-#: ui\app.slint:2007
+#: ui\app.slint:1994
 msgctxt "SettingsWindow"
 msgid "Game root folder:"
 msgstr ""
 
-#: ui\app.slint:2032
+#: ui\app.slint:2019
 msgctxt "SettingsWindow"
 msgid "Route icons"
 msgstr ""
 
-#: ui\app.slint:2039
+#: ui\app.slint:2026
 msgctxt "SettingsWindow"
 msgid "Game installed on HDD"
 msgstr ""
 
-#: ui\app.slint:2046
+#: ui\app.slint:2033
 msgctxt "SettingsWindow"
 msgid "Hide Quick-Drive and Free-Roam scenario types"
 msgstr ""
 
-#: ui\app.slint:2059
+#: ui\app.slint:2046
 msgctxt "SettingsWindow"
 msgid "UI Language:"
 msgstr ""
 
-#: ui\app.slint:2159
+#: ui\app.slint:2146
 msgctxt "FolderAuditorWindow"
 msgid "Asset folder check"
 msgstr ""
 
-#: ui\app.slint:2179
+#: ui\app.slint:2166
 msgctxt "FolderAuditorWindow"
 msgid "Ready for check"
 msgstr ""
 
-#: ui\app.slint:2216
+#: ui\app.slint:2203
 msgctxt "FolderAuditorWindow"
 msgid "Folder to check..."
 msgstr ""
 
-#: ui\app.slint:2221
+#: ui\app.slint:2208
 msgctxt "FolderAuditorWindow"
 msgid "Review"
 msgstr ""
 
-#: ui\app.slint:2227
+#: ui\app.slint:2214
 msgctxt "FolderAuditorWindow"
 msgid "Checking..."
 msgstr ""
 
-#: ui\app.slint:2227
+#: ui\app.slint:2214
 msgctxt "FolderAuditorWindow"
 msgid "Start check"
 msgstr ""
 
-#: ui\app.slint:2265
+#: ui\app.slint:2252
 msgctxt "FolderAuditorWindow"
 msgid "All"
 msgstr ""
 
-#: ui\app.slint:2276
+#: ui\app.slint:2263
 msgctxt "FolderAuditorWindow"
 msgid "Geometry"
 msgstr ""
 
-#: ui\app.slint:2287
+#: ui\app.slint:2274
 msgctxt "FolderAuditorWindow"
 msgid "Textures"
 msgstr ""
 
-#: ui\app.slint:2298
+#: ui\app.slint:2285
 msgctxt "FolderAuditorWindow"
 msgid "Scripts"
 msgstr ""
 
-#: ui\app.slint:2309
+#: ui\app.slint:2296
 msgctxt "FolderAuditorWindow"
 msgid "Sounds"
 msgstr ""
 
-#: ui\app.slint:2320
+#: ui\app.slint:2307
 msgctxt "FolderAuditorWindow"
 msgid "Child objects"
 msgstr ""
 
-#: ui\app.slint:2331
+#: ui\app.slint:2318
 msgctxt "FolderAuditorWindow"
 msgid "Unused"
 msgstr ""
 
-#: ui\app.slint:2355
+#: ui\app.slint:2342
 msgctxt "FolderAuditorWindow"
 msgid "Full graph"
 msgstr ""
 
-#: ui\app.slint:2370
+#: ui\app.slint:2357
 msgctxt "FolderAuditorWindow"
 msgid "Type ↑"
 msgstr ""
 
-#: ui\app.slint:2370
+#: ui\app.slint:2357
 msgctxt "FolderAuditorWindow"
 msgid "Type ↓"
 msgstr ""
 
-#: ui\app.slint:2370
+#: ui\app.slint:2357
 msgctxt "FolderAuditorWindow"
 msgid "Type"
 msgstr ""
 
-#: ui\app.slint:2391
+#: ui\app.slint:2378
 msgctxt "FolderAuditorWindow"
 msgid "Missing file ↑"
 msgstr ""
 
-#: ui\app.slint:2391
+#: ui\app.slint:2378
 msgctxt "FolderAuditorWindow"
 msgid "Missing file ↓"
 msgstr ""
 
-#: ui\app.slint:2391
+#: ui\app.slint:2378
 msgctxt "FolderAuditorWindow"
 msgid "Missing file"
 msgstr ""
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Unused file ↑"
 msgstr ""
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Unused file ↓"
 msgstr ""
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Unused file"
 msgstr ""
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Source file ↑"
 msgstr ""
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Source file ↓"
 msgstr ""
 
-#: ui\app.slint:2411
+#: ui\app.slint:2398
 msgctxt "FolderAuditorWindow"
 msgid "Source file"
 msgstr ""
 
-#: ui\app.slint:2435
+#: ui\app.slint:2422
 msgctxt "FolderAuditorWindow"
 msgid "No problems found"
 msgstr ""
 
-#: ui\app.slint:2507
+#: ui\app.slint:2494
 msgctxt "FolderAuditorWindow"
 msgid "Incoming links: "
 msgstr ""
 
-#: ui\app.slint:2514
+#: ui\app.slint:2501
 msgctxt "FolderAuditorWindow"
 msgid "Outgoing links: "
 msgstr ""
 
-#: ui\app.slint:2526
+#: ui\app.slint:2513
 msgctxt "FolderAuditorWindow"
 msgid "Open folder of source file"
 msgstr ""
 
-#: ui\app.slint:2532
+#: ui\app.slint:2519
 msgctxt "FolderAuditorWindow"
 msgid "Open source file"
 msgstr ""
 
-#: ui\app.slint:2538
+#: ui\app.slint:2525
 msgctxt "FolderAuditorWindow"
 msgid "Open folder of missing file"
 msgstr ""
 
-#: ui\app.slint:2543
+#: ui\app.slint:2530
 msgctxt "FolderAuditorWindow"
 msgid "View texture"
 msgstr ""
 
-#: ui\app.slint:2548
+#: ui\app.slint:2535
 msgctxt "FolderAuditorWindow"
 msgid "Dependency graph"
 msgstr ""
@@ -935,7 +935,7 @@ msgstr ""
 msgid "Check completed: {}."
 msgstr ""
 
-#: .\target\i18n_src\assets\ap_picker_controller.rs:169
+#: .\target\i18n_src\assets\ap_picker_controller.rs:170
 #, rust-format
 msgid "Unpacking error: {}"
 msgstr ""
@@ -1013,7 +1013,7 @@ msgstr ""
 #, rust-format
 msgid ""
 "Warning: it was not possible to delete uses of the object in the following "
-"tiles {0} (probably a composite lot, manual removal is required): {1}"
+"tiles {0} (probably a composite loft, manual removal is required): {1}"
 msgstr ""
 
 #: .\target\i18n_src\assets\missing_assets_controller.rs:178
@@ -1098,8 +1098,8 @@ msgstr ""
 msgid "Failed to build full graph: {}"
 msgstr ""
 
-#: .\target\i18n_src\auditor\auditor_controller.rs:535
-#: .\target\i18n_src\auditor\auditor_controller.rs:564
+#: .\target\i18n_src\auditor\auditor_controller.rs:536
+#: .\target\i18n_src\auditor\auditor_controller.rs:567
 #, rust-format
 msgid "Parent folder opened in explorer: {}."
 msgstr ""
@@ -1143,38 +1143,38 @@ msgstr ""
 msgid "Editor error: {}"
 msgstr ""
 
-#: .\target\i18n_src\geo\viewer3d\mod.rs:199
+#: .\target\i18n_src\geo\viewer3d\mod.rs:201
 #, rust-format
 msgid "Failed to open editor: {}"
 msgstr ""
 
-#: .\target\i18n_src\geo\viewer3d\mod.rs:286
+#: .\target\i18n_src\geo\viewer3d\mod.rs:289
 #, rust-format
 msgid "Unable to load model: {}"
 msgstr ""
 
-#: .\target\i18n_src\geo\viewer3d\mod.rs:315
-#: .\target\i18n_src\geo\viewer3d\mod.rs:389
+#: .\target\i18n_src\geo\viewer3d\mod.rs:318
+#: .\target\i18n_src\geo\viewer3d\mod.rs:392
 #, rust-format
 msgid "Render failed: {}"
 msgstr ""
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:83
+#: .\target\i18n_src\geo\viewer3d\model.rs:84
 #, rust-format
 msgid "Loaded: {0} ({1})"
 msgstr ""
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:87
+#: .\target\i18n_src\geo\viewer3d\model.rs:88
 #, rust-format
 msgid "Missing / invalid: {0} ({1})"
 msgstr ""
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:92
+#: .\target\i18n_src\geo\viewer3d\model.rs:93
 #, rust-format
 msgid "Missing: {0}"
 msgstr ""
 
-#: .\target\i18n_src\geo\viewer3d\model.rs:99
+#: .\target\i18n_src\geo\viewer3d\model.rs:100
 msgid "No texture references found"
 msgstr ""
 
@@ -1245,41 +1245,41 @@ msgstr[1] ""
 msgid "Unnamed consist"
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:353
+#: .\target\i18n_src\scenarios\scenario_controller.rs:354
 #, rust-format
 msgid "Scenario folder is open in explorer: {}."
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:399
+#: .\target\i18n_src\scenarios\scenario_controller.rs:403
 msgid "Locoswap isn't configured: set path to Locoswap in settings."
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:406
+#: .\target\i18n_src\scenarios\scenario_controller.rs:412
 #, rust-format
 msgid "Locoswap is not found: {}."
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:420
+#: .\target\i18n_src\scenarios\scenario_controller.rs:428
 #, rust-format
 msgid "Locoswap is launched for scenario: {}."
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:595
+#: .\target\i18n_src\scenarios\scenario_controller.rs:603
 #, rust-format
 msgid "Asset path is open in explorer: {}."
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:615
+#: .\target\i18n_src\scenarios\scenario_controller.rs:624
 #, rust-format
 msgid "Failed to find asset blueprint in route: {}/{}."
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:661
+#: .\target\i18n_src\scenarios\scenario_controller.rs:673
 #, rust-format
 msgid "Stock path is open in explorer: {}."
 msgstr ""
 
-#: .\target\i18n_src\scenarios\scenario_controller.rs:683
+#: .\target\i18n_src\scenarios\scenario_controller.rs:696
 #, rust-format
 msgid "Failed to find stock blueprint: {}/{}."
 msgstr ""

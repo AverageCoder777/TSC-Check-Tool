@@ -377,36 +377,23 @@ export component MainWindow inherits Window {
                         clicked => { show_log = true; start-check(); }
                     }
 
-                    Text {
-                        text: @tr("Check route");
-                        color: #ffffff;
-                        font-size: 14px;
-                        font-weight: 600;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                    HorizontalLayout {
+                        alignment: center;
+                        Text {
+                            text: @tr("Check route");
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: #ffffff;
+                            vertical-alignment: center;
+                        }
                     }
                 }
 
-                Rectangle {
+                Button {
                     min-height: 30px;
-                    preferred-height: 32px;
-                    border-radius: 4px;
-                    background: !has-result ? #232324 : (show_inv_touch.pressed ? #4a4a4d : (show_inv_touch.has-hover ? #3a3a3a : #2a2a2a));
-                    opacity: !has-result ? 0.45 : 1.0;
-
-                    show_inv_touch := TouchArea {
-                        enabled: has-result;
-                        clicked => { show-inventory(); }
-                    }
-
-                    Text {
-                        text: @tr("Show all assets");
-                        color: !has-result ? #6e6e6e : #ffffff;
-                        font-size: 13px;
-                        font-weight: 600;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
+                    text: @tr("Show all assets");
+                    enabled: has-result;
+                    clicked => { show-inventory(); }
                 }
 
                 Button {
@@ -593,7 +580,7 @@ export component AssetInventoryWindow inherits Window {
                 }
 
                 Text {
-                    text: @tr("Replace in route");
+                    text: @tr("Replace");
                     color: !can_replace ? #666666 : #ffffff;
                     font-size: 13px;
                     font-weight: 600;
@@ -615,7 +602,7 @@ export component AssetInventoryWindow inherits Window {
                 }
 
                 Text {
-                    text: @tr("Delete from route");
+                    text: @tr("Delete");
                     color: !can_delete ? #666666 : #ffffff;
                     font-size: 13px;
                     font-weight: 600;
@@ -625,7 +612,7 @@ export component AssetInventoryWindow inherits Window {
             }
 
             Button {
-                text: @tr("Check for symbols");
+                text: @tr("Check symbols");
                 clicked => { root.scan-umlauts(); }
             }
         }
