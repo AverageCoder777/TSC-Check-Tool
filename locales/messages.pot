@@ -2,7 +2,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-11-24 13:37+0000\n"
+"POT-Creation-Date: 2026-11-24 13:56+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1704,7 +1704,7 @@ msgid "Failed to install {}: {}"
 msgstr ""
 
 #: .\target\i18n_src\common\external_editor.rs:338
-#: .\target\i18n_src\texture\inspect.rs:388
+#: .\target\i18n_src\texture\inspect.rs:390
 #, rust-format
 msgid "Failed to create backup {}: {}"
 msgstr ""
@@ -2081,7 +2081,7 @@ msgid "TgPcDx import requires a binary SERZ target"
 msgstr ""
 
 #: .\target\i18n_src\texture\dds.rs:81 .\target\i18n_src\texture\dds.rs:84
-#: .\target\i18n_src\texture\dds.rs:229
+#: .\target\i18n_src\texture\dds.rs:231
 msgid "mip data size overflow"
 msgstr ""
 
@@ -2096,7 +2096,7 @@ msgstr ""
 
 #: .\target\i18n_src\texture\dds.rs:121 .\target\i18n_src\texture\inspect.rs:68
 #: .\target\i18n_src\texture\inspect.rs:86
-#: .\target\i18n_src\texture\inspect.rs:374
+#: .\target\i18n_src\texture\inspect.rs:376
 #: .\target\i18n_src\texture\serz_parse.rs:20
 #, rust-format
 msgid "serz parse: {}"
@@ -2121,27 +2121,27 @@ msgstr ""
 
 #: .\target\i18n_src\texture\dds.rs:207
 #, rust-format
-msgid "mip {w}x{h} size mismatch: got {}, expected {}"
+msgid "mip {}x{} size mismatch: got {}, expected {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\dds.rs:231
+#: .\target\i18n_src\texture\dds.rs:233
 msgid "mip data exceeds dds buffer"
 msgstr ""
 
-#: .\target\i18n_src\texture\dds.rs:426
+#: .\target\i18n_src\texture\dds.rs:428
 #, rust-format
 msgid "SERZ validation: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\dds.rs:429
+#: .\target\i18n_src\texture\dds.rs:431
 msgid "serialized TgPcDx dimensions do not match the DDS"
 msgstr ""
 
-#: .\target\i18n_src\texture\dds.rs:436
+#: .\target\i18n_src\texture\dds.rs:438
 msgid "serialized TgPcDx mip count does not match the DDS"
 msgstr ""
 
-#: .\target\i18n_src\texture\dds.rs:448
+#: .\target\i18n_src\texture\dds.rs:450
 msgid "serialized TgPcDx mip metadata or Blob does not match the DDS"
 msgstr ""
 
@@ -2245,121 +2245,120 @@ msgstr ""
 #: .\target\i18n_src\texture\inspect.rs:335
 #, rust-format
 msgid ""
-"Internal name must not contain a file extension (.tgpcdx, .dds, .ace): "
-"{trimmed}"
+"Internal name must not contain a file extension (.tgpcdx, .dds, .ace): {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:344
+#: .\target\i18n_src\texture\inspect.rs:345
 msgid "Internal name contains invalid characters."
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:352
+#: .\target\i18n_src\texture\inspect.rs:353
 #, rust-format
-msgid "update_tgpcdx_internal_name: path={}, new_name={new_name}"
+msgid "Internal texture name updated: path: {}, new name: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:361
+#: .\target\i18n_src\texture\inspect.rs:363
 #, rust-format
 msgid ""
 "File is read-only (possibly inside a .ap archive): {}. Unpack it before "
 "editing."
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:368
+#: .\target\i18n_src\texture\inspect.rs:370
 msgid "TgPcDx save requires a binary SERZ file"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:380
+#: .\target\i18n_src\texture\inspect.rs:382
 #, rust-format
 msgid "serz encode: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:382
+#: .\target\i18n_src\texture\inspect.rs:384
 msgid "Serialization result is empty"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:390
+#: .\target\i18n_src\texture\inspect.rs:392
 #, rust-format
 msgid "Backup created: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:396
+#: .\target\i18n_src\texture\inspect.rs:398
 #, rust-format
-msgid "Internal texture name updated {}: {normalized}"
+msgid "Internal texture name updated {}: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:407
+#: .\target\i18n_src\texture\inspect.rs:410
 #, rust-format
 msgid "Backup file not found: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:411
+#: .\target\i18n_src\texture\inspect.rs:414
 #, rust-format
 msgid "Failed to read backup: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:414
+#: .\target\i18n_src\texture\inspect.rs:417
 #, rust-format
 msgid "Restored from backup: {}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:427
+#: .\target\i18n_src\texture\inspect.rs:430
 msgid "cHcTexture node with a child Name (cDeltaString) was not found in file."
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:570
+#: .\target\i18n_src\texture\inspect.rs:573
 msgid "empty staged file"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:621
+#: .\target\i18n_src\texture\inspect.rs:624
 msgid "⚠ file name is different"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:626
+#: .\target\i18n_src\texture\inspect.rs:629
 #, rust-format
-msgid "Internal name (Name): {0} {1}"
+msgid "Internal name: {0} {1}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:633
+#: .\target\i18n_src\texture\inspect.rs:636
 #, rust-format
 msgid ""
 "Resolution: {0}×{1} px | Textures in group: {2} | Mipmaps: {3} ({0}×{1} → {4}"
 "×{5}) [{6}]"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:647
+#: .\target\i18n_src\texture\inspect.rs:650
 #, rust-format
 msgid "Format: {0} [{1}] | DDS: {2} | IsSwizzled: {3} | Flags(u16): {4}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:656
+#: .\target\i18n_src\texture\inspect.rs:659
 msgid "yes"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:658
+#: .\target\i18n_src\texture\inspect.rs:661
 msgid "no"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:664
+#: .\target\i18n_src\texture\inspect.rs:667
 #, rust-format
 msgid ""
 "File size: {0} ({1} B) | Pixels (blob): {2} B | Header: {3} B | Backup "
 "(.bak): {4}"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:676
+#: .\target\i18n_src\texture\inspect.rs:679
 #, rust-format
 msgid ""
 "View: {0} | Active mip: #{1} ({2}×{3} px) | Import requires: DDS {4} (power "
 "of two, with mipmaps)"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:691
+#: .\target\i18n_src\texture\inspect.rs:694
 #, rust-format
 msgid "{} MiB"
 msgstr ""
 
-#: .\target\i18n_src\texture\inspect.rs:694
+#: .\target\i18n_src\texture\inspect.rs:697
 #, rust-format
 msgid "{} KiB"
 msgstr ""

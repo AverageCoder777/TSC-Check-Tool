@@ -332,7 +332,8 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
         trimmed.len() >= ext.len() && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
     }) {
         return Err(crate::gettext!(
-            "Internal name must not contain a file extension (.tgpcdx, .dds, .ace): {trimmed}"
+            "Internal name must not contain a file extension (.tgpcdx, .dds, .ace): {}",
+            trimmed
         ));
     }
 
@@ -349,8 +350,9 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
 
 pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result<(), String> {
     append_tgpcdx_log(&crate::gettext!(
-        "update_tgpcdx_internal_name: path={}, new_name={new_name}",
-        tgpcdx_path.display()
+        "Internal texture name updated: path: {}, new name: {}",
+        tgpcdx_path.display(),
+        new_name
     ));
 
     let normalized = validate_and_normalize_internal_name(new_name)?;
@@ -393,7 +395,8 @@ pub fn update_tgpcdx_internal_name(tgpcdx_path: &Path, new_name: &str) -> Result
     write_output_bytes(tgpcdx_path, &out_bytes)?;
 
     append_tgpcdx_log(&crate::gettext!(
-        "Internal texture name updated {}: {normalized}",
+        "Internal texture name updated {}: {}",
+        normalized,
         tgpcdx_path.display()
     ));
     Ok(())
@@ -623,7 +626,7 @@ pub(crate) fn texture_info_text_with_view(
         let _ = writeln!(
             s,
             "{}",
-            crate::gettext!("Internal name (Name): {0} {1}", info.name, mark)
+            crate::gettext!("Internal name: {0} {1}", info.name, mark)
         );
     }
     let _ = writeln!(

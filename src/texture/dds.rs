@@ -204,7 +204,9 @@ pub fn export_tgpcdx_bytes_to_dds(data: &[u8], output: &Path) -> Result<(), Stri
             let expected = expected_mip_size(*w, *h, d3d_fmt);
             if expected > 0 && bytes.len() != expected {
                 return Err(crate::gettext!(
-                    "mip {w}x{h} size mismatch: got {}, expected {}",
+                    "mip {}x{} size mismatch: got {}, expected {}",
+                    w,
+                    h,
                     expected,
                     bytes.len()
                 ));
