@@ -623,7 +623,8 @@ pub(crate) fn find_route_icon_with_cache(
             }
             let path = entry.path();
             if is_route_image(path.extension()) {
-                let priority = icon_priority(&path.file_name().unwrap_or_default().to_string_lossy());
+                let priority =
+                    icon_priority(&path.file_name().unwrap_or_default().to_string_lossy());
                 disk_images.push((priority, path));
             }
         }

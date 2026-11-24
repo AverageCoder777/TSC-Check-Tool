@@ -76,22 +76,23 @@ impl LoadedModel {
         let mut statuses = Vec::with_capacity(model.textures.len().max(1));
 
         for (name, resolved_key) in model.textures.iter().zip(resolved_keys) {
-            let resolved_texture =
-                if let Some((resolved_path, result)) = resolved_key.and_then(|k| decoded.get(&k)) {
-                    match result {
-                        Ok(texture) => {
-                            statuses.push(crate::gettext!("Loaded: {0} ({1})", name, resolved_path));
-                            Arc::clone(texture)
-                        }
-                        Err(error) => {
-                            statuses.push(crate::gettext!("Missing / invalid: {0} ({1})", name, error));
-                            Arc::clone(&fallback)
-                        }
+            let resolved_texture = if let Some((resolved_path, result)) =
+                resolved_key.and_then(|k| decoded.get(&k))
+            {
+                match result {
+                    Ok(texture) => {
+                        statuses.push(crate::gettext!("Loaded: {0} ({1})", name, resolved_path));
+                        Arc::clone(texture)
                     }
-                } else {
-                    statuses.push(crate::gettext!("Missing: {0}", name));
-                    Arc::clone(&fallback)
-                };
+                    Err(error) => {
+                        statuses.push(crate::gettext!("Missing / invalid: {0} ({1})", name, error));
+                        Arc::clone(&fallback)
+                    }
+                }
+            } else {
+                statuses.push(crate::gettext!("Missing: {0}", name));
+                Arc::clone(&fallback)
+            };
             textures.push(resolved_texture);
         }
 

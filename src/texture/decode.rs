@@ -134,7 +134,12 @@ pub(super) fn expand_and_sort_mips(mut blocks: Vec<ImageMip>) -> Vec<ImageMip> {
         }
     }
 
-    blocks.sort_unstable_by_key(|b| Reverse((b.width.max(b.height), u64::from(b.width) * u64::from(b.height))));
+    blocks.sort_unstable_by_key(|b| {
+        Reverse((
+            b.width.max(b.height),
+            u64::from(b.width) * u64::from(b.height),
+        ))
+    });
     blocks
 }
 
@@ -194,7 +199,11 @@ pub(super) fn decode_mip_to_rgba(mip: &ImageMip) -> Result<Vec<u8>, String> {
     }
 }
 
-fn decode_uncompressed_rgba(format: &str, bytes: &[u8], rgba_bytes: usize) -> Result<Vec<u8>, String> {
+fn decode_uncompressed_rgba(
+    format: &str,
+    bytes: &[u8],
+    rgba_bytes: usize,
+) -> Result<Vec<u8>, String> {
     if bytes.len() < rgba_bytes {
         return Err("uncompressed texture data too small".into());
     }

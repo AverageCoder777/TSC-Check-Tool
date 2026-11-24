@@ -532,7 +532,10 @@ impl AuditorController {
                 if let Some(path) = target_path {
                     if let Ok(mut app) = app.lock() {
                         app.log_event(
-                            crate::gettext!("Parent folder opened in explorer: {}.", path.display()),
+                            crate::gettext!(
+                                "Parent folder opened in explorer: {}.",
+                                path.display()
+                            ),
                             LogLevel::Info,
                         );
                         crate::schedule_ui_sync();

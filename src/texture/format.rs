@@ -246,7 +246,11 @@ pub fn validate_dds_mip_chain(
     if let Some(expected) = expected_levels
         && declared_levels < expected
     {
-        let level_word = if declared_levels == 1 { "level" } else { "levels" };
+        let level_word = if declared_levels == 1 {
+            "level"
+        } else {
+            "levels"
+        };
         return Err(format!(
             "DDS file has {declared_levels} mipmap {level_word}, expected {expected}. Enable mipmap generation when saving DDS."
         ));

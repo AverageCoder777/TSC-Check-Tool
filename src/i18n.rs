@@ -1,7 +1,7 @@
+use gettext::Catalog;
+use std::fmt::Display;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::fmt::Display;
-use gettext::Catalog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]

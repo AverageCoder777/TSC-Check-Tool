@@ -1,10 +1,10 @@
 mod cpu_renderer;
 mod model;
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::borrow::Cow;
 
 use glam::camera::rh::{proj::directx as proj, view};
 use glam::{Mat4, Vec3};
@@ -15,8 +15,8 @@ use self::model::LoadedModel;
 use crate::common::external_editor;
 use crate::geo::GeoModel;
 use crate::geo::gpu_renderer::GpuRenderer;
-use crate::{BatchEntry, GeoViewerWindow};
 use crate::texture::{CompressedFormat, TextureMip, decode_bc_to_rgba};
+use crate::{BatchEntry, GeoViewerWindow};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Camera {
@@ -196,7 +196,10 @@ fn bind_external_editor(window: &GeoViewerWindow, path: &Path) {
                 set_status(&callback_weak, status);
             })
         {
-            set_status(&editor_weak, crate::gettext!("Failed to open editor: {}", error));
+            set_status(
+                &editor_weak,
+                crate::gettext!("Failed to open editor: {}", error),
+            );
         }
     });
 }

@@ -45,7 +45,13 @@ pub(super) fn create_texture_bind_groups(
 
     let mut bind_groups = Vec::with_capacity(textures.len());
     for texture_data in textures {
-        let view = upload_texture(device, queue, texture_data, max_texture_dimension, supports_bc)?;
+        let view = upload_texture(
+            device,
+            queue,
+            texture_data,
+            max_texture_dimension,
+            supports_bc,
+        )?;
         bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GeoPcDx texture bindings"),
             layout: &layout,

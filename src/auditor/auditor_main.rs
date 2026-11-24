@@ -124,7 +124,9 @@ impl DirCache {
 
         let arc = Arc::new(files);
         if let Ok(mut guard) = self.dirs.write() {
-            guard.entry(dir.to_path_buf()).or_insert_with(|| Arc::clone(&arc));
+            guard
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| Arc::clone(&arc));
         }
         arc
     }
@@ -623,10 +625,18 @@ fn filter_material_blocks(xml: &str) -> Cow<'_, str> {
 
     let mut result = Cow::Borrowed(xml);
     if has_hc {
-        result = Cow::Owned(re_hc_material().replace_all(&result, filter_one).into_owned());
+        result = Cow::Owned(
+            re_hc_material()
+                .replace_all(&result, filter_one)
+                .into_owned(),
+        );
     }
     if has_dx {
-        result = Cow::Owned(re_dx_material().replace_all(&result, filter_one).into_owned());
+        result = Cow::Owned(
+            re_dx_material()
+                .replace_all(&result, filter_one)
+                .into_owned(),
+        );
     }
     result
 }

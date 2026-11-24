@@ -5,18 +5,16 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Cursor, ErrorKind};
 use std::path::Path;
 
-use super::inspect::write_output_bytes;
 use super::format::{
     ImportReport, dds_compression_of, dds_format_to_tgpcdx, expected_mip_size, mip_level_bytes,
     tgpcdx_dds_compression, tgpcdx_format_to_d3d, validate_dds_mip_chain,
 };
+use super::inspect::write_output_bytes;
 use super::serz_parse::{
     collect_serz_image_mips, find_all_elements, find_element_mut, find_texture_dimensions,
     image_mips_from_bytes, set_blob_data, set_or_insert_property,
 };
-use crate::common::serz::{
-    SerzNode, SerzReader, encode_tgpcdx_to_vec, patch_tgpcdx_blobs,
-};
+use crate::common::serz::{SerzNode, SerzReader, encode_tgpcdx_to_vec, patch_tgpcdx_blobs};
 
 /// Converts DDS file to TgPcDx.
 pub fn convert_dds_to_tgpcdx_report(input: &Path, output: &Path) -> Result<ImportReport, String> {

@@ -74,8 +74,8 @@ pub fn open_and_sync_with_vscode(
 
 pub fn run_headless(target: &Path) -> Result<(), String> {
     let temp_xml_path = generate_temp_xml_path(target);
-    let initial_xml =
-        resolve_temp_xml(target, &temp_xml_path).inspect_err(|e| show_native_error(&crate::gettext!("Error"), e))?;
+    let initial_xml = resolve_temp_xml(target, &temp_xml_path)
+        .inspect_err(|e| show_native_error(&crate::gettext!("Error"), e))?;
     run_sync_loop(target, &temp_xml_path, &initial_xml, "Headless").map(|_| ())
 }
 

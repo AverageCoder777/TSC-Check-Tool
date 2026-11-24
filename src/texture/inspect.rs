@@ -323,8 +323,7 @@ pub fn validate_and_normalize_internal_name(name: &str) -> Result<String, String
 
     const FORBIDDEN_EXTS: [&str; 4] = [".tgpcdx", ".dds", ".ace", ".tgpc"];
     if FORBIDDEN_EXTS.iter().any(|ext| {
-        trimmed.len() >= ext.len()
-            && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
+        trimmed.len() >= ext.len() && trimmed[trimmed.len() - ext.len()..].eq_ignore_ascii_case(ext)
     }) {
         return Err(format!(
             "Internal name must not contain a file extension (.tgpcdx, .dds, .ace): {trimmed}"

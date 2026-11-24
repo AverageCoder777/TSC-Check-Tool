@@ -1,11 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod i18n;
 mod assets;
 mod auditor;
 mod common;
 mod geo;
+mod i18n;
 mod routes;
 mod scenarios;
 mod texture;

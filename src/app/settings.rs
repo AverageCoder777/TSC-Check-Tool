@@ -56,12 +56,8 @@ impl AppConfig {
             .map_err(|error| format!("Failed to create config folder: {error}"))?;
         let data = serde_json::to_string_pretty(self)
             .map_err(|error| format!("Failed to prepare config: {error}"))?;
-        fs::write(&path, data).map_err(|error| {
-            format!(
-                "Failed to save config {}: {error}",
-                path.display()
-            )
-        })
+        fs::write(&path, data)
+            .map_err(|error| format!("Failed to save config {}: {error}", path.display()))
     }
 }
 
