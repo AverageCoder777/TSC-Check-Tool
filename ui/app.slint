@@ -126,10 +126,30 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
 
-                Button {
-                    text: "⚙";
+                Rectangle {
                     min-width: 32px;
-                    clicked => { open-settings(); }
+                    preferred-width: 32px;
+                    min-height: 30px;
+                    preferred-height: 32px;
+                    border-radius: 4px;
+                    background: settings_touch.pressed ? #4a4a4d : (settings_touch.has-hover ? #3a3a3a : #2a2a2a);
+
+                    settings_touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { open-settings(); }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+
+                        Text {
+                            text: "⚙";
+                            font-family: "Segoe UI Symbol";
+                            font-size: 16px;
+                            color: #ffffff;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
 
                 Button {

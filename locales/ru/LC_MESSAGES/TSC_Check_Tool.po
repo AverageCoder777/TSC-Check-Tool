@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: 2026-11-24 19:25+0000\n"
-"PO-Revision-Date: 2026-11-24 22:26+0300\n"
+"PO-Revision-Date: 2026-11-24 22:34+0300\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ru\n"
@@ -2023,7 +2023,7 @@ msgstr "Зима"
 #: .\target\i18n_src\scenarios\scenario.rs:708
 #: .\target\i18n_src\scenarios\scenario.rs:720
 msgid "Standard"
-msgstr "Стандартный"
+msgstr "Стандарт"
 
 #: .\target\i18n_src\scenarios\scenario.rs:682
 #: .\target\i18n_src\scenarios\scenario.rs:696
@@ -2040,13 +2040,13 @@ msgstr "Свободная игра"
 #: .\target\i18n_src\scenarios\scenario.rs:700
 #: .\target\i18n_src\scenarios\scenario.rs:722
 msgid "Timetable (Standard)"
-msgstr "Расписание (стандартный)"
+msgstr "Расписание (стандарт)"
 
 #: .\target\i18n_src\scenarios\scenario.rs:703
 #: .\target\i18n_src\scenarios\scenario.rs:706
 #: .\target\i18n_src\scenarios\scenario.rs:718
 msgid "Career"
-msgstr "Карьерный"
+msgstr "Карьера"
 
 #: .\target\i18n_src\scenarios\scenario_controller.rs:220
 #: .\target\i18n_src\scenarios\scenario_controller.rs:547
